@@ -154,6 +154,8 @@ void main() {
       expect(presets8266, contains('SmartHome ESP8266 2-CH Dual'));
       expect(presets8266, contains('SmartHome ESP8266 1-CH Mini'));
       expect(presets8266, contains('SmartHome ESP8266 3-CH Pro'));
+      expect(presets8266, contains('SmartHome ESP8266 4-CH Quad'));
+      expect(presets8266, contains('SmartHome ESP8266 8-CH Max'));
       expect(presets8266, contains('SmartHome ESP8266 Sensor Node'));
 
       final out8266 = HardwareProfile.outputPinsFor(true);
@@ -168,6 +170,15 @@ void main() {
 
       final adc8266 = HardwareProfile.adc1PinsFor(true);
       expect(adc8266, equals([17]));
+
+      expect(HardwareProfile.strappingPinsFor(true), equals([0, 2, 15]));
+      expect(HardwareProfile.strappingPinsFor(false), equals([0, 2, 12, 15]));
+
+      expect(HardwareProfile.inputOnlyPinsFor(true), equals([17]));
+      expect(HardwareProfile.inputOnlyPinsFor(false), equals([34, 35, 36, 39]));
+
+      expect(HardwareProfile.allPhysicalPinsFor(true).length, equals(12));
+      expect(HardwareProfile.allPhysicalPinsFor(false).length, equals(24));
 
       expect(HardwareProfile.pinLabel(12, true), contains('D6'));
       expect(HardwareProfile.pinLabel(14, true), contains('D5'));

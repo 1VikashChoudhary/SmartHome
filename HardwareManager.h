@@ -206,6 +206,8 @@ private:
     void setPresetESP8266_2CH(HardwareConfig& cfg);
     void setPresetESP8266_1CH(HardwareConfig& cfg);
     void setPresetESP8266_3CH(HardwareConfig& cfg);
+    void setPresetESP8266_4CH(HardwareConfig& cfg);
+    void setPresetESP8266_8CH(HardwareConfig& cfg);
     void setPresetESP8266_SensorNode(HardwareConfig& cfg);
 };
 

@@ -31,6 +31,7 @@ class HardwareConfigSheet extends StatefulWidget {
 class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _isCustomMode = false;
   String? _errorMessage;
 
   late TextEditingController _boardNameController;
@@ -163,14 +164,20 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
   void _initDefaultChannels(int count) {
     _numRelays = count;
     _channels.clear();
-    final defaultRelays = [16, 17, 18, 19, 23, 25, 26, 27];
-    final defaultSwitches = [13, 14, 27, 26, 25, 255, 255, 255];
+    final isEsp8266 = widget.device.isEsp8266;
+    final defaultRelays = isEsp8266
+        ? [12, 14, 4, 5, 13, 15, 0, 16]
+        : [16, 17, 18, 19, 23, 25, 26, 27];
+    final defaultSwitches = isEsp8266
+        ? [13, 16, 255, 255, 255, 255, 255, 255]
+        : [13, 14, 27, 26, 25, 255, 255, 255];
     for (int i = 0; i < count; i++) {
-      final sPin = defaultSwitches[i];
+      final sPin = i < defaultSwitches.length ? defaultSwitches[i] : 255;
+      final rPin = i < defaultRelays.length ? defaultRelays[i] : 255;
       _channels.add(ChannelHardwareConfig(
         enabled: true,
         switchEnabled: (sPin != 255),
-        relayPin: defaultRelays[i],
+        relayPin: rPin,
         switchPin: sPin,
         switchMode: SwitchMode.toggle,
         triggerMode: 0,
@@ -178,94 +185,266 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     }
   }
 
-  void _applyPreset(String preset) {
+  void _addChannel() {
+    if (_numRelays >= 8) return;
     setState(() {
-      _boardNameController.text = preset;
-      if (preset.contains('1-CH')) {
-        _numRelays = 1;
-        _channels = [
-          const ChannelHardwareConfig(
-            relayPin: 16,
-            switchPin: 13,
-            switchMode: SwitchMode.pushbutton,
-            triggerMode: 0,
-          )
-        ];
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = false;
-        _buzzerEnabled = false;
-        _lcdEnabled = false;
-      } else if (preset.contains('2-CH')) {
-        _numRelays = 2;
-        _channels = [
-          const ChannelHardwareConfig(relayPin: 16, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
-          const ChannelHardwareConfig(relayPin: 17, switchPin: 14, switchMode: SwitchMode.toggle, triggerMode: 0),
-        ];
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = true;
-        _buzzerEnabled = true;
-        _lcdEnabled = true;
-      } else if (preset.contains('4-CH')) {
-        _numRelays = 4;
-        _channels = [
-          const ChannelHardwareConfig(relayPin: 16, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
-          const ChannelHardwareConfig(relayPin: 17, switchPin: 14, switchMode: SwitchMode.toggle, triggerMode: 0),
-          const ChannelHardwareConfig(relayPin: 18, switchPin: 27, switchMode: SwitchMode.toggle, triggerMode: 0),
-          const ChannelHardwareConfig(relayPin: 19, switchPin: 26, switchMode: SwitchMode.toggle, triggerMode: 0),
-        ];
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = true;
-        _buzzerEnabled = true;
-        _lcdEnabled = true;
-      } else if (preset.contains('8-CH')) {
-        _numRelays = 8;
-        final rPins = [16, 17, 18, 19, 23, 25, 26, 27];
-        _channels = List.generate(8, (i) => ChannelHardwareConfig(
-          enabled: true,
-          switchEnabled: false,
-          relayPin: rPins[i],
-          switchPin: 255,
-          switchMode: SwitchMode.toggle,
-          triggerMode: 0,
-        ));
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = false;
-        _buzzerEnabled = true;
-        _lcdEnabled = true;
-      } else if (preset.contains('Sensor Node')) {
-        _numRelays = 0;
-        _channels = [];
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = true;
-        _mq2AnalogPin = 34;
-        _buzzerEnabled = true;
-        _buzzerPin = 5;
-        _lcdEnabled = true;
-      } else {
-        // 5-CH Standard
-        _numRelays = 5;
-        _initDefaultChannels(5);
-        _dhtType = ClimateSensorType.dht22;
-        _dhtPin = 4;
-        _mq2Enabled = true;
-        _mq2AnalogPin = 34;
-        _buzzerEnabled = true;
-        _buzzerPin = 5;
-        _lcdEnabled = true;
+      _isCustomMode = true;
+      _numRelays++;
+      final isEsp8266 = widget.device.isEsp8266;
+      final defaultRelays = isEsp8266
+          ? [12, 14, 4, 5, 13, 15, 0, 16]
+          : [16, 17, 18, 19, 23, 25, 26, 27];
+      final defaultSwitches = isEsp8266
+          ? [13, 16, 255, 255, 255, 255, 255, 255]
+          : [13, 14, 27, 26, 25, 255, 255, 255];
+      final idx = _channels.length;
+      final rPin = idx < defaultRelays.length ? defaultRelays[idx] : 255;
+      final sPin = idx < defaultSwitches.length ? defaultSwitches[idx] : 255;
+      _channels.add(ChannelHardwareConfig(
+        enabled: true,
+        switchEnabled: (sPin != 255),
+        relayPin: rPin,
+        switchPin: sPin,
+        switchMode: SwitchMode.toggle,
+        triggerMode: 0,
+      ));
+    });
+  }
+
+  void _removeChannel() {
+    if (_numRelays <= 0) return;
+    setState(() {
+      _isCustomMode = true;
+      _numRelays--;
+      if (_channels.isNotEmpty) {
+        _channels.removeLast();
       }
     });
   }
 
+  void _applyPreset(String preset) {
+    setState(() {
+      _isCustomMode = false;
+      _boardNameController.text = preset;
+      final isEsp8266 = widget.device.isEsp8266;
+
+      if (isEsp8266) {
+        if (preset.contains('1-CH')) {
+          _numRelays = 1;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 12, switchPin: 13, switchMode: SwitchMode.pushbutton, triggerMode: 0)
+          ];
+          _dhtType = ClimateSensorType.none;
+          _dhtPin = 255;
+          _mq2Enabled = false;
+          _buzzerEnabled = false;
+          _lcdEnabled = false;
+        } else if (preset.contains('2-CH')) {
+          _numRelays = 2;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 12, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 14, switchPin: 16, switchMode: SwitchMode.toggle, triggerMode: 0),
+          ];
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 17;
+          _buzzerEnabled = true;
+          _buzzerPin = 2;
+          _lcdEnabled = false;
+        } else if (preset.contains('3-CH')) {
+          _numRelays = 3;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 12, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 14, switchPin: 16, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 4, switchPin: 255, switchMode: SwitchMode.toggle, triggerMode: 0),
+          ];
+          _dhtType = ClimateSensorType.none;
+          _dhtPin = 255;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 17;
+          _buzzerEnabled = true;
+          _buzzerPin = 2;
+          _lcdEnabled = false;
+        } else if (preset.contains('4-CH')) {
+          _numRelays = 4;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 12, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 14, switchPin: 16, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 4, switchPin: 255, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 5, switchPin: 255, switchMode: SwitchMode.toggle, triggerMode: 0),
+          ];
+          _dhtType = ClimateSensorType.none;
+          _dhtPin = 255;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 17;
+          _buzzerEnabled = true;
+          _buzzerPin = 2;
+          _lcdEnabled = false;
+        } else if (preset.contains('8-CH')) {
+          _numRelays = 8;
+          final rPins = [12, 14, 4, 5, 13, 15, 0, 16];
+          _channels = List.generate(8, (i) => ChannelHardwareConfig(
+            enabled: true,
+            switchEnabled: false,
+            relayPin: rPins[i],
+            switchPin: 255,
+            switchMode: SwitchMode.toggle,
+            triggerMode: 0,
+          ));
+          _dhtType = ClimateSensorType.none;
+          _dhtPin = 255;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 17;
+          _buzzerEnabled = true;
+          _buzzerPin = 2;
+          _lcdEnabled = false;
+        } else if (preset.contains('Sensor Node')) {
+          _numRelays = 0;
+          _channels = [];
+          _dhtType = ClimateSensorType.bme280;
+          _dhtPin = 255;
+          _i2cSdaPin = 4;
+          _i2cSclPin = 5;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 17;
+          _buzzerEnabled = true;
+          _buzzerPin = 2;
+          _lcdEnabled = true;
+        }
+      } else {
+        // ESP32 Presets
+        if (preset.contains('1-CH')) {
+          _numRelays = 1;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 16, switchPin: 13, switchMode: SwitchMode.pushbutton, triggerMode: 0)
+          ];
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = false;
+          _buzzerEnabled = false;
+          _lcdEnabled = false;
+        } else if (preset.contains('2-CH')) {
+          _numRelays = 2;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 16, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 17, switchPin: 14, switchMode: SwitchMode.toggle, triggerMode: 0),
+          ];
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = true;
+          _buzzerEnabled = true;
+          _lcdEnabled = true;
+        } else if (preset.contains('4-CH')) {
+          _numRelays = 4;
+          _channels = [
+            const ChannelHardwareConfig(relayPin: 16, switchPin: 13, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 17, switchPin: 14, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 18, switchPin: 27, switchMode: SwitchMode.toggle, triggerMode: 0),
+            const ChannelHardwareConfig(relayPin: 19, switchPin: 26, switchMode: SwitchMode.toggle, triggerMode: 0),
+          ];
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = true;
+          _buzzerEnabled = true;
+          _lcdEnabled = true;
+        } else if (preset.contains('8-CH')) {
+          _numRelays = 8;
+          final rPins = [16, 17, 18, 19, 23, 25, 26, 27];
+          _channels = List.generate(8, (i) => ChannelHardwareConfig(
+            enabled: true,
+            switchEnabled: false,
+            relayPin: rPins[i],
+            switchPin: 255,
+            switchMode: SwitchMode.toggle,
+            triggerMode: 0,
+          ));
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = false;
+          _buzzerEnabled = true;
+          _lcdEnabled = true;
+        } else if (preset.contains('Sensor Node')) {
+          _numRelays = 0;
+          _channels = [];
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 34;
+          _buzzerEnabled = true;
+          _buzzerPin = 5;
+          _lcdEnabled = true;
+        } else {
+          // 5-CH Standard
+          _numRelays = 5;
+          _initDefaultChannels(5);
+          _dhtType = ClimateSensorType.dht22;
+          _dhtPin = 4;
+          _mq2Enabled = true;
+          _mq2AnalogPin = 34;
+          _buzzerEnabled = true;
+          _buzzerPin = 5;
+          _lcdEnabled = true;
+        }
+      }
+    });
+  }
+
+  Map<int, String> _getUsedPins() {
+    final Map<int, String> used = {};
+    for (int i = 0; i < _numRelays && i < _channels.length; i++) {
+      if (_channels[i].enabled && _channels[i].relayPin != 255) {
+        used[_channels[i].relayPin] = 'Relay ${i + 1}';
+      }
+      if (_channels[i].switchEnabled && _channels[i].switchPin != 255) {
+        used[_channels[i].switchPin] = 'Switch ${i + 1}';
+      }
+    }
+    if ((_dhtType == ClimateSensorType.dht11 || _dhtType == ClimateSensorType.dht22) && _dhtPin != 255) {
+      used[_dhtPin] = 'DHT Climate';
+    }
+    if (_motionType != MotionSensorType.none && _motionPin != 255) {
+      used[_motionPin] = 'Motion';
+    }
+    if (_probeType != ProbeSensorType.none && _probePin != 255) {
+      used[_probePin] = 'DS18B20';
+    }
+    if (_ultrasonicType != UltrasonicSensorType.none) {
+      if (_trigPin != 255) used[_trigPin] = 'Trig';
+      if (_echoPin != 255) used[_echoPin] = 'Echo';
+    }
+    if (_mq2Enabled) {
+      if (_mq2AnalogPin != 255) used[_mq2AnalogPin] = 'MQ-2 (A)';
+      if (_mq2DigitalPin != 255) used[_mq2DigitalPin] = 'MQ-2 (D)';
+    }
+    if (_buzzerEnabled && _buzzerPin != 255) {
+      used[_buzzerPin] = 'Buzzer';
+    }
+    final bool isI2cActive = _lcdEnabled ||
+        _dhtType == ClimateSensorType.bme280 ||
+        _dhtType == ClimateSensorType.aht20 ||
+        _dhtType == ClimateSensorType.sht31 ||
+        _lightType == LightSensorType.bh1750;
+    if (isI2cActive) {
+      if (_i2cSdaPin != 255) used[_i2cSdaPin] = 'I2C SDA';
+      if (_i2cSclPin != 255) used[_i2cSclPin] = 'I2C SCL';
+    }
+    if (_btnMultiPin != 255) {
+      used[_btnMultiPin] = 'Status Button';
+    }
+    return used;
+  }
+
   String? _findConflict() {
+    final isEsp8266 = widget.device.isEsp8266;
+    final inOnly = HardwareProfile.inputOnlyPinsFor(isEsp8266);
     final Map<int, String> used = {};
 
-    void claim(int pin, String name) {
+    void claim(int pin, String name, {bool isOutput = false}) {
       if (pin == 255) return;
+      if (isOutput && inOnly.contains(pin)) {
+        throw 'GPIO $pin is an input-only pin and cannot be used for output ($name)';
+      }
       if (used.containsKey(pin)) {
         throw 'GPIO $pin is assigned to both "${used[pin]}" and "$name"';
       }
@@ -275,30 +454,30 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     try {
       for (int i = 0; i < _numRelays && i < _channels.length; i++) {
         if (!_channels[i].enabled) continue;
-        claim(_channels[i].relayPin, 'Relay ${i + 1}');
+        claim(_channels[i].relayPin, 'Relay ${i + 1}', isOutput: true);
         if (_channels[i].switchEnabled) {
-          claim(_channels[i].switchPin, 'Switch ${i + 1}');
+          claim(_channels[i].switchPin, 'Switch ${i + 1}', isOutput: false);
         }
       }
       if (_dhtType == ClimateSensorType.dht11 || _dhtType == ClimateSensorType.dht22) {
-        claim(_dhtPin, 'DHT Climate');
+        claim(_dhtPin, 'DHT Climate', isOutput: true);
       }
       if (_motionType != MotionSensorType.none) {
-        claim(_motionPin, 'Motion Sensor');
+        claim(_motionPin, 'Motion Sensor', isOutput: false);
       }
       if (_probeType != ProbeSensorType.none) {
-        claim(_probePin, 'DS18B20 Probe');
+        claim(_probePin, 'DS18B20 Probe', isOutput: true);
       }
       if (_ultrasonicType != UltrasonicSensorType.none) {
-        claim(_trigPin, 'Ultrasonic Trig');
-        claim(_echoPin, 'Ultrasonic Echo');
+        claim(_trigPin, 'Ultrasonic Trig', isOutput: true);
+        claim(_echoPin, 'Ultrasonic Echo', isOutput: false);
       }
       if (_mq2Enabled) {
-        claim(_mq2AnalogPin, 'MQ-2 Analog');
-        claim(_mq2DigitalPin, 'MQ-2 Digital');
+        claim(_mq2AnalogPin, 'MQ-2 Analog', isOutput: false);
+        claim(_mq2DigitalPin, 'MQ-2 Digital', isOutput: false);
       }
       if (_buzzerEnabled) {
-        claim(_buzzerPin, 'Buzzer');
+        claim(_buzzerPin, 'Buzzer', isOutput: true);
       }
       final bool isI2cActive = _lcdEnabled ||
           _dhtType == ClimateSensorType.bme280 ||
@@ -306,14 +485,182 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
           _dhtType == ClimateSensorType.sht31 ||
           _lightType == LightSensorType.bh1750;
       if (isI2cActive) {
-        claim(_i2cSdaPin, 'I2C SDA');
-        claim(_i2cSclPin, 'I2C SCL');
+        claim(_i2cSdaPin, 'I2C SDA', isOutput: true);
+        claim(_i2cSclPin, 'I2C SCL', isOutput: true);
       }
-      claim(_btnMultiPin, 'Multi-Button');
+      claim(_btnMultiPin, 'Multi-Button', isOutput: false);
       return null;
     } catch (e) {
       return e.toString();
     }
+  }
+
+  Widget _buildPinMatrix() {
+    final isEsp8266 = widget.device.isEsp8266;
+    final allPins = HardwareProfile.allPhysicalPinsFor(isEsp8266);
+    final strapping = HardwareProfile.strappingPinsFor(isEsp8266);
+    final inOnly = HardwareProfile.inputOnlyPinsFor(isEsp8266);
+    final used = _getUsedPins();
+    final conflict = _findConflict();
+
+    int usedCount = 0;
+    for (final p in allPins) {
+      if (used.containsKey(p)) usedCount++;
+    }
+    final freeCount = allPins.length - usedCount;
+
+    return GlassCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'LIVE GPIO PIN ALLOCATION MATRIX',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.primary.withValues(alpha: 0.4)),
+                    ),
+                    child: Text(
+                      '$usedCount/${allPins.length} Used',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.success.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.success.withValues(alpha: 0.4)),
+                    ),
+                    child: Text(
+                      '$freeCount Free',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.success),
+                    ),
+                  ),
+                  if (conflict != null) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: AppColors.danger.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.danger),
+                      ),
+                      child: Text(
+                        'Conflict!',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.danger),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: allPins.map((pin) {
+              final isAssigned = used.containsKey(pin);
+              final assignedName = used[pin];
+              final isBoot = strapping.contains(pin);
+              final isInOnly = inOnly.contains(pin);
+              final isConflict = conflict != null && conflict.contains('GPIO $pin ');
+
+              Color borderColor = isConflict
+                  ? AppColors.danger
+                  : (isAssigned ? AppColors.accent.withValues(alpha: 0.6) : Colors.white12);
+              Color bgColor = isConflict
+                  ? AppColors.danger.withValues(alpha: 0.2)
+                  : (isAssigned ? AppColors.accent.withValues(alpha: 0.1) : AppColors.surface);
+
+              return Container(
+                width: 105,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: borderColor, width: isConflict ? 1.5 : 1.0),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          pin == 17 && isEsp8266 ? 'A0' : 'GPIO $pin',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: isAssigned ? AppColors.textPrimary : AppColors.textSecondary,
+                          ),
+                        ),
+                        if (isBoot)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withValues(alpha: 0.25),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'Boot',
+                              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.warning),
+                            ),
+                          )
+                        else if (isInOnly)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.white12,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'In',
+                              style: TextStyle(fontSize: 9, color: AppColors.textSecondary),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      isAssigned ? assignedName! : 'Free',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: isAssigned ? FontWeight.w600 : FontWeight.normal,
+                        color: isConflict
+                            ? AppColors.danger
+                            : (isAssigned ? AppColors.accent : AppColors.success),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _saveAndReboot() async {
@@ -527,33 +874,145 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                       ),
                     ),
 
-                  GlassCard(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                  // Mode Switcher: Smart Presets vs Custom DIY Mode
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    padding: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: Row(
                       children: [
-                        Text(
-                          'BOARD TEMPLATES & PRESETS',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.8),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setState(() => _isCustomMode = false),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: !_isCustomMode ? AppColors.primary : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.bolt, size: 16, color: !_isCustomMode ? Colors.white : AppColors.textSecondary),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Smart Presets',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: !_isCustomMode ? Colors.white : AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 10),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: HardwareProfile.presetsFor(widget.device.isEsp8266).map((preset) {
-                            final isSelected = _boardNameController.text == preset;
-                            return ChoiceChip(
-                              label: Text(preset, style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : AppColors.textSecondary)),
-                              selected: isSelected,
-                              selectedColor: AppColors.primary,
-                              backgroundColor: AppColors.surface,
-                              onSelected: (_) => _applyPreset(preset),
-                            );
-                          }).toList(),
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setState(() => _isCustomMode = true),
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(vertical: 8),
+                              decoration: BoxDecoration(
+                                color: _isCustomMode ? AppColors.accent : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              alignment: Alignment.center,
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.tune, size: 16, color: _isCustomMode ? Colors.black : AppColors.textSecondary),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    'Custom DIY Mode',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: _isCustomMode ? Colors.black : AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
+
+                  // Presets Card or DIY Mode Info Card
+                  if (!_isCustomMode)
+                    GlassCard(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'BOARD TEMPLATES & PRESETS',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.8),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: HardwareProfile.presetsFor(widget.device.isEsp8266).map((preset) {
+                              final isSelected = _boardNameController.text == preset;
+                              return ChoiceChip(
+                                label: Text(preset, style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : AppColors.textSecondary)),
+                                selected: isSelected,
+                                selectedColor: AppColors.primary,
+                                backgroundColor: AppColors.surface,
+                                onSelected: (_) => _applyPreset(preset),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    GlassCard(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.accent.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.handyman, color: AppColors.accent, size: 22),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Custom DIY Hardware Mode Active',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.accent),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Add up to 8 relays and connect any sensors according to physical pin budget. The matrix below tracks pin safety.',
+                                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+
+                  // Live GPIO Pin Matrix
+                  _buildPinMatrix(),
                   const SizedBox(height: 14),
 
                   GlassCard(
@@ -576,7 +1035,35 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             const Text('Active Relay Channels:', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-                            Text('$_numRelays Channels', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 15)),
+                            Row(
+                              children: [
+                                Text('$_numRelays / 8', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 14)),
+                                const SizedBox(width: 10),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    side: BorderSide(color: AppColors.primary.withValues(alpha: 0.5)),
+                                  ),
+                                  icon: Icon(Icons.add, size: 14, color: AppColors.primary),
+                                  label: Text('Add', style: TextStyle(fontSize: 12, color: AppColors.primary)),
+                                  onPressed: _numRelays < 8 ? _addChannel : null,
+                                ),
+                                const SizedBox(width: 6),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    side: const BorderSide(color: Colors.white24),
+                                  ),
+                                  icon: const Icon(Icons.remove, size: 14, color: Colors.white70),
+                                  label: const Text('Remove', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                                  onPressed: _numRelays > 0 ? _removeChannel : null,
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                         Slider(
@@ -588,16 +1075,23 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                           label: '$_numRelays Channels',
                           onChanged: (val) {
                             setState(() {
+                              _isCustomMode = true;
                               _numRelays = val.toInt();
+                              final isEsp8266 = widget.device.isEsp8266;
+                              final defaultRelays = isEsp8266
+                                  ? [12, 14, 4, 5, 13, 15, 0, 16]
+                                  : [16, 17, 18, 19, 23, 25, 26, 27];
+                              final defaultSwitches = isEsp8266
+                                  ? [13, 16, 255, 255, 255, 255, 255, 255]
+                                  : [13, 14, 27, 26, 25, 255, 255, 255];
                               while (_channels.length < _numRelays) {
                                 final idx = _channels.length;
-                                final defaultRelays = [16, 17, 18, 19, 23, 25, 26, 27];
-                                final defaultSwitches = [13, 14, 27, 26, 25, 255, 255, 255];
                                 final sPin = idx < defaultSwitches.length ? defaultSwitches[idx] : 255;
+                                final rPin = idx < defaultRelays.length ? defaultRelays[idx] : 255;
                                 _channels.add(ChannelHardwareConfig(
                                   enabled: true,
                                   switchEnabled: (sPin != 255),
-                                  relayPin: idx < defaultRelays.length ? defaultRelays[idx] : 255,
+                                  relayPin: rPin,
                                   switchPin: sPin,
                                   switchMode: SwitchMode.toggle,
                                   triggerMode: 0,

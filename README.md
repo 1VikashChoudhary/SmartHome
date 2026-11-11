@@ -174,6 +174,26 @@ Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
 
 ## Hardware & Dynamic GPIO Template Engine
 
+The firmware provides a two-mode GPIO Template and Hardware Profile engine accessible via both the **Obsidian Web Dashboard** and the **Flutter Companion App**:
+
+### 1. Two Operational Modes
+* **⚡ Smart Presets**: Instant one-click hardware profiles tuned to standard hardware configurations:
+  * **ESP8266**: `1-CH Mini`, `2-CH Dual` (Default), `3-CH Pro`, `4-CH Quad`, `8-CH Max`, `Sensor Node` (0 relays).
+  * **ESP32**: `1-CH Mini`, `2-CH Dual`, `4-CH Pro`, `5-CH Standard` (Default), `8-CH Max`, `Sensor Node` (0 relays).
+* **🛠️ Custom DIY Mode**: Total configuration freedom with zero artificial board or relay limits:
+  * **0 to 8 Relays**: Add or remove relay channels dynamically (`+ Add Channel` / `− Remove`) to match your exact hardware.
+  * **Custom Wall Switches**: Pair any digital input pin with any relay channel in Toggle, Follow, Inverted Follow, Pushbutton, or Detached mode.
+  * **Sensor Integration**: Freely allocate Climate (DHT11/22, BME280, AHT20, SHT3x), Optics (BH1750), Motion (PIR, mmWave Radar LD2410), Water Temp (DS18B20), Ultrasonic Tank Level (HC-SR04P, HC-SR04, JSN-SR04T), Gas (MQ-2), Buzzer, LCD Display, and Status Button.
+  * **Shared I2C Bus Multiplier**: Connect multiple I2C devices (LCD1602/2004, BME280, AHT20, SHT3x, BH1750) simultaneously on the same 2 wire pins (SDA/SCL) with automatic address arbitration.
+
+### 2. Live GPIO Pin Allocation & Capability Matrix
+Both Web Dashboard and Companion App include real-time pin capability matrices:
+* **Free**: Available for new peripheral assignment (green).
+* **In Use**: Shows exact peripheral assignment (e.g., `Relay 1`, `Switch 2`, `I2C SDA`).
+* **Boot Strapping Badges**: Identifies boot pins (`GPIO 0, 2, 15` on ESP8266; `GPIO 0, 2, 12, 15` on ESP32) to prevent accidental pull-down/pull-up startup hangs.
+* **Input-Only Protection**: Blocks input-only pins (ESP32 `GPIO 34–39`, ESP8266 `A0 / GPIO 17`) from being assigned to outputs (relays, buzzer, DHT data line, ultrasonic trig).
+* **Real-Time Conflict Detection**: Highlights double-assignments in red with interactive resolution guidance before applying.
+
 ### Default Pin Configurations
 
 #### ESP8266 Standard 2-CH Dual (NodeMCU)

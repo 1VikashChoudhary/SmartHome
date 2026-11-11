@@ -79,12 +79,16 @@ void HardwareManager::resetToDefault() {
 bool HardwareManager::applyPreset(const String& presetName) {
     HardwareConfig newCfg;
 #if defined(ESP8266)
-    if (presetName.equalsIgnoreCase("SmartHome ESP8266 2-CH Dual") || presetName.equalsIgnoreCase("2ch") || presetName.equalsIgnoreCase("default") || presetName.equalsIgnoreCase("SmartHome 2-CH Dual") || presetName.equalsIgnoreCase("SmartHome 5-CH Standard") || presetName.equalsIgnoreCase("5ch") || presetName.equalsIgnoreCase("SmartHome 4-CH Pro") || presetName.equalsIgnoreCase("4ch") || presetName.equalsIgnoreCase("SmartHome 8-CH Max") || presetName.equalsIgnoreCase("8ch")) {
+    if (presetName.equalsIgnoreCase("SmartHome ESP8266 2-CH Dual") || presetName.equalsIgnoreCase("2ch") || presetName.equalsIgnoreCase("default") || presetName.equalsIgnoreCase("SmartHome 2-CH Dual")) {
         setPresetESP8266_2CH(newCfg);
     } else if (presetName.equalsIgnoreCase("SmartHome ESP8266 1-CH Mini") || presetName.equalsIgnoreCase("1ch") || presetName.equalsIgnoreCase("smartplug") || presetName.equalsIgnoreCase("SmartHome 1-CH Mini")) {
         setPresetESP8266_1CH(newCfg);
     } else if (presetName.equalsIgnoreCase("SmartHome ESP8266 3-CH Pro") || presetName.equalsIgnoreCase("3ch") || presetName.equalsIgnoreCase("SmartHome 3-CH Pro")) {
         setPresetESP8266_3CH(newCfg);
+    } else if (presetName.equalsIgnoreCase("SmartHome ESP8266 4-CH Quad") || presetName.equalsIgnoreCase("4ch") || presetName.equalsIgnoreCase("SmartHome 4-CH Pro") || presetName.equalsIgnoreCase("SmartHome 5-CH Standard") || presetName.equalsIgnoreCase("5ch")) {
+        setPresetESP8266_4CH(newCfg);
+    } else if (presetName.equalsIgnoreCase("SmartHome ESP8266 8-CH Max") || presetName.equalsIgnoreCase("8ch") || presetName.equalsIgnoreCase("SmartHome 8-CH Max")) {
+        setPresetESP8266_8CH(newCfg);
     } else if (presetName.equalsIgnoreCase("SmartHome ESP8266 Sensor Node") || presetName.equalsIgnoreCase("0ch") || presetName.equalsIgnoreCase("sensor_node") || presetName.equalsIgnoreCase("SmartHome Sensor Node")) {
         setPresetESP8266_SensorNode(newCfg);
     } else {
@@ -1070,12 +1074,116 @@ void HardwareManager::setPresetESP8266_SensorNode(HardwareConfig& cfg) {
     cfg.tankAirGapCm = 15;
 }
 
+void HardwareManager::setPresetESP8266_4CH(HardwareConfig& cfg) {
+    memset(&cfg, 0, sizeof(cfg));
+    strncpy(cfg.boardName, "SmartHome ESP8266 4-CH Quad", sizeof(cfg.boardName) - 1);
+    cfg.numRelays = 4;
+
+    const uint8_t rPins[4] = {12, 14, 4, 5}; // D6, D5, D2, D1
+    const uint8_t sPins[4] = {13, 16, PIN_UNUSED, PIN_UNUSED}; // D7, D0
+    for (int i = 0; i < 4; i++) {
+        cfg.channels[i].enabled       = true;
+        cfg.channels[i].relayPin      = rPins[i];
+        cfg.channels[i].switchEnabled = (sPins[i] != PIN_UNUSED);
+        cfg.channels[i].switchPin     = sPins[i];
+        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
+        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
+    }
+    for (int i = 4; i < MAX_RELAYS; i++) {
+        cfg.channels[i].enabled       = false;
+        cfg.channels[i].relayPin      = PIN_UNUSED;
+        cfg.channels[i].switchEnabled = false;
+        cfg.channels[i].switchPin     = PIN_UNUSED;
+    }
+
+    cfg.dhtType = CLIMATE_NONE;
+    cfg.dhtPin  = PIN_UNUSED;
+
+    cfg.mq2Enabled    = true;
+    cfg.mq2AnalogPin  = 17; // A0
+    cfg.mq2DigitalPin = PIN_UNUSED;
+
+    cfg.buzzerEnabled = true;
+    cfg.buzzerPin     = 2; // D4
+
+    cfg.lcdEnabled  = false;
+    cfg.lcdI2cAddr = 0x27;
+    cfg.lcdCols    = 16;
+    cfg.lcdRows    = 2;
+    cfg.i2cSdaPin  = PIN_UNUSED;
+    cfg.i2cSclPin  = PIN_UNUSED;
+
+    cfg.btnMultiPin = 0; // D3 / FLASH
+
+    cfg.lightType = LIGHT_NONE;
+    cfg.motionType = MOTION_NONE;
+    cfg.motionPin = PIN_UNUSED;
+    cfg.probeType = PROBE_NONE;
+    cfg.probePin = PIN_UNUSED;
+    cfg.ultrasonicType = ULTRASONIC_NONE;
+    cfg.trigPin = PIN_UNUSED;
+    cfg.echoPin = PIN_UNUSED;
+    cfg.tankDepthCm = 150;
+    cfg.tankAirGapCm = 15;
+}
+
+void HardwareManager::setPresetESP8266_8CH(HardwareConfig& cfg) {
+    memset(&cfg, 0, sizeof(cfg));
+    strncpy(cfg.boardName, "SmartHome ESP8266 8-CH Max", sizeof(cfg.boardName) - 1);
+    cfg.numRelays = 8;
+
+    // 8 Relays on ESP8266:
+    // GPIO 12 (D6), GPIO 14 (D5), GPIO 4 (D2), GPIO 5 (D1),
+    // GPIO 13 (D7), GPIO 15 (D8), GPIO 0 (D3), GPIO 16 (D0)
+    const uint8_t rPins[8] = {12, 14, 4, 5, 13, 15, 0, 16};
+    for (int i = 0; i < 8; i++) {
+        cfg.channels[i].enabled       = true;
+        cfg.channels[i].relayPin      = rPins[i];
+        cfg.channels[i].switchEnabled = false;
+        cfg.channels[i].switchPin     = PIN_UNUSED;
+        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
+        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
+    }
+
+    cfg.dhtType = CLIMATE_NONE;
+    cfg.dhtPin  = PIN_UNUSED;
+
+    cfg.mq2Enabled    = true;
+    cfg.mq2AnalogPin  = 17; // A0 (ADC0)
+    cfg.mq2DigitalPin = PIN_UNUSED;
+
+    cfg.buzzerEnabled = true;
+    cfg.buzzerPin     = 2; // D4
+
+    cfg.lcdEnabled  = false;
+    cfg.lcdI2cAddr = 0x27;
+    cfg.lcdCols    = 16;
+    cfg.lcdRows    = 2;
+    cfg.i2cSdaPin  = PIN_UNUSED;
+    cfg.i2cSclPin  = PIN_UNUSED;
+
+    cfg.btnMultiPin = PIN_UNUSED;
+
+    cfg.lightType = LIGHT_NONE;
+    cfg.motionType = MOTION_NONE;
+    cfg.motionPin = PIN_UNUSED;
+    cfg.probeType = PROBE_NONE;
+    cfg.probePin = PIN_UNUSED;
+    cfg.ultrasonicType = ULTRASONIC_NONE;
+    cfg.trigPin = PIN_UNUSED;
+    cfg.echoPin = PIN_UNUSED;
+    cfg.tankDepthCm = 150;
+    cfg.tankAirGapCm = 15;
+}
+
 void HardwareManager::getPresetsJson(JsonArray& arr) {
 #if defined(ESP8266)
     const char* presets[] = {
         "SmartHome ESP8266 2-CH Dual",
         "SmartHome ESP8266 1-CH Mini",
         "SmartHome ESP8266 3-CH Pro",
+        "SmartHome ESP8266 4-CH Quad",
+        "SmartHome ESP8266 8-CH Max",
         "SmartHome ESP8266 Sensor Node"
     };
 #else
@@ -1106,6 +1214,10 @@ void HardwareManager::getPinCapabilitiesJson(JsonObject& obj) {
 
     JsonArray inputOnly = obj["input_only"].to<JsonArray>();
     inputOnly.add(17);
+
+    JsonArray strapping = obj["strapping"].to<JsonArray>();
+    const uint8_t strapPins[] = {0, 2, 15};
+    for (uint8_t p : strapPins) strapping.add(p);
 #else
     JsonArray outputs = obj["outputs"].to<JsonArray>();
     const uint8_t safeOutputs[] = {2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33};
@@ -1122,5 +1234,9 @@ void HardwareManager::getPinCapabilitiesJson(JsonObject& obj) {
     JsonArray inputOnly = obj["input_only"].to<JsonArray>();
     const uint8_t inOnlyPins[] = {34, 35, 36, 39};
     for (uint8_t p : inOnlyPins) inputOnly.add(p);
+
+    JsonArray strapping = obj["strapping"].to<JsonArray>();
+    const uint8_t strapPins[] = {0, 2, 12, 15};
+    for (uint8_t p : strapPins) strapping.add(p);
 #endif
 }

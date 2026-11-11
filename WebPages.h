@@ -554,16 +554,36 @@ Family and Guests can toggle switches, view sensors, and set quick timers withou
 <div class="card" style="grid-column: 1 / -1;">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
 <div>
-<div class="card-title" style="margin-bottom:2px;"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg> Hardware Profile &amp; GPIO Template</div>
-<div style="font-size:0.75rem;color:var(--text2)">Tasmota-style dynamic GPIO mapping, relay count &amp; sensor pin configuration</div>
+<div class="card-title" style="margin-bottom:2px;"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg> Hardware Profile &amp; GPIO Engine</div>
+<div style="font-size:0.75rem;color:var(--text2)">Universal hardware pin mapper: Custom DIY pin budgeting &amp; Smart Presets</div>
 </div>
-<div style="display:flex;gap:8px;flex-wrap:wrap;">
-<select id="hwPresetSelect" onchange="onPresetSelected()" style="background:var(--bg);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:6px 12px;font-size:0.85rem;">
+<!-- Mode Switcher -->
+<div style="display:flex;background:var(--bg);padding:3px;border-radius:10px;border:1px solid var(--border);gap:4px;">
+<button type="button" id="btnHwModePreset" class="btn btn-sm btn-primary" onclick="setHwMode('preset')" style="padding:5px 12px;font-size:0.78rem;">⚡ Smart Presets</button>
+<button type="button" id="btnHwModeCustom" class="btn btn-sm btn-outline" onclick="setHwMode('custom')" style="padding:5px 12px;font-size:0.78rem;border:none;">🛠️ Custom DIY Mode</button>
+</div>
+</div>
+
+<!-- Preset Bar (Visible in Preset Mode) -->
+<div id="hwPresetControls" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;padding:10px;background:var(--bg);border-radius:8px;border:1px solid var(--border);">
+<span style="font-size:0.8rem;color:var(--text2);font-weight:600;">Standard Template:</span>
+<select id="hwPresetSelect" onchange="onPresetSelected()" style="background:var(--surface);color:var(--text);border:1px solid var(--accent);border-radius:8px;padding:6px 12px;font-size:0.85rem;flex:1;min-width:200px;">
 <option value="">-- Quick Load Preset --</option>
 </select>
-<button class="btn btn-outline btn-sm" onclick="applyHwPresetBtn()">Apply Preset</button>
-<button class="btn btn-red btn-sm" id="btnHwReset" onclick="resetHwDefaultBtn()">Reset Default</button>
+<button type="button" class="btn btn-outline btn-sm" onclick="applyHwPresetBtn()">Apply Preset</button>
+<button type="button" class="btn btn-red btn-sm" id="btnHwReset" onclick="resetHwDefaultBtn()">Reset Default</button>
 </div>
+
+<!-- Live GPIO Pin Availability & Capability Matrix -->
+<div style="margin-bottom:14px;background:var(--bg);padding:12px;border-radius:10px;border:1px solid var(--border);">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div>
+<span style="font-weight:700;font-size:0.85rem;color:var(--accent);">⚡ LIVE GPIO PIN ALLOCATION MATRIX</span>
+<span style="font-size:0.72rem;color:var(--text2);margin-left:8px;">Real-time pin budget &amp; assignment map</span>
+</div>
+<div id="hwPinStatsBadge" style="font-size:0.72rem;color:var(--text2);font-weight:600;"></div>
+</div>
+<div id="hwPinMatrixGrid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(130px, 1fr));gap:6px;"></div>
 </div>
 
 <div id="hwConflictAlert" style="display:none;padding:10px 14px;background:rgba(239,68,68,0.15);border:1px solid #ef4444;border-radius:8px;color:#fca5a5;font-size:0.85rem;margin-bottom:14px;"></div>
@@ -576,7 +596,15 @@ Family and Guests can toggle switches, view sensors, and set quick timers withou
 "SmartHome 5-CH Standard"
 #endif
 R"rawliteral("></div>
-<div class="form-group"><label>Active Relays Count (0 to 8)</label><select id="hwNumRelays" onchange="renderHwChannelsFromUI()"><option value="0">0 (Sensor Only)</option><option value="1">1 Relay</option><option value="2")rawliteral"
+<div class="form-group">
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+<label style="margin:0;">Active Relays Count (0 to 8)</label>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwRelayChannel()">+ Add Channel</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwRelayChannel()">− Remove</button>
+</div>
+</div>
+<select id="hwNumRelays" onchange="renderHwChannelsFromUI()"><option value="0">0 (Sensor Only)</option><option value="1">1 Relay</option><option value="2")rawliteral"
 #if defined(ESP8266)
 " selected"
 #endif
@@ -584,7 +612,8 @@ R"rawliteral(>2 Relays</option><option value="3">3 Relays</option><option value=
 #if !defined(ESP8266)
 " selected"
 #endif
-R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><option value="7">7 Relays</option><option value="8">8 Relays (Max)</option></select></div>
+R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><option value="7">7 Relays</option><option value="8">8 Relays (Max)</option></select>
+</div>
 </div>
 
 <div class="card-title" style="margin-top:10px;font-size:0.95rem;">Relay Channels &amp; Wall Switches</div>
@@ -2193,16 +2222,113 @@ function renderHwChannels(num, existingChannels) {
     }
 }
 
+function setHwMode(mode) {
+    const btnPre = document.getElementById('btnHwModePreset');
+    const btnCus = document.getElementById('btnHwModeCustom');
+    const preBar = document.getElementById('hwPresetControls');
+    if (mode === 'preset') {
+        if (btnPre) { btnPre.className = 'btn btn-sm btn-primary'; btnPre.style.border = ''; }
+        if (btnCus) { btnCus.className = 'btn btn-sm btn-outline'; btnCus.style.border = 'none'; }
+        if (preBar) preBar.style.display = 'flex';
+    } else {
+        if (btnCus) { btnCus.className = 'btn btn-sm btn-primary'; btnCus.style.border = ''; }
+        if (btnPre) { btnPre.className = 'btn btn-sm btn-outline'; btnPre.style.border = 'none'; }
+        if (preBar) preBar.style.display = 'none';
+        const bName = document.getElementById('hwBoardName');
+        if (bName && (!bName.value || bName.value.includes('Standard') || bName.value.includes('Dual'))) {
+            bName.value = gIsEsp8266 ? 'SmartHome ESP8266 Custom DIY' : 'SmartHome Custom DIY Controller';
+        }
+    }
+}
+
+function addHwRelayChannel() {
+    const sel = document.getElementById('hwNumRelays');
+    let cur = parseInt(sel.value) || 0;
+    if (cur >= 8) {
+        toast('Maximum 8 relays supported', 'warn');
+        return;
+    }
+    cur++;
+    sel.value = String(cur);
+    renderHwChannelsFromUI();
+    toast(`Relay Channel ${cur} added`, 'ok');
+}
+
+function removeHwRelayChannel() {
+    const sel = document.getElementById('hwNumRelays');
+    let cur = parseInt(sel.value) || 0;
+    if (cur <= 0) return;
+    cur--;
+    sel.value = String(cur);
+    renderHwChannelsFromUI();
+    toast(`Relay Channel ${cur + 1} removed`, 'info');
+}
+
+function renderPinMatrix(usedPins, conflicts) {
+    const grid = document.getElementById('hwPinMatrixGrid');
+    if (!grid) return;
+    const pins = gIsEsp8266 ? [16, 5, 4, 0, 2, 14, 12, 13, 15, 17] : [2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39];
+    const strapPins = gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15];
+    const inOnlyPins = gIsEsp8266 ? [17] : [34, 35, 36, 39];
+
+    let usedCount = 0;
+    let html = '';
+
+    pins.forEach(p => {
+        const isStrap = strapPins.includes(p);
+        const isInOnly = inOnlyPins.includes(p);
+        const assigned = usedPins[p];
+        const isConflict = conflicts && conflicts.some(c => c.includes(`GPIO ${p}`));
+        if (assigned) usedCount++;
+
+        let borderCol = 'var(--card-border)';
+        let bgCol = 'var(--surface)';
+        let statusBadge = '<span style="color:#10b981;font-weight:600;">🟢 Free</span>';
+
+        if (isConflict) {
+            borderCol = '#ef4444';
+            bgCol = 'rgba(239,68,68,0.18)';
+            statusBadge = '<span style="color:#f87171;font-weight:700;">🔴 CONFLICT</span>';
+        } else if (assigned) {
+            borderCol = 'rgba(99,102,241,0.45)';
+            bgCol = 'rgba(99,102,241,0.12)';
+            statusBadge = `<span style="color:#818cf8;font-weight:600;font-size:0.7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" title="${escapeHtml(assigned)}">${escapeHtml(assigned)}</span>`;
+        }
+
+        const pinLabel = (gIsEsp8266 && ESP8266_PIN_NAMES[p]) ? ESP8266_PIN_NAMES[p] : (`GPIO ${p}`);
+
+        html += `<div style="background:${bgCol};border:1px solid ${borderCol};border-radius:8px;padding:6px 8px;display:flex;flex-direction:column;gap:3px;min-width:0;box-sizing:border-box;">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+                <span style="font-weight:700;font-size:0.75rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${pinLabel}</span>
+                <div style="display:flex;gap:2px;">
+                    ${isStrap ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(245,158,11,0.25);color:#fbbf24;" title="Strapping Boot Pin">BOOT</span>' : ''}
+                    ${isInOnly ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(168,85,247,0.25);color:#c084fc;" title="Input-Only Pin">IN</span>' : ''}
+                </div>
+            </div>
+            <div style="font-size:0.7rem;">${statusBadge}</div>
+        </div>`;
+    });
+
+    grid.innerHTML = html;
+    const statsEl = document.getElementById('hwPinStatsBadge');
+    if (statsEl) {
+        const freeCount = pins.length - usedCount;
+        statsEl.innerHTML = `Total: <b>${pins.length}</b> Pins &bull; Used: <b>${usedCount}</b> &bull; Free: <b style="color:#10b981">${freeCount} Available</b>`;
+    }
+}
+
 function checkHwConflicts() {
     const alertBox = document.getElementById('hwConflictAlert');
-    if (!alertBox) return true;
-
     const num = parseInt(document.getElementById('hwNumRelays').value) || 0;
     const usedPins = {};
     const conflicts = [];
+    const inOnlyPins = gIsEsp8266 ? [17] : [34, 35, 36, 39];
 
-    function claim(pin, name) {
+    function claim(pin, name, isOutput) {
         if (pin === 255 || pin === undefined || isNaN(pin)) return;
+        if (isOutput && inOnlyPins.includes(pin)) {
+            conflicts.push(`GPIO ${pin} ("${name}") is an Input-Only pin and CANNOT be used as an output or bidirectional line.`);
+        }
         if (usedPins[pin]) {
             conflicts.push(`GPIO ${pin} is assigned to both "${usedPins[pin]}" and "${name}"`);
         } else {
@@ -2219,61 +2345,69 @@ function checkHwConflicts() {
 
         const rEl = document.getElementById(`hw_rpin_${i}`);
         const sEl = document.getElementById(`hw_spin_${i}`);
-        if (rEl) claim(parseInt(rEl.value), `Relay ${i + 1} Output`);
-        if (isSwEn && sEl) claim(parseInt(sEl.value), `Relay ${i + 1} Switch`);
+        if (rEl) claim(parseInt(rEl.value), `Relay ${i + 1} Output`, true);
+        if (isSwEn && sEl) claim(parseInt(sEl.value), `Relay ${i + 1} Switch`, false);
     }
 
     const dhtType = parseInt(document.getElementById('hwDhtType').value);
     if (dhtType === 1 || dhtType === 2) {
         const dhtPin = parseInt(document.getElementById('hwDhtPin').value);
-        claim(dhtPin, 'DHT Climate');
+        claim(dhtPin, 'DHT Climate', true);
     }
 
     const motionType = parseInt(document.getElementById('hwMotionType').value);
     if (motionType !== 0) {
-        claim(parseInt(document.getElementById('hwMotionPin').value), 'Motion Sensor');
+        claim(parseInt(document.getElementById('hwMotionPin').value), 'Motion Sensor', false);
     }
 
     const probeType = parseInt(document.getElementById('hwProbeType').value);
     if (probeType !== 0) {
-        claim(parseInt(document.getElementById('hwProbePin').value), 'DS18B20 Probe');
+        claim(parseInt(document.getElementById('hwProbePin').value), 'DS18B20 Probe', true);
     }
 
     const ultrasonicType = parseInt(document.getElementById('hwUltrasonicType').value);
     if (ultrasonicType !== 0) {
-        claim(parseInt(document.getElementById('hwTrigPin').value), 'Ultrasonic Trig');
-        claim(parseInt(document.getElementById('hwEchoPin').value), 'Ultrasonic Echo');
+        claim(parseInt(document.getElementById('hwTrigPin').value), 'Ultrasonic Trig', true);
+        claim(parseInt(document.getElementById('hwEchoPin').value), 'Ultrasonic Echo', false);
     }
 
     const mq2En = document.getElementById('hwMq2En').value === '1';
     if (mq2En) {
-        claim(parseInt(document.getElementById('hwMq2AnalogPin').value), 'MQ-2 Analog');
-        claim(parseInt(document.getElementById('hwMq2DigitalPin').value), 'MQ-2 Digital');
+        claim(parseInt(document.getElementById('hwMq2AnalogPin').value), 'MQ-2 Analog', false);
+        const mq2DPin = parseInt(document.getElementById('hwMq2DigitalPin').value);
+        if (mq2DPin !== 255) claim(mq2DPin, 'MQ-2 Digital', false);
     }
 
     const buzEn = document.getElementById('hwBuzEn').value === '1';
     if (buzEn) {
-        claim(parseInt(document.getElementById('hwBuzPin').value), 'Buzzer');
+        claim(parseInt(document.getElementById('hwBuzPin').value), 'Buzzer', true);
     }
 
     const isI2cUsed = (document.getElementById('hwLcdEn').value === '1') ||
                       (parseInt(document.getElementById('hwDhtType').value) >= 3) ||
                       (parseInt(document.getElementById('hwLightType').value) === 1);
     if (isI2cUsed) {
-        claim(parseInt(document.getElementById('hwLcdSda').value), 'I2C SDA');
-        claim(parseInt(document.getElementById('hwLcdScl').value), 'I2C SCL');
+        const sda = parseInt(document.getElementById('hwLcdSda').value);
+        const scl = parseInt(document.getElementById('hwLcdScl').value);
+        claim(sda, 'I2C SDA (Shared Bus)', true);
+        claim(scl, 'I2C SCL (Shared Bus)', true);
     }
 
-    claim(parseInt(document.getElementById('hwBtnMultiPin').value), 'Multi-Button');
+    claim(parseInt(document.getElementById('hwBtnMultiPin').value), 'Multi-Button', false);
 
-    if (conflicts.length > 0) {
-        alertBox.innerHTML = '<strong>GPIO Conflict Detected:</strong><br>' + conflicts.join('<br>');
-        alertBox.style.display = 'block';
-        return false;
-    } else {
-        alertBox.style.display = 'none';
-        return true;
+    renderPinMatrix(usedPins, conflicts);
+
+    if (alertBox) {
+        if (conflicts.length > 0) {
+            alertBox.innerHTML = '<strong>GPIO Conflict / Hardware Incompatibility Detected:</strong><br>' + conflicts.join('<br>');
+            alertBox.style.display = 'block';
+            return false;
+        } else {
+            alertBox.style.display = 'none';
+            return true;
+        }
     }
+    return conflicts.length === 0;
 }
 
 function onPresetSelected() {

@@ -402,6 +402,8 @@ class HardwareProfile {
     'SmartHome ESP8266 2-CH Dual',
     'SmartHome ESP8266 1-CH Mini',
     'SmartHome ESP8266 3-CH Pro',
+    'SmartHome ESP8266 4-CH Quad',
+    'SmartHome ESP8266 8-CH Max',
     'SmartHome ESP8266 Sensor Node',
   ];
 
@@ -421,6 +423,12 @@ class HardwareProfile {
     0, 2, 4, 5, 12, 13, 14, 15, 16, 17
   ];
 
+  static const List<int> strappingPinsESP32 = [0, 2, 12, 15];
+  static const List<int> strappingPinsESP8266 = [0, 2, 15];
+
+  static const List<int> inputOnlyPinsESP32 = [34, 35, 36, 39];
+  static const List<int> inputOnlyPinsESP8266 = [17]; // A0
+
   static const List<int> adc1Pins = [32, 33, 34, 35, 36, 39];
   static const List<int> adc1PinsESP8266 = [17]; // A0
 
@@ -435,6 +443,17 @@ class HardwareProfile {
 
   static List<int> adc1PinsFor(bool isEsp8266) =>
       isEsp8266 ? adc1PinsESP8266 : adc1Pins;
+
+  static List<int> strappingPinsFor(bool isEsp8266) =>
+      isEsp8266 ? strappingPinsESP8266 : strappingPinsESP32;
+
+  static List<int> inputOnlyPinsFor(bool isEsp8266) =>
+      isEsp8266 ? inputOnlyPinsESP8266 : inputOnlyPinsESP32;
+
+  static List<int> allPhysicalPinsFor(bool isEsp8266) =>
+      isEsp8266
+          ? [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
+          : [0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39];
 
   static String pinLabel(int pin, bool isEsp8266) {
     if (pin == 255) return 'None / Disabled';
