@@ -74,6 +74,15 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
   @override
   void initState() {
     super.initState();
+    _numRelays = widget.device.isEsp8266 ? 2 : 5;
+    if (widget.device.isEsp8266) {
+      _mq2AnalogPin = 17; // A0
+      _mq2DigitalPin = 255;
+      _buzzerPin = 2;
+      _i2cSdaPin = 4;
+      _i2cSclPin = 5;
+      _btnMultiPin = 0;
+    }
     _boardNameController = TextEditingController(
       text: widget.device.isEsp8266 ? 'SmartHome ESP8266 2-CH Dual' : 'SmartHome 5-CH Standard',
     );
@@ -106,10 +115,12 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       if (profile != null) {
         _applyProfileToState(profile);
       } else {
-        _initDefaultChannels(5);
+        final defaultCount = widget.device.isEsp8266 ? 2 : 5;
+        _initDefaultChannels(defaultCount);
       }
     } catch (_) {
-      _initDefaultChannels(5);
+      final defaultCount = widget.device.isEsp8266 ? 2 : 5;
+      _initDefaultChannels(defaultCount);
       _errorMessage = 'Could not fetch live profile from controller. Loaded defaults.';
     } finally {
       if (mounted) {
@@ -123,10 +134,19 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     _numRelays = p.numRelays.clamp(0, 8);
     _channels = List.from(p.channels);
 
+    final presets = HardwareProfile.presetsFor(widget.device.isEsp8266);
+    _isCustomMode = !presets.contains(p.boardName);
+
+    final isEsp8266 = widget.device.isEsp8266;
+    final defaultRelays = isEsp8266
+        ? [12, 14, 4, 5, 13, 15, 0, 16]
+        : [16, 17, 18, 19, 23, 25, 26, 27];
+    final defaultSwitches = isEsp8266
+        ? [13, 16, 255, 255, 255, 255, 255, 255]
+        : [13, 14, 27, 26, 25, 255, 255, 255];
+
     while (_channels.length < _numRelays) {
       final idx = _channels.length;
-      final defaultRelays = [16, 17, 18, 19, 23, 25, 26, 27];
-      final defaultSwitches = [13, 14, 27, 26, 25, 255, 255, 255];
       _channels.add(ChannelHardwareConfig(
         relayPin: idx < defaultRelays.length ? defaultRelays[idx] : 255,
         switchPin: idx < defaultSwitches.length ? defaultSwitches[idx] : 255,
