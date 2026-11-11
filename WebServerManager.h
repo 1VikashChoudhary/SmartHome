@@ -60,6 +60,7 @@ public:
     bool verifyCredentials(const String& user, const String& pass) const;
     bool verifyWsToken(const String& token) const;
     const String& getWsToken() const { return _wsToken; }
+    const String& getDeviceName() const { return _deviceName; }
     AuthRole getRequestRole(AsyncWebServerRequest* req);
     bool isAuthorized(AsyncWebServerRequest* req, AuthRole requiredRole = AUTH_ROLE_GUEST);
 
@@ -93,6 +94,9 @@ private:
     volatile bool _rebootRequested;
     unsigned long _rebootRequestTime;
     unsigned long _rebootDelay;
+
+    // Device identity cache (in RAM to eliminate SPI flash wear during 1Hz polling)
+    String _deviceName;
 
     // Authentication Settings (Multi-User Privilege Tiers: Admin vs. Family / Guest)
     bool _webAuthEnabled;

@@ -189,7 +189,21 @@ void ButtonManager::processSwitches() {
 void ButtonManager::initButton(ButtonState& btn, uint8_t pin) {
     btn.pin = pin;
     btn.enabled = true;
+#if defined(ESP8266)
+    if (pin == 16) {
+        pinMode(pin, INPUT); // ESP8266 GPIO 16 has no internal pullup
+    } else {
+        pinMode(pin, INPUT_PULLUP);
+    }
+#elif defined(ESP32)
+    if (pin >= 34 && pin <= 39) {
+        pinMode(pin, INPUT); // ESP32 GPIO 34-39 are input-only
+    } else {
+        pinMode(pin, INPUT_PULLUP);
+    }
+#else
     pinMode(pin, INPUT_PULLUP);
+#endif
     btn.lastReading = HIGH;
     btn.stableState = HIGH;
     btn.lastDebounceTime = 0;

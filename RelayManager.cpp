@@ -476,7 +476,21 @@ void RelayManager::initWallSwitchStates() {
         uint8_t pin = _hw ? _hw->getSwitchPin(i) : (i < NUM_RELAYS ? SWITCH_PINS[i] : PIN_UNUSED);
         if (pin == PIN_UNUSED) continue;
 
+#if defined(ESP8266)
+        if (pin == 16) {
+            pinMode(pin, INPUT); // ESP8266 GPIO 16 has no internal pullup
+        } else {
+            pinMode(pin, INPUT_PULLUP);
+        }
+#elif defined(ESP32)
+        if (pin >= 34 && pin <= 39) {
+            pinMode(pin, INPUT); // ESP32 GPIO 34-39 are input-only with no internal pullups
+        } else {
+            pinMode(pin, INPUT_PULLUP);
+        }
+#else
         pinMode(pin, INPUT_PULLUP);
+#endif
         bool currentSwitch = !digitalRead(pin);
         bool savedSwitch = _state[i].lastSwitchState;
 

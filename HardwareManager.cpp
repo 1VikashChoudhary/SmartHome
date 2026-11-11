@@ -435,13 +435,39 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.channels[idx].triggerMode   = TRIGGER_ACTIVE_LOW;
     }
 
+#if defined(ESP8266)
+    const uint8_t defDhtPin    = PIN_UNUSED;
+    const uint8_t defMotionPin = PIN_UNUSED;
+    const uint8_t defProbePin  = PIN_UNUSED;
+    const uint8_t defTrigPin   = PIN_UNUSED;
+    const uint8_t defEchoPin   = PIN_UNUSED;
+    const uint8_t defMq2APin   = 17; // A0 on ESP8266
+    const uint8_t defMq2DPin   = PIN_UNUSED;
+    const uint8_t defBuzPin    = 2;
+    const uint8_t defSdaPin    = 4;
+    const uint8_t defSclPin    = 5;
+    const uint8_t defBtnPin    = 0;
+#else
+    const uint8_t defDhtPin    = 4;
+    const uint8_t defMotionPin = 32;
+    const uint8_t defProbePin  = 15;
+    const uint8_t defTrigPin   = 15;
+    const uint8_t defEchoPin   = 35;
+    const uint8_t defMq2APin   = 34;
+    const uint8_t defMq2DPin   = 35;
+    const uint8_t defBuzPin    = 5;
+    const uint8_t defSdaPin    = 21;
+    const uint8_t defSclPin    = 22;
+    const uint8_t defBtnPin    = 33;
+#endif
+
     if (obj.containsKey("dht")) {
         JsonObjectConst dht = obj["dht"];
-        newCfg.dhtType = (ClimateSensorType)(dht["type"] | (uint8_t)CLIMATE_DHT22);
-        newCfg.dhtPin  = dht["pin"] | 4;
+        newCfg.dhtType = (ClimateSensorType)(dht["type"] | (uint8_t)(dht["pin"] != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE));
+        newCfg.dhtPin  = dht["pin"] | defDhtPin;
     } else {
-        newCfg.dhtType = CLIMATE_DHT22;
-        newCfg.dhtPin  = 4;
+        newCfg.dhtType = (defDhtPin != PIN_UNUSED) ? CLIMATE_DHT22 : CLIMATE_NONE;
+        newCfg.dhtPin  = defDhtPin;
     }
 
     if (obj.containsKey("light")) {
@@ -454,32 +480,32 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
     if (obj.containsKey("motion")) {
         JsonObjectConst mot = obj["motion"];
         newCfg.motionType = (MotionSensorType)(mot["type"] | (uint8_t)MOTION_NONE);
-        newCfg.motionPin  = mot["pin"] | 32;
+        newCfg.motionPin  = mot["pin"] | defMotionPin;
     } else {
         newCfg.motionType = MOTION_NONE;
-        newCfg.motionPin  = 32;
+        newCfg.motionPin  = defMotionPin;
     }
 
     if (obj.containsKey("probe")) {
         JsonObjectConst prb = obj["probe"];
         newCfg.probeType = (ProbeSensorType)(prb["type"] | (uint8_t)PROBE_NONE);
-        newCfg.probePin  = prb["pin"] | 15;
+        newCfg.probePin  = prb["pin"] | defProbePin;
     } else {
         newCfg.probeType = PROBE_NONE;
-        newCfg.probePin  = 15;
+        newCfg.probePin  = defProbePin;
     }
 
     if (obj.containsKey("ultrasonic")) {
         JsonObjectConst us = obj["ultrasonic"];
         newCfg.ultrasonicType = (UltrasonicSensorType)(us["type"] | (uint8_t)ULTRASONIC_NONE);
-        newCfg.trigPin        = us["trig_pin"] | 15;
-        newCfg.echoPin        = us["echo_pin"] | 35;
+        newCfg.trigPin        = us["trig_pin"] | defTrigPin;
+        newCfg.echoPin        = us["echo_pin"] | defEchoPin;
         newCfg.tankDepthCm    = us["tank_depth"] | 150;
         newCfg.tankAirGapCm   = us["air_gap"] | 15;
     } else {
         newCfg.ultrasonicType = ULTRASONIC_NONE;
-        newCfg.trigPin        = 15;
-        newCfg.echoPin        = 35;
+        newCfg.trigPin        = defTrigPin;
+        newCfg.echoPin        = defEchoPin;
         newCfg.tankDepthCm    = 150;
         newCfg.tankAirGapCm   = 15;
     }
@@ -487,21 +513,21 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
     if (obj.containsKey("mq2")) {
         JsonObjectConst mq2 = obj["mq2"];
         newCfg.mq2Enabled    = mq2["enabled"] | true;
-        newCfg.mq2AnalogPin  = mq2["analog_pin"] | 34;
-        newCfg.mq2DigitalPin = mq2["digital_pin"] | 35;
+        newCfg.mq2AnalogPin  = mq2["analog_pin"] | defMq2APin;
+        newCfg.mq2DigitalPin = mq2["digital_pin"] | defMq2DPin;
     } else {
         newCfg.mq2Enabled    = true;
-        newCfg.mq2AnalogPin  = 34;
-        newCfg.mq2DigitalPin = 35;
+        newCfg.mq2AnalogPin  = defMq2APin;
+        newCfg.mq2DigitalPin = defMq2DPin;
     }
 
     if (obj.containsKey("buzzer")) {
         JsonObjectConst buz = obj["buzzer"];
         newCfg.buzzerEnabled = buz["enabled"] | true;
-        newCfg.buzzerPin     = buz["pin"] | 5;
+        newCfg.buzzerPin     = buz["pin"] | defBuzPin;
     } else {
         newCfg.buzzerEnabled = true;
-        newCfg.buzzerPin     = 5;
+        newCfg.buzzerPin     = defBuzPin;
     }
 
     if (obj.containsKey("lcd")) {
@@ -510,18 +536,18 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.lcdI2cAddr = lcd["i2c_addr"] | 0x27;
         newCfg.lcdCols    = lcd["cols"] | 16;
         newCfg.lcdRows    = lcd["rows"] | 2;
-        newCfg.i2cSdaPin  = lcd["sda_pin"] | 21;
-        newCfg.i2cSclPin  = lcd["scl_pin"] | 22;
+        newCfg.i2cSdaPin  = lcd["sda_pin"] | defSdaPin;
+        newCfg.i2cSclPin  = lcd["scl_pin"] | defSclPin;
     } else {
         newCfg.lcdEnabled  = true;
         newCfg.lcdI2cAddr = 0x27;
         newCfg.lcdCols    = 16;
         newCfg.lcdRows    = 2;
-        newCfg.i2cSdaPin  = 21;
-        newCfg.i2cSclPin  = 22;
+        newCfg.i2cSdaPin  = defSdaPin;
+        newCfg.i2cSclPin  = defSclPin;
     }
 
-    newCfg.btnMultiPin = obj["btn_multi_pin"] | 33;
+    newCfg.btnMultiPin = obj["btn_multi_pin"] | defBtnPin;
 
     if (!validateConfig(newCfg, outError)) {
         return false;

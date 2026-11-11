@@ -80,10 +80,8 @@ WebServerManager  webServer;
 String wsDataProvider() {
     JsonDocument doc;
 
-    // Device info
-    JsonDocument cfgDoc;
-    storage.loadJson(PATH_CONFIG, cfgDoc);
-    doc["device_name"] = cfgDoc["device_name"] | DEFAULT_DEVICE_NAME;
+    // Device info (cached in RAM to eliminate SPI flash wear during 1Hz WebSocket broadcast)
+    doc["device_name"] = webServer.getDeviceName();
     doc["fw_version"] = FW_VERSION;
     doc["platform"] = PLATFORM_NAME;
     doc["model"] = String(PLATFORM_NAME) + "-SmartHome";
@@ -572,7 +570,7 @@ void loop() {
         lcdMgr.updateSensorData(sensorMgr.getTemperature(), sensorMgr.getHumidity(), sensorMgr.isDHTFault());
 
         // Relay states for LCD
-        bool relayStates[MAX_RELAYS];
+        bool relayStates[MAX_RELAYS] = {false};
         for (uint8_t i = 0; i < relayMgr.getRelayCount() && i < MAX_RELAYS; i++) {
             relayStates[i] = relayMgr.getState(i);
         }

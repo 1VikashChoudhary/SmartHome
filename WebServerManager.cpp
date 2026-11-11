@@ -20,6 +20,7 @@ WebServerManager::WebServerManager()
       _alarm(nullptr), _rules(nullptr), _logger(nullptr), _diag(nullptr), _ota(nullptr),
       _ws(nullptr), _hw(nullptr),
       _rebootRequested(false), _rebootRequestTime(0), _rebootDelay(0),
+      _deviceName(DEFAULT_DEVICE_NAME),
       _webAuthEnabled(false), _webUsername("admin"), _webPassword(""), _webPasswordHash(""),
       _guestAuthEnabled(false), _guestUsername("guest"), _guestPassword(""), _guestPasswordHash("") {
     for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
@@ -50,6 +51,9 @@ void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
     _diag = &diag;
     _ota = &ota;
 
+    // Load device identity cache
+    _deviceName = DEFAULT_DEVICE_NAME;
+
     // Load web authentication settings (Multi-User Privilege Tiers: Admin vs. Family / Guest)
     _webAuthEnabled = false;
     _webUsername = "admin";
@@ -62,6 +66,10 @@ void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
 
     JsonDocument cfgDoc;
     if (_storage && _storage->loadJson(PATH_CONFIG, cfgDoc)) {
+        String dn = cfgDoc["device_name"] | DEFAULT_DEVICE_NAME;
+        dn.trim();
+        if (dn.length() > 0) _deviceName = dn;
+
         _webAuthEnabled = cfgDoc["web_auth"] | false;
         _webUsername = cfgDoc["web_user"] | "admin";
         _webUsername.trim();
@@ -185,15 +193,8 @@ void WebServerManager::setupAPIRoutes() {
     // --- GET /api/discovery — Lightweight unauthenticated discovery endpoint for mobile/companion apps ---
     _server.on("/api/discovery", HTTP_GET, [this](AsyncWebServerRequest* req) {
         JsonDocument doc;
-        String devName = DEFAULT_DEVICE_NAME;
-        if (_storage) {
-            JsonDocument cfg;
-            if (_storage->loadJson(PATH_CONFIG, cfg)) {
-                devName = cfg["device_name"] | DEFAULT_DEVICE_NAME;
-            }
-        }
         doc["service"]        = "smarthome";
-        doc["device_name"]    = devName;
+        doc["device_name"]    = _deviceName;
         doc["device_id"]      = _wifi ? _wifi->getDeviceId() : "";
         doc["mac"]            = _wifi ? _wifi->getMAC() : "";
         doc["hostname"]       = _wifi ? _wifi->getHostname() : "";
@@ -213,10 +214,7 @@ void WebServerManager::setupAPIRoutes() {
         if (!isAuthorized(req)) return;
         JsonDocument doc;
 
-        doc["device_name"] = _storage ? [] (StorageManager* s) {
-            JsonDocument d; s->loadJson(PATH_CONFIG, d);
-            return d["device_name"] | DEFAULT_DEVICE_NAME;
-        }(_storage) : DEFAULT_DEVICE_NAME;
+        doc["device_name"] = _deviceName;
 
         doc["fw_version"] = FW_VERSION;
         doc["platform"] = PLATFORM_NAME;
@@ -760,7 +758,10 @@ void WebServerManager::setupAPIRoutes() {
                 if (doc.containsKey("device_name")) {
                     String dn = doc["device_name"].as<String>();
                     dn.trim();
-                    if (dn.length() > 0) cfg["device_name"] = dn;
+                    if (dn.length() > 0) {
+                        cfg["device_name"] = dn;
+                        _deviceName = dn;
+                    }
                 }
                 if (doc.containsKey("web_auth")) {
                     cfg["web_auth"] = doc["web_auth"].as<bool>();
@@ -889,7 +890,14 @@ void WebServerManager::setupAPIRoutes() {
         JsonDocument cfg;
         _storage->loadJson(PATH_CONFIG, cfg);
 
-        if (doc.containsKey("device_name")) cfg["device_name"] = doc["device_name"];
+        if (doc.containsKey("device_name")) {
+            String dn = doc["device_name"] | DEFAULT_DEVICE_NAME;
+            dn.trim();
+            if (dn.length() > 0) {
+                _deviceName = dn;
+                cfg["device_name"] = dn;
+            }
+        }
         if (doc.containsKey("hostname")) {
             String h = doc["hostname"] | "";
             h.trim();
