@@ -1,0 +1,33 @@
+# Build outputs & caches
+build/
+**/build/
+**/.dart_tool/
+**/.gradle/
+**/.kotlin/
+**/local.properties
+.vscode/
+.idea/
+.DS_Store
+*.tmp
+*.log
+
+# Compiler intermediate maps & debug symbols
+*.elf
+*.map
+
+# Scratch and build directories
+scratch/
+build_new/
+firmware_build_verify/
+
+# User backup copies and editor artifacts
+*- Copy*
+*.bak
+*.backup
+*.swp
+*~
+
+# Certificates and keys
+*.pem
+*.key
+*.crt

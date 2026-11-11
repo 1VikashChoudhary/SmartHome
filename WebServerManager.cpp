@@ -1,0 +1,1736 @@
+/*
+ * ============================================================================
+ * WebServerManager.cpp — AsyncWebServer + REST API Implementation
+ * ============================================================================
+ */
+
+#include "WebServerManager.h"
+#if defined(ESP8266)
+#include <bearssl/bearssl_hash.h>
+#include <MD5Builder.h>
+#else
+#include <mbedtls/sha256.h>
+#include <mbedtls/md5.h>
+#endif
+
+WebServerManager::WebServerManager()
+    : _server(WEB_SERVER_PORT),
+      _storage(nullptr), _wifi(nullptr), _relay(nullptr), _sensor(nullptr),
+      _buzzer(nullptr), _mqtt(nullptr), _time(nullptr), _lcd(nullptr),
+      _alarm(nullptr), _rules(nullptr), _logger(nullptr), _diag(nullptr), _ota(nullptr),
+      _ws(nullptr), _hw(nullptr),
+      _rebootRequested(false), _rebootRequestTime(0), _rebootDelay(0),
+      _webAuthEnabled(false), _webUsername("admin"), _webPassword(""), _webPasswordHash(""),
+      _guestAuthEnabled(false), _guestUsername("guest"), _guestPassword(""), _guestPasswordHash("") {
+    for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+        _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
+        _rateLimits[i].failedCount = 0;
+        _rateLimits[i].lockoutUntil = 0;
+        _rateLimits[i].lastAttempt = 0;
+    }
+}
+
+void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
+                              RelayManager& relay, SensorManager& sensor,
+                              BuzzerManager& buzzer, MqttManager& mqtt,
+                              TimeManager& timeMgr, LCDManager& lcd,
+                              AlarmScheduler& alarm, RuleManager& rules,
+                              EventLogger& logger, Diagnostics& diag, OTAManager& ota) {
+    _storage = &storage;
+    _wifi = &wifi;
+    _relay = &relay;
+    _sensor = &sensor;
+    _buzzer = &buzzer;
+    _mqtt = &mqtt;
+    _time = &timeMgr;
+    _lcd = &lcd;
+    _alarm = &alarm;
+    _rules = &rules;
+    _logger = &logger;
+    _diag = &diag;
+    _ota = &ota;
+
+    // Load web authentication settings (Multi-User Privilege Tiers: Admin vs. Family / Guest)
+    _webAuthEnabled = false;
+    _webUsername = "admin";
+    _webPassword = "";
+    _webPasswordHash = "";
+    _guestAuthEnabled = false;
+    _guestUsername = "guest";
+    _guestPassword = "";
+    _guestPasswordHash = "";
+
+    JsonDocument cfgDoc;
+    if (_storage && _storage->loadJson(PATH_CONFIG, cfgDoc)) {
+        _webAuthEnabled = cfgDoc["web_auth"] | false;
+        _webUsername = cfgDoc["web_user"] | "admin";
+        _webUsername.trim();
+        if (_webUsername.length() == 0) _webUsername = "admin";
+        _webPassword = cfgDoc["web_pass"] | "";
+        _webPasswordHash = cfgDoc["web_pass_hash"] | "";
+
+        _guestAuthEnabled = cfgDoc["guest_auth"] | false;
+        _guestUsername = cfgDoc["guest_user"] | "guest";
+        _guestUsername.trim();
+        if (_guestUsername.length() == 0) _guestUsername = "guest";
+        _guestPassword = cfgDoc["guest_pass"] | "";
+        _guestPasswordHash = cfgDoc["guest_pass_hash"] | "";
+
+        bool needSave = false;
+        // Migration: If legacy plaintext web_pass exists but no hash, compute SHA-256 and remove plaintext
+        if (_webPasswordHash.length() == 0 && _webPassword.length() > 0) {
+            _webPasswordHash = sha256Hex(_webPassword);
+            cfgDoc["web_pass_hash"] = _webPasswordHash;
+            cfgDoc.remove("web_pass");
+            needSave = true;
+            Serial.println(F("[Web] Migrated plaintext admin password to SHA-256 hash"));
+        }
+        if (_guestPasswordHash.length() == 0 && _guestPassword.length() > 0) {
+            _guestPasswordHash = sha256Hex(_guestPassword);
+            cfgDoc["guest_pass_hash"] = _guestPasswordHash;
+            cfgDoc.remove("guest_pass");
+            needSave = true;
+            Serial.println(F("[Web] Migrated plaintext guest password to SHA-256 hash"));
+        }
+        if (needSave) {
+            _storage->saveJson(PATH_CONFIG, cfgDoc);
+        }
+    }
+    regenerateWsToken();
+
+    setupPageRoutes();
+    setupAPIRoutes();
+    setupCaptivePortal();
+
+    _server.begin();
+    Serial.printf("[Web] Server started on port %d\n", WEB_SERVER_PORT);
+}
+
+void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
+                              RelayManager& relay, SensorManager& sensor,
+                              BuzzerManager& buzzer, MqttManager& mqtt,
+                              TimeManager& timeMgr, LCDManager& lcd,
+                              AlarmScheduler& alarm, RuleManager& rules,
+                              EventLogger& logger, Diagnostics& diag, OTAManager& ota,
+                              HardwareManager& hw) {
+    _hw = &hw;
+    begin(storage, wifi, relay, sensor, buzzer, mqtt, timeMgr, lcd, alarm, rules, logger, diag, ota);
+}
+
+AsyncWebServer& WebServerManager::getServer() { return _server; }
+
+void WebServerManager::requestReboot(unsigned long delayMs) {
+    _rebootRequested = true;
+    _rebootRequestTime = millis();
+    _rebootDelay = delayMs;
+    Serial.printf("[Web] Reboot requested. Delay: %lu ms\n", delayMs);
+}
+
+// ============================================================================
+// Page Routes
+// ============================================================================
+void WebServerManager::setupPageRoutes() {
+    // Main dashboard (or Captive Portal in AP setup mode unless ?dashboard=1)
+    _server.on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        if (_wifi && _wifi->getState() == WIFI_ST_AP_MODE && !req->hasParam("dashboard")) {
+            req->send_P(200, "text/html", PAGE_CAPTIVE);
+            return;
+        }
+        req->send_P(200, "text/html", PAGE_INDEX);
+    });
+
+    // Firmware update page
+    _server.on("/update", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        req->send_P(200, "text/html", PAGE_OTA_UPDATE);
+    });
+
+    // Logout landing page
+    _server.on("/logout", HTTP_GET, [](AsyncWebServerRequest* req) {
+        AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", PAGE_LOGGED_OUT);
+        r->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        r->addHeader("Pragma", "no-cache");
+        r->addHeader("Expires", "0");
+        req->send(r);
+    });
+
+    // Captive portal redirect
+    _server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->redirect("/");
+    });
+    _server.on("/fwlink", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->redirect("/");
+    });
+}
+
+// ============================================================================
+// REST API Routes
+// ============================================================================
+void WebServerManager::setupAPIRoutes() {
+    // --- /api/logout — Explicit credential eviction endpoint for HTTP Basic Auth ---
+    _server.on("/api/logout", HTTP_ANY, [this](AsyncWebServerRequest* req) {
+        regenerateWsToken();
+        AsyncWebServerResponse* r = req->beginResponse(
+            401, "application/json",
+            "{\"status\":\"logged_out\",\"message\":\"Logged out successfully\"}"
+        );
+        r->addHeader("WWW-Authenticate", "Basic realm=\"SmartHome\"");
+        r->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        r->addHeader("Pragma", "no-cache");
+        r->addHeader("Expires", "0");
+        req->send(r);
+    });
+
+    // --- GET /api/discovery — Lightweight unauthenticated discovery endpoint for mobile/companion apps ---
+    _server.on("/api/discovery", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        JsonDocument doc;
+        String devName = DEFAULT_DEVICE_NAME;
+        if (_storage) {
+            JsonDocument cfg;
+            if (_storage->loadJson(PATH_CONFIG, cfg)) {
+                devName = cfg["device_name"] | DEFAULT_DEVICE_NAME;
+            }
+        }
+        doc["service"]        = "smarthome";
+        doc["device_name"]    = devName;
+        doc["device_id"]      = _wifi ? _wifi->getDeviceId() : "";
+        doc["mac"]            = _wifi ? _wifi->getMAC() : "";
+        doc["hostname"]       = _wifi ? _wifi->getHostname() : "";
+        doc["ip"]             = _wifi ? _wifi->getIP() : "";
+        doc["fw_version"]     = FW_VERSION;
+        doc["platform"]       = PLATFORM_NAME;
+        doc["model"]          = String(PLATFORM_NAME) + "-SmartHome";
+        doc["num_relays"]     = _relay ? _relay->getRelayCount() : NUM_RELAYS;
+        doc["auth_required"]  = isAuthEnabled();
+        doc["guest_auth_enabled"] = _guestAuthEnabled;
+        doc["uptime"]         = _diag ? _diag->getUptimeString() : "";
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/status — Full system status (used by WebSocket too) ---
+    _server.on("/api/status", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+
+        doc["device_name"] = _storage ? [] (StorageManager* s) {
+            JsonDocument d; s->loadJson(PATH_CONFIG, d);
+            return d["device_name"] | DEFAULT_DEVICE_NAME;
+        }(_storage) : DEFAULT_DEVICE_NAME;
+
+        doc["fw_version"] = FW_VERSION;
+        doc["platform"] = PLATFORM_NAME;
+        doc["model"] = String(PLATFORM_NAME) + "-SmartHome";
+        doc["mac"] = _wifi ? _wifi->getMAC() : "";
+        doc["device_id"] = _wifi ? _wifi->getDeviceId() : "";
+        doc["num_relays"] = _relay ? _relay->getRelayCount() : NUM_RELAYS;
+        doc["auth_required"] = isAuthEnabled();
+        doc["auth_role"] = (getRequestRole(req) == AUTH_ROLE_ADMIN) ? "admin" : "guest";
+        doc["guest_auth_enabled"] = _guestAuthEnabled;
+        doc["wifi_state"] = _wifi->getStateString();
+        doc["rssi"] = _wifi->getRSSI();
+        doc["signal"] = _wifi->getSignalPercent();
+        doc["ip"] = _wifi->getIP();
+        doc["hostname"] = _wifi->getHostname();
+        doc["mqtt_state"] = _mqtt->getStateString();
+        doc["uptime"] = _diag->getUptimeString();
+        doc["free_heap"] = _diag->getFreeHeap();
+        doc["datetime"] = _time->getFormattedDateTime();
+
+        // Sensors
+        doc["temperature"] = serialized(String(_sensor->getTemperature(), 1));
+        doc["humidity"] = serialized(String(_sensor->getHumidity(), 1));
+        doc["pressure"] = serialized(String(_sensor->getPressure(), 1));
+        doc["pressure_enabled"] = _sensor->hasBarometer();
+        doc["dht_fault"] = _sensor->isDHTFault();
+        doc["temp_threshold"] = _sensor->getTempAlarmThreshold();
+        doc["lux"] = serialized(String(_sensor->getLux(), 1));
+        doc["lux_enabled"] = _sensor->isLuxEnabled();
+        doc["motion"] = _sensor->isMotionDetected();
+        doc["motion_age_s"] = _sensor->getMotionAgeSeconds();
+        doc["motion_enabled"] = _sensor->isMotionEnabled();
+        doc["probe_temp"] = serialized(String(_sensor->getProbeTemperature(), 1));
+        doc["probe_fault"] = _sensor->isProbeFault();
+        doc["probe_enabled"] = _sensor->isProbeEnabled();
+        doc["distance_cm"] = serialized(String(_sensor->getDistanceCm(), 1));
+        doc["tank_level_pct"] = _sensor->getTankLevelPercent();
+        doc["tank_enabled"] = _sensor->isUltrasonicEnabled();
+        doc["gas_raw"] = _sensor->getMQ2Raw();
+        doc["gas_percent"] = _sensor->getMQ2Percent();
+        doc["gas_max"] = MQ2_ADC_MAX;
+        doc["gas_alarm"] = _sensor->isMQ2Alarm();
+        doc["gas_enabled"] = _sensor->isMQ2Enabled();
+        doc["gas_threshold"] = _sensor->getMQ2Threshold();
+        doc["gas_warming"] = _sensor->isMQ2Warming();
+
+        // Relays
+        JsonArray relays = doc["relays"].to<JsonArray>();
+        _relay->toJson(relays);
+        if (_rules) {
+            for (uint8_t i = 0; i < relays.size(); i++) {
+                String activeRule = _rules->getActiveRuleForRelay(i);
+                if (activeRule.length() > 0) {
+                    relays[i]["active_rule"] = activeRule;
+                }
+            }
+        }
+
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/wifi/scan — Non-blocking nearby 2.4 GHz Wi-Fi scanner for Captive Portal & App Onboarding ---
+    _server.on("/api/wifi/scan", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        bool forceRefresh = req->hasParam("refresh") && req->getParam("refresh")->value() == "1";
+        int n = WiFi.scanComplete();
+
+        if (forceRefresh && n != WIFI_SCAN_RUNNING) {
+            WiFi.scanDelete();
+            WiFi.scanNetworks(true, false);
+            doc["scanning"] = true;
+            doc["networks"].to<JsonArray>();
+            sendJson(req, 200, doc);
+            return;
+        }
+
+        if (n == WIFI_SCAN_RUNNING) {
+            doc["scanning"] = true;
+            doc["networks"].to<JsonArray>();
+            sendJson(req, 200, doc);
+            return;
+        }
+
+        if (n == WIFI_SCAN_FAILED || n < 0) {
+            WiFi.scanNetworks(true, false);
+            doc["scanning"] = true;
+            doc["networks"].to<JsonArray>();
+            sendJson(req, 200, doc);
+            return;
+        }
+
+        doc["scanning"] = false;
+        JsonArray arr = doc["networks"].to<JsonArray>();
+
+        // Deduplicate SSIDs (keep strongest RSSI per SSID)
+        for (int i = 0; i < n; i++) {
+            String ssid = WiFi.SSID(i);
+            ssid.trim();
+            if (ssid.length() == 0) continue;
+            int rssi = WiFi.RSSI(i);
+
+            bool duplicate = false;
+            for (JsonObject existing : arr) {
+                if (existing["ssid"] == ssid) {
+                    if (rssi > (existing["rssi"] | -100)) {
+                        existing["rssi"] = rssi;
+                        int sig = 2 * (rssi + 100);
+                        if (sig > 100) sig = 100;
+                        if (sig < 0) sig = 0;
+                        existing["signal"] = sig;
+                    }
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+
+            int sig = 2 * (rssi + 100);
+            if (sig > 100) sig = 100;
+            if (sig < 0) sig = 0;
+
+            JsonObject net = arr.add<JsonObject>();
+            net["ssid"] = ssid;
+            net["rssi"] = rssi;
+            net["signal"] = sig;
+#if defined(ESP8266)
+            net["secure"] = (WiFi.encryptionType(i) != AUTH_OPEN);
+#else
+            net["secure"] = (WiFi.encryptionType(i) != WIFI_AUTH_OPEN);
+#endif
+            net["channel"] = WiFi.channel(i);
+        }
+
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/sensors ---
+    _server.on("/api/sensors", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonObject obj = doc.to<JsonObject>();
+        _sensor->toJson(obj);
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/relays ---
+    _server.on("/api/relays", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        _relay->toJson(arr);
+        if (_rules) {
+            for (uint8_t i = 0; i < arr.size(); i++) {
+                String activeRule = _rules->getActiveRuleForRelay(i);
+                if (activeRule.length() > 0) {
+                    arr[i]["active_rule"] = activeRule;
+                }
+            }
+        }
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/config ---
+    _server.on("/api/config", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+
+        // Device config
+        JsonDocument cfgDoc;
+        if (_storage->loadJson(PATH_CONFIG, cfgDoc)) {
+            doc["device_name"] = cfgDoc["device_name"] | DEFAULT_DEVICE_NAME;
+            doc["hostname"] = _wifi ? _wifi->getHostname() : "";
+            doc["mac"] = _wifi ? _wifi->getMAC() : "";
+            doc["device_id"] = _wifi ? _wifi->getDeviceId() : "";
+            doc["timezone"] = cfgDoc["timezone"] | DEFAULT_TIMEZONE;
+            doc["use_24h"] = cfgDoc["use_24h"] | DEFAULT_24H_FORMAT;
+            doc["web_auth"] = cfgDoc["web_auth"] | false;
+            doc["web_user"] = cfgDoc["web_user"] | "";
+            String savedPass = cfgDoc["web_pass"] | "";
+            String savedHash = cfgDoc["web_pass_hash"] | "";
+            doc["web_pass_set"] = (savedHash.length() > 0 || savedPass.length() > 0);
+            doc["guest_auth"] = _guestAuthEnabled;
+            doc["guest_user"] = _guestUsername;
+            doc["guest_pass_set"] = (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
+            doc["arduino_ota"] = _ota ? _ota->isArduinoOtaEnabled() : false;
+        }
+        doc["ws_token"] = _wsToken;
+
+        // MQTT config
+        JsonObject mqttObj = doc["mqtt"].to<JsonObject>();
+        _mqtt->toJson(mqttObj);
+
+        // LCD config
+        JsonObject lcdObj = doc["lcd"].to<JsonObject>();
+        lcdObj["enabled"] = _lcd->isEnabled();
+        lcdObj["backlight"] = _lcd->getBacklight();
+        lcdObj["display_mode"] = _lcd->getDisplayMode();
+        lcdObj["rotation"] = _lcd->getRotationInterval();
+        lcdObj["brightness"] = _lcd->getBrightness();
+        lcdObj["auto_dim"] = _lcd->isAutoDimEnabled();
+        lcdObj["dim_start"] = _lcd->getDimStartTime();
+        lcdObj["dim_end"] = _lcd->getDimEndTime();
+        lcdObj["dim_brightness"] = _lcd->getDimmedBrightness();
+
+        // Buzzer config
+        JsonObject buzObj = doc["buzzer"].to<JsonObject>();
+        buzObj["enabled"] = _buzzer->isEnabled();
+        buzObj["volume"] = _buzzer->getVolume();
+
+        // Sensor config
+        JsonObject senObj = doc["sensor"].to<JsonObject>();
+        senObj["temp_offset"] = _sensor->getTempOffset();
+        senObj["hum_offset"] = _sensor->getHumOffset();
+        senObj["temp_alarm"] = _sensor->getTempAlarmThreshold();
+        senObj["mq2_enabled"] = _sensor->isMQ2Enabled();
+        senObj["mq2_threshold"] = _sensor->getMQ2Threshold();
+        senObj["mq2_baseline"] = _sensor->getMQ2Baseline();
+
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/logs ---
+    _server.on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
+            AsyncResponseStream *response = req->beginResponseStream("text/csv");
+            response->print(_logger->toCSV());
+            req->send(response);
+        } else {
+            AsyncResponseStream *response = req->beginResponseStream("application/json");
+            response->print(_logger->toJson());
+            req->send(response);
+        }
+    });
+
+    // --- GET /api/alarms ---
+    _server.on("/api/alarms", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        _alarm->toJson(arr);
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/rules ---
+    _server.on("/api/rules", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        if (_rules) _rules->toJson(arr);
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/diagnostics ---
+    _server.on("/api/diagnostics", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonObject obj = doc.to<JsonObject>();
+        _diag->toJson(obj);
+        obj["ota_status"] = _ota->getStatusString();
+        obj["ota_partition"] = _ota->getRunningPartitionName();
+        obj["ota_state"] = _ota->getOtaStateString();
+        obj["ota_rollback_possible"] = _ota->isRollbackPossible();
+        obj["fs_used"] = _storage->usedBytes();
+        obj["fs_total"] = _storage->totalBytes();
+        obj["ws_clients"] = _ws ? _ws->getClientCount() : 0;
+        sendJson(req, 200, doc);
+    });
+
+    // --- GET /api/backup ---
+    _server.on("/api/backup", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        // Flush any pending relay states or sensor calibration before exporting
+        if (_relay) _relay->saveStates();
+        if (_sensor) _sensor->saveCalibration();
+        bool sanitize = req->hasParam("sanitize") && req->getParam("sanitize")->value() == "1";
+        AsyncResponseStream *response = req->beginResponseStream("application/json");
+        response->print(_storage->exportAllConfig(sanitize));
+        req->send(response);
+    });
+
+    // --- POST /api/relay/all ---
+    _server.on("/api/relay/all", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/relay/all")) return;
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        String action = doc["action"] | "";
+        if (action == "on") _relay->allOn();
+        else if (action == "off") _relay->allOff();
+        else { sendError(req, 400, "Invalid action"); return; }
+
+        sendOk(req);
+    });
+
+    // --- POST /api/relay/config ---
+    _server.on("/api/relay/config", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/relay/config")) return;
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        int id = doc["id"] | -1;
+        if (id < 0 || id >= (_relay ? _relay->getRelayCount() : NUM_RELAYS)) { sendError(req, 400, "Invalid relay ID"); return; }
+
+        if (doc.containsKey("name")) {
+            String oldName = _relay->getName(id);
+            String newName = doc["name"].as<String>();
+            if (oldName != newName) {
+                // Delete old entity first from Home Assistant
+                _mqtt->publishHomeAssistantDiscoveryRemove(id);
+                _relay->setName(id, newName);
+                _mqtt->publishHomeAssistantDiscovery();
+            }
+        }
+        if (doc.containsKey("icon"))    _relay->setIcon(id, doc["icon"].as<String>());
+        if (doc.containsKey("trigger")) _relay->setTriggerMode(id, (TriggerMode)(int)doc["trigger"]);
+        if (doc.containsKey("boot"))    _relay->setBootState(id, (BootStateMode)(int)doc["boot"]);
+        if (doc.containsKey("autoOff")) _relay->setAutoOff(id, doc["autoOff"]);
+        if (doc.containsKey("autoOn"))  _relay->setAutoOn(id, doc["autoOn"]);
+        if (doc.containsKey("failsafe")) _relay->setFailsafe(id, doc["failsafe"]);
+
+        _logger->logInfo("Relay", "Relay " + String(id + 1) + " config updated");
+        sendOk(req);
+    });
+
+    // --- POST /api/relay/timer (MUST BE BEFORE /api/relay to prevent prefix capture) ---
+    _server.on("/api/relay/timer", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/relay/timer")) return;
+        if (!isAuthorized(req)) return;
+        if (!_relay) { sendError(req, 500, "Relay module not initialized"); return; }
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        int id = doc["id"] | -1;
+        String action = doc["action"] | "";
+        uint32_t duration = doc["duration"] | 0; // seconds
+
+        if (id < 0 || id >= (_relay ? _relay->getRelayCount() : NUM_RELAYS)) { sendError(req, 400, "Invalid relay ID"); return; }
+
+        if (action == "cancel") {
+            _relay->cancelTimer(id);
+            if (_ws) _ws->broadcastRelayTimer(id, false, false, 0);
+            if (_logger) _logger->logInfo("Timer", "Timer cancelled for " + _relay->getName(id));
+        } else if (action == "on" || action == "off") {
+            if (duration == 0) { sendError(req, 400, "Duration must be greater than 0"); return; }
+            bool targetState = (action == "on");
+            _relay->startTimer(id, targetState, duration);
+            if (_ws) _ws->broadcastRelayTimer(id, true, targetState, duration);
+            if (_logger) _logger->logInfo("Timer", "Timer set: " + _relay->getName(id) + " -> " + (targetState ? "ON" : "OFF") + " in " + String(duration) + "s");
+        } else {
+            sendError(req, 400, "Invalid action");
+            return;
+        }
+
+        sendOk(req);
+    });
+
+    // --- POST /api/relay ---
+    _server.on("/api/relay", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/relay")) return;
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        int id = doc["id"] | -1;
+        String action = doc["action"] | "";
+
+        if (id < 0 || id >= (_relay ? _relay->getRelayCount() : NUM_RELAYS)) { sendError(req, 400, "Invalid relay ID"); return; }
+
+        if (action == "on")          _relay->setState(id, true);
+        else if (action == "off")    _relay->setState(id, false);
+        else if (action == "toggle") _relay->toggle(id);
+        else { sendError(req, 400, "Invalid action"); return; }
+
+        sendOk(req);
+    });
+
+    // --- POST /api/buzzer ---
+    _server.on("/api/buzzer", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        if (doc.containsKey("action")) {
+            String action = doc["action"].as<String>();
+            if (action == "test") _buzzer->testBeep();
+            else if (action == "mute") _buzzer->mute();
+            else if (action == "unmute") _buzzer->unmute();
+            else if (action == "stop") _buzzer->stopAlarm();
+        }
+        if (doc.containsKey("enabled")) _buzzer->setEnabled(doc["enabled"]);
+        if (doc.containsKey("volume"))  _buzzer->setVolume(doc["volume"]);
+
+        sendOk(req);
+    });
+
+    // --- POST /api/alarm ---
+    _server.on("/api/alarm", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        // Delete
+        if (doc["delete"] | false) {
+            uint8_t id = doc["id"] | 0;
+            _alarm->deleteAlarm(id);
+            sendOk(req, "Alarm deleted");
+            return;
+        }
+
+        // Enable/disable
+        if (doc.containsKey("id") && doc.containsKey("en") && !doc.containsKey("hour")) {
+            uint8_t id = doc["id"] | 0;
+            _alarm->enableAlarm(id, doc["en"]);
+            sendOk(req);
+            return;
+        }
+
+        // Add or update timer task
+        ScheduledAlarm a;
+        JsonObject obj = doc.as<JsonObject>();
+        if (!_alarm->fromJson(obj, a)) { sendError(req, 400, "Invalid alarm data"); return; }
+
+        uint8_t id = doc["id"] | 0;
+        a.enabled = doc["en"] | true;
+        a.fired = false;
+
+        if (id > 0 && _alarm->getAlarm(id) != nullptr) {
+            if (_alarm->updateAlarm(id, a)) {
+                _logger->logInfo("Alarm", "Alarm " + String(id) + " updated");
+                sendOk(req, "Alarm updated");
+            } else {
+                sendError(req, 400, "Alarm update failed");
+            }
+        } else {
+            a.id = _alarm->getNextId();
+            if (_alarm->addAlarm(a)) {
+                _logger->logInfo("Alarm", "Alarm " + String(a.id) + " added");
+                sendOk(req, "Alarm added");
+            } else {
+                sendError(req, 400, "Max alarms reached");
+            }
+        }
+    });
+
+    // --- POST /api/rule ---
+    _server.on("/api/rule", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_rules) { sendError(req, 500, "Rules module not initialized"); return; }
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        // Delete
+        if (doc["delete"] | false) {
+            uint8_t id = doc["id"] | 0;
+            _rules->deleteRule(id);
+            if (_logger) _logger->logInfo("Rule", "Rule " + String(id) + " deleted");
+            sendOk(req, "Rule deleted");
+            return;
+        }
+
+        // Enable/disable
+        if (doc.containsKey("id") && doc.containsKey("en") && !doc.containsKey("sensor")) {
+            uint8_t id = doc["id"] | 0;
+            _rules->enableRule(id, doc["en"]);
+            sendOk(req);
+            return;
+        }
+
+        // Add or update rule
+        AutomationRule r;
+        JsonObject obj = doc.as<JsonObject>();
+        if (!_rules->fromJson(obj, r)) { sendError(req, 400, "Invalid rule data"); return; }
+
+        uint8_t id = doc["id"] | 0;
+        r.enabled = doc["en"] | true;
+        r.triggered = false;
+
+        if (id > 0 && _rules->getRule(id) != nullptr) {
+            if (_rules->updateRule(id, r)) {
+                if (_logger) _logger->logInfo("Rule", "Rule " + String(id) + " updated");
+                sendOk(req, "Rule updated");
+            } else {
+                sendError(req, 400, "Rule update failed");
+            }
+        } else {
+            r.id = _rules->getNextId();
+            if (_rules->addRule(r)) {
+                if (_logger) _logger->logInfo("Rule", "Rule " + String(r.id) + " added");
+                sendOk(req, "Rule added");
+            } else {
+                sendError(req, 400, "Max rules reached");
+            }
+        }
+    });
+
+    // --- POST /api/config/wifi ---
+    _server.on("/api/config/wifi", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        cleanTempObject(req);
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        // Handle form POST from captive portal
+        if (req->hasParam("ssid", true) && req->hasParam("pass", true)) {
+            String ssid = req->getParam("ssid", true)->value();
+            String pass = req->getParam("pass", true)->value();
+            _wifi->saveCredentials(ssid, pass);
+            _logger->logInfo("WiFi", "Credentials saved: " + ssid);
+            req->send(200, "text/html", "<html><body style='background:#0f1117;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh'><h2>Connecting to " + ssid + "...<br>Please wait.</h2></body></html>");
+            return;
+        }
+    }, NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        // Handle JSON POST from dashboard
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        if (doc["action"] == "reset") {
+            _wifi->resetWiFi();
+            _logger->logWarning("WiFi", "WiFi credentials reset");
+            sendOk(req, "WiFi reset");
+            return;
+        }
+
+        String ssid = doc["ssid"] | "";
+        String pass = doc["pass"] | "";
+        if (ssid.length() > 0) {
+            // Optional zero-touch onboarding parameters (device_name, web_auth, web_user, web_pass)
+            if (_storage && (doc.containsKey("device_name") || doc.containsKey("web_auth") ||
+                             doc.containsKey("web_user") || doc.containsKey("web_pass"))) {
+                JsonDocument cfg;
+                _storage->loadJson(PATH_CONFIG, cfg);
+                if (doc.containsKey("device_name")) {
+                    String dn = doc["device_name"].as<String>();
+                    dn.trim();
+                    if (dn.length() > 0) cfg["device_name"] = dn;
+                }
+                if (doc.containsKey("web_auth")) {
+                    cfg["web_auth"] = doc["web_auth"].as<bool>();
+                    _webAuthEnabled = doc["web_auth"].as<bool>();
+                }
+                if (doc.containsKey("web_user")) {
+                    String u = doc["web_user"].as<String>();
+                    u.trim();
+                    if (u.length() == 0) u = "admin";
+                    cfg["web_user"] = u;
+                    _webUsername = u;
+                }
+                if (doc.containsKey("web_pass")) {
+                    String wp = doc["web_pass"].as<String>();
+                    if (wp.length() > 0) {
+                        _webPasswordHash = sha256Hex(wp);
+                        cfg["web_pass_hash"] = _webPasswordHash;
+                        cfg.remove("web_pass");
+                        _webPassword = wp;
+                    }
+                }
+                regenerateWsToken();
+                _storage->saveJson(PATH_CONFIG, cfg);
+            }
+
+            _wifi->saveCredentials(ssid, pass);
+            _logger->logInfo("WiFi", "Credentials saved: " + ssid);
+            sendOk(req, "WiFi saved");
+        } else {
+            sendError(req, 400, "SSID required");
+        }
+    });
+
+    // --- POST /api/config/mqtt ---
+    _server.on("/api/config/mqtt", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        if (doc.containsKey("enabled")) _mqtt->setEnabled(doc["enabled"]);
+        if (doc.containsKey("broker")) {
+            // `/api/config` intentionally never returns the MQTT password.
+            // Treat a missing or empty `pass` in an update as "keep existing"
+            // so changing a host, port, or prefix from the companion app
+            // cannot silently erase a working broker credential.
+            String password = _mqtt->getPassword();
+            if (doc.containsKey("pass")) {
+                String supplied = doc["pass"] | "";
+                if (supplied.length() > 0) password = supplied;
+            }
+            _mqtt->saveConfig(
+                doc["broker"] | "",
+                doc["port"] | MQTT_DEFAULT_PORT,
+                doc["user"] | "",
+                password,
+                doc["client_id"] | "",
+                doc["prefix"] | MQTT_DEFAULT_PREFIX
+            );
+        }
+
+        _logger->logInfo("MQTT", "MQTT config updated");
+        sendOk(req);
+    });
+
+    // --- POST /api/config/lcd ---
+    _server.on("/api/config/lcd", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        if (doc.containsKey("enabled"))   _lcd->setEnabled(doc["enabled"]);
+
+        bool bl = _lcd->getBacklight();
+        if (doc.containsKey("backlight")) {
+            bl = doc["backlight"];
+            _lcd->setBacklight(bl);
+        }
+        if (doc.containsKey("display_mode")) {
+            String mode = doc["display_mode"].as<String>();
+            _lcd->setDisplayMode(mode);
+        }
+        if (doc.containsKey("rotation"))  _lcd->setRotationInterval(doc["rotation"]);
+        if (doc.containsKey("brightness")) {
+            uint8_t bright = doc["brightness"];
+            if (bl && bright == 0) {
+                bright = 100;
+            }
+            _lcd->setBrightness(bright);
+        }
+        if (doc.containsKey("auto_dim"))   _lcd->setAutoDimEnabled(doc["auto_dim"]);
+        if (doc.containsKey("dim_start"))  _lcd->setDimStartTime(doc["dim_start"].as<String>());
+        if (doc.containsKey("dim_end"))    _lcd->setDimEndTime(doc["dim_end"].as<String>());
+        if (doc.containsKey("dim_brightness")) _lcd->setDimmedBrightness(doc["dim_brightness"]);
+
+        sendOk(req);
+    });
+
+    // --- POST /api/config/sensor ---
+    _server.on("/api/config/sensor", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        if (doc.containsKey("temp_offset"))    _sensor->setTempOffset(doc["temp_offset"]);
+        if (doc.containsKey("hum_offset"))     _sensor->setHumOffset(doc["hum_offset"]);
+        if (doc.containsKey("temp_alarm"))     _sensor->setTempAlarmThreshold(doc["temp_alarm"]);
+        if (doc.containsKey("mq2_enabled"))    _sensor->setMQ2Enabled(doc["mq2_enabled"]);
+        if (doc.containsKey("mq2_threshold"))  _sensor->setMQ2Threshold(doc["mq2_threshold"]);
+        if (doc.containsKey("calibrate_mq2") && doc["calibrate_mq2"]) _sensor->calibrateMQ2();
+
+        _sensor->saveCalibration();
+        sendOk(req);
+    });
+
+    // --- POST /api/config ---
+    _server.on("/api/config", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/config")) return;
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        JsonDocument cfg;
+        _storage->loadJson(PATH_CONFIG, cfg);
+
+        if (doc.containsKey("device_name")) cfg["device_name"] = doc["device_name"];
+        if (doc.containsKey("hostname")) {
+            String h = doc["hostname"] | "";
+            h.trim();
+            if (h.length() > 0) cfg["hostname"] = h;
+            else cfg.remove("hostname");
+        }
+        if (doc.containsKey("timezone")) {
+            cfg["timezone"] = doc["timezone"];
+            _time->setTimezone(doc["timezone"].as<String>());
+        }
+        if (doc.containsKey("use_24h")) {
+            cfg["use_24h"] = doc["use_24h"];
+            _time->setUse24h(doc["use_24h"]);
+        }
+        if (doc.containsKey("web_auth")) {
+            cfg["web_auth"] = doc["web_auth"];
+            _webAuthEnabled = doc["web_auth"];
+        }
+        if (doc.containsKey("web_user")) {
+            String u = doc["web_user"].as<String>();
+            u.trim();
+            if (u.length() == 0) u = "admin";
+            cfg["web_user"] = u;
+            _webUsername = u;
+        }
+        if (doc.containsKey("web_pass")) {
+            String pass = doc["web_pass"].as<String>();
+            if (pass.length() > 0) {
+                _webPasswordHash = sha256Hex(pass);
+                cfg["web_pass_hash"] = _webPasswordHash;
+                cfg.remove("web_pass"); // Never write plaintext password to flash
+                _webPassword = pass;
+            }
+        }
+        if (doc.containsKey("guest_auth")) {
+            _guestAuthEnabled = doc["guest_auth"] | false;
+            cfg["guest_auth"] = _guestAuthEnabled;
+        }
+        if (doc.containsKey("guest_user")) {
+            String gu = doc["guest_user"].as<String>();
+            gu.trim();
+            if (gu.length() == 0) gu = "guest";
+            cfg["guest_user"] = gu;
+            _guestUsername = gu;
+        }
+        if (doc.containsKey("guest_pass")) {
+            String gpass = doc["guest_pass"].as<String>();
+            if (gpass.length() > 0) {
+                _guestPasswordHash = sha256Hex(gpass);
+                cfg["guest_pass_hash"] = _guestPasswordHash;
+                cfg.remove("guest_pass");
+                _guestPassword = gpass;
+            } else if (doc["guest_pass_clear"] | false) {
+                _guestPasswordHash = "";
+                _guestPassword = "";
+                cfg.remove("guest_pass_hash");
+                cfg.remove("guest_pass");
+            }
+        }
+        if (doc.containsKey("web_auth") || doc.containsKey("web_user") || doc.containsKey("web_pass") ||
+            doc.containsKey("guest_auth") || doc.containsKey("guest_user") || doc.containsKey("guest_pass")) {
+            // Clear rate limits so newly configured credentials never hit a stale lockout
+            for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+                _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
+                _rateLimits[i].failedCount = 0;
+                _rateLimits[i].lockoutUntil = 0;
+            }
+            // Rotate WebSocket token and immediately drop existing WebSocket sessions
+            // so any connected companion app or browser must re-authenticate with the new password!
+            regenerateWsToken();
+            if (_ws) _ws->disconnectAll();
+        }
+        if (doc.containsKey("arduino_ota")) {
+            bool en = doc["arduino_ota"];
+            cfg["arduino_ota"] = en;
+            if (_ota) _ota->setArduinoOtaEnabled(en, _wifi ? _wifi->getHostname() : "", _webPassword);
+            _logger->logInfo("OTA", en ? "ArduinoOTA port 3232 enabled" : "ArduinoOTA port 3232 disabled");
+        }
+
+        _storage->saveJson(PATH_CONFIG, cfg);
+        _logger->logInfo("Config", "Device config updated");
+        JsonDocument resDoc;
+        resDoc["status"] = "ok";
+        resDoc["message"] = "OK";
+        resDoc["ws_token"] = _wsToken;
+        sendJson(req, 200, resDoc);
+    });
+
+    // --- GET /api/hardware ---
+    _server.on("/api/hardware", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        JsonObject obj = doc.to<JsonObject>();
+        if (_hw) {
+            _hw->toJson(obj);
+            obj["platform"] = PLATFORM_NAME;
+            JsonArray presets = obj["presets"].to<JsonArray>();
+            HardwareManager::getPresetsJson(presets);
+            JsonObject caps = obj["pin_capabilities"].to<JsonObject>();
+            HardwareManager::getPinCapabilitiesJson(caps);
+        } else {
+            obj["error"] = "Hardware manager not initialized";
+        }
+        sendJson(req, 200, doc);
+    });
+
+    // --- POST /api/hardware/template ---
+    _server.on("/api/hardware/template", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/hardware/template")) return;
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_hw) { sendError(req, 500, "Hardware manager not initialized"); return; }
+
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        String templateName = doc["template"] | "";
+        if (templateName.length() == 0) {
+            sendError(req, 400, "Template name required");
+            return;
+        }
+
+        if (!_hw->applyPreset(templateName)) {
+            sendError(req, 400, "Unknown template preset: " + templateName);
+            return;
+        }
+
+        _logger->logInfo("Hardware", "Preset applied: " + templateName);
+        _logger->persistNow();
+
+        JsonDocument res;
+        res["status"] = "ok";
+        res["message"] = "Preset applied. Rebooting...";
+        res["reboot_required"] = true;
+        sendJson(req, 200, res);
+
+        requestReboot(1500);
+    });
+
+    // --- POST /api/hardware/reset ---
+    _server.on("/api/hardware/reset", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!req->url().equals("/api/hardware/reset")) return;
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_hw) { sendError(req, 500, "Hardware manager not initialized"); return; }
+
+        _hw->resetToDefault();
+#if defined(ESP8266)
+        _logger->logWarning("Hardware", "Hardware profile reset to ESP8266 2-CH default");
+#else
+        _logger->logWarning("Hardware", "Hardware profile reset to 5-CH Standard default");
+#endif
+        _logger->persistNow();
+
+        JsonDocument res;
+        res["status"] = "ok";
+#if defined(ESP8266)
+        res["message"] = "Hardware configuration reset to default 2-CH. Rebooting...";
+#else
+        res["message"] = "Hardware configuration reset to default 5-CH. Rebooting...";
+#endif
+        res["reboot_required"] = true;
+        sendJson(req, 200, res);
+
+        requestReboot(1500);
+    });
+
+    // --- POST /api/hardware ---
+    _server.on("/api/hardware", HTTP_POST, [this](AsyncWebServerRequest* req) { cleanTempObject(req); },
+        NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/hardware")) return;
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_hw) { sendError(req, 500, "Hardware manager not initialized"); return; }
+
+        JsonDocument doc;
+        if (!collectJsonBody(req, data, len, index, total, doc)) return;
+
+        String err;
+        if (!_hw->fromJson(doc.as<JsonObjectConst>(), err)) {
+            sendError(req, 400, err);
+            return;
+        }
+
+        if (!_hw->save()) {
+            sendError(req, 500, "Failed to save hardware configuration to flash");
+            return;
+        }
+
+        _logger->logInfo("Hardware", "Hardware profile updated (" + String(_hw->getBoardName()) + ")");
+        _logger->persistNow();
+
+        JsonDocument res;
+        res["status"] = "ok";
+        res["message"] = "Hardware profile saved successfully. Rebooting...";
+        res["reboot_required"] = true;
+        sendJson(req, 200, res);
+
+        requestReboot(1500);
+    });
+
+    // --- POST /api/reboot ---
+    _server.on("/api/reboot", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        _logger->logWarning("System", "Reboot requested via web");
+        _logger->persistNow();
+        _relay->saveStates();
+        sendOk(req, "Rebooting...");
+        requestReboot(1000);
+    }, NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        _logger->logWarning("System", "Reboot requested via web");
+        _logger->persistNow();
+        _relay->saveStates();
+        sendOk(req, "Rebooting...");
+        requestReboot(1000);
+    });
+
+    // --- POST /api/factory-reset ---
+    _server.on("/api/factory-reset", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        _logger->logCritical("System", "Factory reset requested");
+        sendOk(req, "Factory resetting...");
+        _storage->factoryReset();
+        requestReboot(2000);
+    }, NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        _logger->logCritical("System", "Factory reset requested");
+        sendOk(req, "Factory resetting...");
+        _storage->factoryReset();
+        requestReboot(2000);
+    });
+
+    // --- POST /api/restore ---
+    _server.on("/api/restore", HTTP_POST,
+        [](AsyncWebServerRequest* req) {
+            if (req->_tempObject) {
+                delete static_cast<String*>(req->_tempObject);
+                req->_tempObject = nullptr;
+            }
+        },
+        NULL,
+        [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+            if (!isAuthorized(req, AUTH_ROLE_ADMIN)) {
+                if (req->_tempObject) {
+                    delete static_cast<String*>(req->_tempObject);
+                    req->_tempObject = nullptr;
+                }
+                return;
+            }
+
+            // Cap restore payload to prevent memory exhaustion (max 32KB)
+            if (total > 32768) {
+                sendError(req, 413, "Backup payload too large");
+                return;
+            }
+
+            // Accumulate body chunks across TCP fragmentation
+            if (index == 0) {
+                if (req->_tempObject) {
+                    delete static_cast<String*>(req->_tempObject);
+                }
+                req->_tempObject = new String();
+                static_cast<String*>(req->_tempObject)->reserve(total + 1);
+            }
+
+            if (req->_tempObject) {
+                static_cast<String*>(req->_tempObject)->concat((const char*)data, len);
+            }
+
+            // Once the full body has arrived, parse and restore
+            if (index + len >= total) {
+                String* bodyPtr = static_cast<String*>(req->_tempObject);
+                String body;
+                if (bodyPtr) {
+                    body = std::move(*bodyPtr);
+                    delete bodyPtr;
+                    req->_tempObject = nullptr;
+                }
+
+                bool success = false;
+
+                if (body.length() > 0) {
+                    JsonDocument doc;
+                    DeserializationError err = deserializeJson(doc, body);
+                    // Free the raw string buffer immediately to maximize heap for importAllConfig
+                    body = String();
+
+                    if (!err) {
+                        // Format 1: wrapper with string config {"config": "..."}
+                        if (doc.containsKey("config") && doc["config"].is<const char*>()) {
+                            String cfgStr = doc["config"].as<String>();
+                            doc.clear(); // Free outer document before parsing inner JSON string
+                            success = _storage->importAllConfig(cfgStr);
+                        }
+                        // Format 2: wrapper with object config {"config": {...}}
+                        else if (doc.containsKey("config") && doc["config"].is<JsonObject>()) {
+                            success = _storage->importAllConfig(doc["config"].as<JsonObjectConst>());
+                        }
+                        // Format 3: direct backup object {"config.json": {...}, ...}
+                        else if (doc.is<JsonObject>()) {
+                            success = _storage->importAllConfig(doc.as<JsonObjectConst>());
+                        }
+                    }
+                }
+
+                if (success) {
+                    _logger->logInfo("System", "Config restored from backup");
+                    _logger->persistNow();
+                    // Freeze further flash writes immediately so background loops (relayMgr, logger)
+                    // cannot overwrite restored files during the 1000ms reboot window!
+                    _storage->setWriteEnabled(false);
+                    sendOk(req, "Config restored. Rebooting...");
+                    requestReboot(1000);
+                } else {
+                    sendError(req, 400, "Invalid config data or corrupted backup");
+                }
+            }
+        }
+    );
+
+    // --- POST /api/logs/clear ---
+    _server.on("/api/logs/clear", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        _logger->clear();
+        sendOk(req, "Logs cleared");
+    });
+
+    // -----------------------------------------------------------------------
+    // POST /api/ota/upload  — HTTP firmware/filesystem upload
+    // Accepts multipart with field "firmware" or "filesystem"
+    // -----------------------------------------------------------------------
+    _server.on("/api/ota/upload", HTTP_POST,
+        // Request handler — sends final response after upload completes
+        [this](AsyncWebServerRequest* req) {
+            if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+            if (_ota->lastHttpUpdateOk()) {
+                sendOk(req, "Update complete. Rebooting...");
+                // Request reboot in 1 second via main loop so the async HTTP
+                // response is fully sent before we reboot.
+                requestReboot(1000);
+            } else {
+                sendError(req, 500, _ota->lastHttpError().length() > 0
+                                    ? _ota->lastHttpError()
+                                    : "Upload failed or no file received");
+            }
+        },
+        // Upload handler — receives file chunks
+        [this](AsyncWebServerRequest* req, const String& filename,
+               size_t index, uint8_t* data, size_t len, bool final) {
+            if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+            // Determine type from filename extension or query param
+            bool isFirmware = true;
+            if (req->hasParam("type")) {
+                isFirmware = (req->getParam("type")->value() != "fs");
+            } else {
+                String lower = filename;
+                lower.toLowerCase();
+                if (lower.indexOf("spiffs") >= 0 || lower.indexOf("littlefs") >= 0
+                    || lower.indexOf("fs.bin") >= 0) {
+                    isFirmware = false;
+                }
+            }
+
+            // Get real content-length for Update.begin() sizing.
+            // ESPAsyncWebServer doesn't pass total to the file upload cb directly,
+            // so we read Content-Length from the request header.
+            // On first chunk (index==0) this is used; subsequent chunks pass 0
+            // as total so OTAManager knows to skip re-calling begin().
+            size_t contentLen = 0;
+            if (index == 0) {
+                if (req->hasHeader("Content-Length")) {
+                    contentLen = (size_t)req->getHeader("Content-Length")->value().toInt();
+                }
+                // Fallback: use UPDATE_SIZE_UNKNOWN (OTAManager handles this)
+            }
+
+            if (!_ota->handleHttpUpload(data, len, index, contentLen, isFirmware, final)) {
+                Serial.println(F("[Web] HTTP OTA upload error"));
+            }
+        }
+    );
+
+    // GET /api/ota/status  — poll update progress + firmware version (for verification)
+    _server.on("/api/ota/status", HTTP_GET, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req)) return;
+        JsonDocument doc;
+        doc["updating"]   = _ota->isUpdating();
+        doc["progress"]   = _ota->getProgress();
+        doc["status"]     = _ota->getStatusString();
+        doc["partition"]  = _ota->getRunningPartitionName();
+        doc["ota_state"]  = _ota->getOtaStateString();
+        doc["rollback_possible"] = _ota->isRollbackPossible();
+        doc["last_ok"]    = _ota->lastHttpUpdateOk();
+        doc["last_error"] = _ota->lastHttpError();
+        doc["fw_version"] = FW_VERSION;
+        doc["fw_date"]    = String(FW_BUILD_DATE) + " " + String(FW_BUILD_TIME);
+        doc["fw_md5"]     = ESP.getSketchMD5();
+        doc["uptime_sec"] = millis() / 1000UL;
+        sendJson(req, 200, doc);
+    });
+
+    // POST /api/ota/rollback — Manual rollback to previous partition
+    _server.on("/api/ota/rollback", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_ota->isRollbackPossible()) {
+            sendError(req, 400, "Rollback not possible: no previous valid firmware found");
+            return;
+        }
+        sendOk(req, "Rollback confirmed. Rebooting into previous partition...");
+        _logger->logWarning("OTA", "User triggered manual firmware rollback to alternate partition.");
+        _rebootDelay = 1000;
+        _rebootRequestTime = millis();
+        _rebootRequested = true;
+        _ota->triggerManualRollback();
+    });
+
+    // --- 404 handler ---
+    _server.onNotFound([this](AsyncWebServerRequest* req) {
+        // In AP mode, redirect to captive portal
+        if (_wifi->getState() == WIFI_ST_AP_MODE) {
+            req->send_P(200, "text/html", PAGE_CAPTIVE);
+        } else {
+            sendError(req, 404, "Not Found");
+        }
+    });
+}
+
+// ============================================================================
+// Captive Portal DNS redirect setup
+// ============================================================================
+void WebServerManager::setupCaptivePortal() {
+    // Android captive portal detection
+    _server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->redirect("/");
+    });
+
+    // Microsoft captive portal detection
+    _server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->redirect("/");
+    });
+
+    // Apple captive portal detection
+    _server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->redirect("/");
+    });
+}
+
+// ============================================================================
+// Response Helpers
+// ============================================================================
+void WebServerManager::sendJson(AsyncWebServerRequest* req, int code, const JsonDocument& doc) {
+    AsyncResponseStream *response = req->beginResponseStream("application/json");
+    response->setCode(code);
+    serializeJson(doc, *response);
+    req->send(response);
+}
+
+void WebServerManager::sendOk(AsyncWebServerRequest* req, const String& message) {
+    JsonDocument doc;
+    doc["status"] = "ok";
+    doc["message"] = message;
+    sendJson(req, 200, doc);
+}
+
+void WebServerManager::sendError(AsyncWebServerRequest* req, int code, const String& message) {
+    JsonDocument doc;
+    doc["status"] = "error";
+    doc["message"] = message;
+    sendJson(req, code, doc);
+}
+
+void WebServerManager::cleanTempObject(AsyncWebServerRequest* req) {
+    if (req && req->_tempObject) {
+        delete static_cast<String*>(req->_tempObject);
+        req->_tempObject = nullptr;
+    }
+}
+
+bool WebServerManager::collectJsonBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total, JsonDocument& doc) {
+    if (total == 0 || total > 16384) {
+        cleanTempObject(req);
+        sendError(req, 400, total == 0 ? "Empty request body" : "Payload too large");
+        return false;
+    }
+
+    // Fast path: entire body arrived in a single chunk
+    if (index == 0 && len == total) {
+        DeserializationError err = deserializeJson(doc, (const char*)data, len);
+        if (err) {
+            Serial.printf("[Web] JSON parse error on single chunk: %s\n", err.c_str());
+            sendError(req, 400, "Invalid JSON");
+            return false;
+        }
+        return true;
+    }
+
+    // Multi-chunk path: TCP fragmentation reassembly
+    if (index == 0) {
+        cleanTempObject(req);
+        req->_tempObject = new String();
+        static_cast<String*>(req->_tempObject)->reserve(total + 1);
+    }
+
+    if (req->_tempObject) {
+        static_cast<String*>(req->_tempObject)->concat((const char*)data, len);
+    }
+
+    if (index + len >= total) {
+        String* bodyPtr = static_cast<String*>(req->_tempObject);
+        DeserializationError err = DeserializationError::EmptyInput;
+        if (bodyPtr) {
+            err = deserializeJson(doc, *bodyPtr);
+            delete bodyPtr;
+            req->_tempObject = nullptr;
+        }
+        if (err) {
+            Serial.printf("[Web] JSON parse error on reassembled body: %s\n", err.c_str());
+            sendError(req, 400, "Invalid JSON");
+            return false;
+        }
+        return true;
+    }
+
+    return false; // Waiting for more chunks
+}
+
+bool WebServerManager::isRateLimited(const IPAddress& ip) {
+    unsigned long now = millis();
+    for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+        if (_rateLimits[i].ip == ip && _rateLimits[i].lockoutUntil > now) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void WebServerManager::recordFailedAttempt(const IPAddress& ip) {
+    unsigned long now = millis();
+    int emptySlot = -1;
+    unsigned long oldest = now;
+    int oldestSlot = 0;
+
+    for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+        if (_rateLimits[i].ip == ip) {
+            _rateLimits[i].failedCount++;
+            _rateLimits[i].lastAttempt = now;
+            if (_rateLimits[i].failedCount >= 5) {
+                _rateLimits[i].lockoutUntil = now + (5 * 60 * 1000UL); // 5 min lockout
+                if (_logger) {
+                    _logger->logWarning("Security", "IP " + ip.toString() + " locked out (rate limit)");
+                }
+            }
+            return;
+        }
+        if (_rateLimits[i].ip == IPAddress(0, 0, 0, 0) && emptySlot == -1) {
+            emptySlot = i;
+        }
+        if (_rateLimits[i].lastAttempt < oldest) {
+            oldest = _rateLimits[i].lastAttempt;
+            oldestSlot = i;
+        }
+    }
+
+    int slot = (emptySlot != -1) ? emptySlot : oldestSlot;
+    _rateLimits[slot].ip = ip;
+    _rateLimits[slot].failedCount = 1;
+    _rateLimits[slot].lockoutUntil = 0;
+    _rateLimits[slot].lastAttempt = now;
+}
+
+void WebServerManager::resetRateLimit(const IPAddress& ip) {
+    for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+        if (_rateLimits[i].ip == ip) {
+            _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
+            _rateLimits[i].failedCount = 0;
+            _rateLimits[i].lockoutUntil = 0;
+            return;
+        }
+    }
+}
+
+String WebServerManager::sha256Hex(const String& input) {
+    unsigned char hash[32];
+#if defined(ESP8266)
+    br_sha256_context ctx;
+    br_sha256_init(&ctx);
+    br_sha256_update(&ctx, (const void*)input.c_str(), input.length());
+    br_sha256_out(&ctx, hash);
+#else
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0); // 0 = SHA-256
+    mbedtls_sha256_update(&ctx, (const unsigned char*)input.c_str(), input.length());
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+#endif
+
+    char hex[65];
+    for (int i = 0; i < 32; i++) {
+        sprintf(hex + (i * 2), "%02x", hash[i]);
+    }
+    hex[64] = '\0';
+    return String(hex);
+}
+
+String WebServerManager::md5Hex(const String& input) {
+#if defined(ESP8266)
+    MD5Builder md5;
+    md5.begin();
+    md5.add(input);
+    md5.calculate();
+    return md5.toString();
+#else
+    unsigned char hash[16];
+    mbedtls_md5_context ctx;
+    mbedtls_md5_init(&ctx);
+    mbedtls_md5_starts(&ctx);
+    mbedtls_md5_update(&ctx, (const unsigned char*)input.c_str(), input.length());
+    mbedtls_md5_finish(&ctx, hash);
+    mbedtls_md5_free(&ctx);
+
+    char hex[33];
+    for (int i = 0; i < 16; i++) {
+        sprintf(hex + (i * 2), "%02x", hash[i]);
+    }
+    hex[32] = '\0';
+    return String(hex);
+#endif
+}
+
+bool WebServerManager::constantTimeCompare(const String& a, const String& b) {
+    if (a.length() != b.length()) return false;
+    volatile uint8_t result = 0;
+    for (size_t i = 0; i < a.length(); i++) {
+        result |= (a[i] ^ b[i]);
+    }
+    return result == 0;
+}
+
+void WebServerManager::regenerateWsToken() {
+#if defined(ESP8266)
+    uint32_t rnd = ESP.random();
+#else
+    uint32_t rnd = esp_random();
+#endif
+    String seed = String(rnd) + ":" + String(micros()) + ":" + _webUsername + ":" + _webPasswordHash + ":" + _guestPasswordHash;
+    _wsToken = sha256Hex(seed);
+}
+
+bool WebServerManager::isAuthEnabled() const {
+    bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+    if (isAP) return false;
+    return _webAuthEnabled && _webUsername.length() > 0 &&
+           (_webPassword.length() > 0 || _webPasswordHash.length() > 0);
+}
+
+bool WebServerManager::verifyCredentials(const String& user, const String& pass) const {
+    if (!isAuthEnabled()) return true;
+    if (user.length() == 0) return false;
+    String passHash = sha256Hex(pass);
+
+    // 1. Check Admin Tier
+    if (constantTimeCompare(user, _webUsername)) {
+        bool passMatch = false;
+        if (_webPasswordHash.length() > 0) {
+            passMatch = constantTimeCompare(passHash, _webPasswordHash);
+        } else if (_webPassword.length() > 0) {
+            passMatch = constantTimeCompare(pass, _webPassword);
+        }
+        if (passMatch) return true;
+    }
+
+    // 2. Check Family / Guest Tier
+    if (_guestAuthEnabled && constantTimeCompare(user, _guestUsername)) {
+        bool passMatch = false;
+        if (_guestPasswordHash.length() > 0) {
+            passMatch = constantTimeCompare(passHash, _guestPasswordHash);
+        } else if (_guestPassword.length() > 0) {
+            passMatch = constantTimeCompare(pass, _guestPassword);
+        } else {
+            // Guest password not set: username match is sufficient
+            passMatch = true;
+        }
+        if (passMatch) return true;
+    }
+
+    return false;
+}
+
+bool WebServerManager::verifyWsToken(const String& token) const {
+    if (!isAuthEnabled()) return true;
+    if (token.length() < 32 || _wsToken.length() < 32) return false;
+    return constantTimeCompare(token, _wsToken);
+}
+
+static String decodeBase64(const String& input) {
+    const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    String out = "";
+    int val = 0, valb = -8;
+    for (size_t i = 0; i < input.length(); i++) {
+        char c = input[i];
+        if (c == '=') break;
+        const char* p = strchr(b64chars, c);
+        if (p) {
+            val = (val << 6) + (p - b64chars);
+            valb += 6;
+            if (valb >= 0) {
+                out += (char)((val >> valb) & 0xFF);
+                valb -= 8;
+            }
+        }
+    }
+    return out;
+}
+
+AuthRole WebServerManager::authenticateRequest(AsyncWebServerRequest* req) {
+    bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+    String url = req->url();
+    bool isSetupRoute = (url == "/" || url == "/api/discovery" || url == "/api/status" ||
+                         url == "/api/wifi/scan" || url == "/api/config/wifi" ||
+                         url == "/generate_204" || url == "/connecttest.txt" || url == "/fwlink" ||
+                         url == "/logout" || url == "/api/logout");
+
+    // Zero-Trust in AP Mode: ONLY allow captive onboarding routes; protect OTA, backup & control
+    if (isAP && isSetupRoute) {
+        return AUTH_ROLE_ADMIN;
+    }
+
+    // If authentication is disabled in regular mode
+    if (!_webAuthEnabled || _webUsername.length() == 0 || (_webPassword.length() == 0 && _webPasswordHash.length() == 0)) {
+        if (!isAP) return AUTH_ROLE_ADMIN;
+    }
+
+    // Extract Basic auth credentials and verify with constant-time comparison
+    String authHeader = req->header("Authorization");
+    authHeader.trim();
+    if (authHeader.length() > 6 && authHeader.substring(0, 6).equalsIgnoreCase("Basic ")) {
+        String encoded = authHeader.substring(6);
+        encoded.trim();
+        // Decode Base64 credentials
+        String credentials = decodeBase64(encoded);
+        if (credentials.length() > 0) {
+            int colonIdx = credentials.indexOf(':');
+            String user, pass;
+            if (colonIdx >= 0) {
+                user = credentials.substring(0, colonIdx);
+                pass = credentials.substring(colonIdx + 1);
+            } else {
+                user = credentials;
+                pass = "";
+            }
+
+            // Check Admin credentials
+            if (constantTimeCompare(user, _webUsername)) {
+                String passHash = sha256Hex(pass);
+                bool passMatch = false;
+                if (_webPasswordHash.length() > 0) {
+                    passMatch = constantTimeCompare(passHash, _webPasswordHash);
+                } else if (_webPassword.length() > 0) {
+                    passMatch = constantTimeCompare(pass, _webPassword);
+                }
+                if (passMatch) return AUTH_ROLE_ADMIN;
+            }
+
+            // Check Guest / Family credentials
+            if (_guestAuthEnabled && constantTimeCompare(user, _guestUsername)) {
+                String passHash = sha256Hex(pass);
+                bool passMatch = false;
+                if (_guestPasswordHash.length() > 0) {
+                    passMatch = constantTimeCompare(passHash, _guestPasswordHash);
+                } else if (_guestPassword.length() > 0) {
+                    passMatch = constantTimeCompare(pass, _guestPassword);
+                } else {
+                    passMatch = true;
+                }
+                if (passMatch) return AUTH_ROLE_GUEST;
+            }
+        }
+    }
+
+    return AUTH_ROLE_NONE;
+}
+
+bool WebServerManager::isAuthorized(AsyncWebServerRequest* req, AuthRole requiredRole) {
+    bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+    String url = req->url();
+    bool isSetupRoute = (url == "/" || url == "/api/discovery" || url == "/api/status" ||
+                         url == "/api/wifi/scan" || url == "/api/config/wifi" ||
+                         url == "/generate_204" || url == "/connecttest.txt" || url == "/fwlink" ||
+                         url == "/logout" || url == "/api/logout");
+
+    if (isAP && isSetupRoute) {
+        return true;
+    }
+
+    if (!_webAuthEnabled || _webUsername.length() == 0 || (_webPassword.length() == 0 && _webPasswordHash.length() == 0)) {
+        if (!isAP) return true;
+    }
+
+    // CSRF Protection: Require X-Requested-With header on mutating requests
+    String method = req->methodToString();
+    if (method == "POST" || method == "PUT" || method == "DELETE") {
+        String xrw = req->header("X-Requested-With");
+        if (xrw != "SmartHome" && xrw != "SmartHomeCompanionApp") {
+            sendError(req, 403, "CSRF validation failed: missing X-Requested-With header");
+            return false;
+        }
+    }
+
+    IPAddress clientIp = req->client() ? req->client()->remoteIP() : IPAddress(0, 0, 0, 0);
+    if (isRateLimited(clientIp)) {
+        sendError(req, 429, "Too many failed attempts. Locked out for 5 minutes.");
+        return false;
+    }
+
+    AuthRole role = authenticateRequest(req);
+    if (role == AUTH_ROLE_NONE) {
+        recordFailedAttempt(clientIp);
+        AsyncWebServerResponse* r = req->beginResponse(
+            401, "application/json",
+            "{\"status\":\"error\",\"message\":\"Authentication required\"}"
+        );
+        r->addHeader("WWW-Authenticate", "Basic realm=\"SmartHome\"");
+        req->send(r);
+        return false;
+    }
+
+    resetRateLimit(clientIp);
+
+    // Multi-User Privilege Tier Enforcement
+    if (role >= requiredRole) {
+        return true;
+    }
+
+    // Authenticated as Guest/Family, but attempting an Admin-only operation
+    if (_logger) {
+        _logger->logWarning("Security", "Forbidden: Guest user denied admin access to " + url);
+    }
+    sendError(req, 403, "Forbidden: Admin privileges required");
+    return false;
+}
+
+AuthRole WebServerManager::getRequestRole(AsyncWebServerRequest* req) {
+    return authenticateRequest(req);
+}
