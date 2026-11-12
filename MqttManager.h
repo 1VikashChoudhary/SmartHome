@@ -14,6 +14,7 @@
 #include "StorageManager.h"
 
 class EventLogger;
+class SensorManager;
 
 class MqttManager {
 public:
@@ -33,9 +34,7 @@ public:
 
     // Publishing
     void publishRelayState(uint8_t index, bool state);
-    void publishSensorData(float temp, float hum, int gasRaw, bool gasAlarm,
-                           float pressure = 0.0f, float lux = 0.0f, bool motion = false,
-                           float probeTemp = -127.0f, int tankLevel = -1);
+    void publishSensorData(SensorManager& sensorMgr);
     void publishDiagnostics(const String& json);
     void publishAvailability(bool online);
     void publishHomeAssistantDiscovery();
@@ -106,6 +105,11 @@ private:
     String getDeviceName();
     void addDeviceInfo(JsonObject& device);
     bool publishDiscoveryConfig(const String& topic, JsonDocument& doc);
+    void publishHaSensorEntity(const char* component, const String& objSuffix, const String& name,
+                               const String& statTopicSuffix, const char* unit, const char* devClass,
+                               const char* icon, const char* plOn, const char* plOff,
+                               const String& deviceId, const String& deviceName,
+                               const String& availabilityTopic, bool enabled);
     void subscribeTopics();
     String buildTopic(const String& suffix);
 };

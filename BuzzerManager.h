@@ -44,6 +44,7 @@ public:
     bool isMuted();
     bool isAlarming();
     bool isEnabled();
+    bool isHardwareAllowed() const { return _hwAllowed; }
     void setEnabled(bool enabled);
     uint8_t getVolume();
     void setVolume(uint8_t vol);
@@ -53,6 +54,7 @@ public:
 private:
     StorageManager* _storage;
     uint8_t _buzzerPin;
+    bool _hwAllowed;
     bool _enabled;
     bool _muted;
     bool _alarming;

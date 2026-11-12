@@ -11,16 +11,16 @@
 #include <WiFi.h>
 #endif
 #include "EventLogger.h"
+#include "SensorManager.h"
 
 MqttManager* MqttManager::_instance = nullptr;
 
 MqttManager::MqttManager()
-    : _storage(nullptr), _logger(nullptr), _enabled(false), _port(MQTT_DEFAULT_PORT),
-      _suspended(false),
+    : _storage(nullptr), _logger(nullptr), _enabled(false),
+      _suspended(false), _port(MQTT_DEFAULT_PORT),
       _wasConnected(false), _connectInProgress(false), _lastReconnectAttempt(0),
-      _connectStartedAt(0),
-      _reconnectInterval(MQTT_RECONNECT_BASE), _lastPublish(0),
-      _relayCallback(nullptr) {
+      _reconnectInterval(MQTT_RECONNECT_BASE), _connectStartedAt(0),
+      _lastPublish(0), _relayCallback(nullptr) {
     _instance = this;
 }
 
@@ -36,7 +36,7 @@ void MqttManager::begin(StorageManager& storage, EventLogger& logger) {
 
     if (_enabled && _broker.length() > 0) {
         applyClientConfig();
-        Serial.printf("[MQTT] Configured: %s:%d prefix=%s client_id=%s user=%s (pass_len=%d)\n",
+        SERIAL_PRINTF("[MQTT] Configured: %s:%d prefix=%s client_id=%s user=%s (pass_len=%d)\n",
                       _broker.c_str(), _port, _prefix.c_str(), _clientId.c_str(), _user.c_str(), _pass.length());
         connect();
     } else {
@@ -56,7 +56,7 @@ void MqttManager::loop() {
     unsigned long now = millis();
 
     if (_connectInProgress && (now - _connectStartedAt >= MQTT_CONNECT_TIMEOUT)) {
-        Serial.printf("[MQTT] Connect attempt timed out after %lu ms; resetting client state\n",
+        SERIAL_PRINTF("[MQTT] Connect attempt timed out after %lu ms; resetting client state\n",
                       now - _connectStartedAt);
         _lastError = F("Connection timed out");
         _connectInProgress = false;
@@ -67,7 +67,7 @@ void MqttManager::loop() {
     if (!_client.connected() && !_connectInProgress &&
         (now - _lastReconnectAttempt >= _reconnectInterval)) {
         _lastReconnectAttempt = now;
-        Serial.printf("[MQTT] Reconnecting to %s:%d (interval: %lums)...\n", _broker.c_str(), _port, _reconnectInterval);
+        SERIAL_PRINTF("[MQTT] Reconnecting to %s:%d (interval: %lums)...\n", _broker.c_str(), _port, _reconnectInterval);
         connect();
 
         // Exponential backoff
@@ -114,11 +114,23 @@ bool MqttManager::isEnabled()   { return _enabled; }
 
 void MqttManager::setEnabled(bool enabled) {
     _enabled = enabled;
+    if (_storage) {
+        JsonDocument doc;
+        doc["enabled"]   = _enabled;
+        doc["broker"]    = _broker;
+        doc["port"]      = _port;
+        doc["user"]      = _user;
+        doc["pass"]      = _pass;
+        doc["client_id"] = _clientId;
+        doc["prefix"]    = _prefix;
+        _storage->saveJson(PATH_MQTT, doc);
+    }
     if (!_enabled) {
         _lastError = F("Disabled");
         disconnect();
     } else if (_broker.length() > 0) {
         applyClientConfig();
+        _reconnectInterval = MQTT_RECONNECT_BASE;
         connect();
     }
 }
@@ -143,9 +155,12 @@ void MqttManager::publishRelayState(uint8_t index, bool state) {
     _client.publish(topic.c_str(), 1, true, state ? "ON" : "OFF");
 }
 
-void MqttManager::publishSensorData(float temp, float hum, int gasRaw, bool gasAlarm,
-                                    float pressure, float lux, bool motion,
-                                    float probeTemp, int tankLevel) {
+static String indexedTopic(const char* base, uint8_t idx) {
+    if (idx == 0) return String(base);
+    return String(base) + "_" + String(idx + 1);
+}
+
+void MqttManager::publishSensorData(SensorManager& sensorMgr) {
     if (!_client.connected()) return;
 
     unsigned long now = millis();
@@ -154,39 +169,63 @@ void MqttManager::publishSensorData(float temp, float hum, int gasRaw, bool gasA
 
     char buf[16];
 
-    dtostrf(temp, 1, 1, buf);
-    _client.publish(buildTopic("sensor/temperature").c_str(), 0, false, buf);
+    // Climate Sensors (Temperature, Humidity, optional BME280 Pressure)
+    for (uint8_t i = 0; i < sensorMgr.getClimateCount(); i++) {
+        if (!sensorMgr.isClimateActiveAt(i)) continue;
+        dtostrf(sensorMgr.getTemperatureAt(i), 1, 1, buf);
+        _client.publish(buildTopic(indexedTopic("sensor/temperature", i)).c_str(), 0, false, buf);
 
-    dtostrf(hum, 1, 1, buf);
-    _client.publish(buildTopic("sensor/humidity").c_str(), 0, false, buf);
+        dtostrf(sensorMgr.getHumidityAt(i), 1, 1, buf);
+        _client.publish(buildTopic(indexedTopic("sensor/humidity", i)).c_str(), 0, false, buf);
 
-    itoa(gasRaw, buf, 10);
-    _client.publish(buildTopic("sensor/gas").c_str(), 0, false, buf);
-
-    _client.publish(buildTopic("sensor/gas_alarm").c_str(), 0, false,
-                    gasAlarm ? "danger" : "safe");
-
-    if (pressure > 300.0f) {
-        dtostrf(pressure, 1, 1, buf);
-        _client.publish(buildTopic("sensor/pressure").c_str(), 0, false, buf);
+        if (sensorMgr.hasBarometerAt(i)) {
+            float pres = sensorMgr.getPressureAt(i);
+            if (pres > 300.0f) {
+                dtostrf(pres, 1, 1, buf);
+                _client.publish(buildTopic(indexedTopic("sensor/pressure", i)).c_str(), 0, false, buf);
+            }
+        }
     }
 
-    if (lux >= 0.0f) {
-        dtostrf(lux, 1, 1, buf);
-        _client.publish(buildTopic("sensor/illuminance").c_str(), 0, false, buf);
+    // MQ-2 Gas Sensors
+    for (uint8_t i = 0; i < sensorMgr.getMq2Count(); i++) {
+        if (!sensorMgr.isMq2ActiveAt(i)) continue;
+        itoa(sensorMgr.getMQ2RawAt(i), buf, 10);
+        _client.publish(buildTopic(indexedTopic("sensor/gas", i)).c_str(), 0, false, buf);
+
+        _client.publish(buildTopic(indexedTopic("sensor/gas_alarm", i)).c_str(), 0, false,
+                        sensorMgr.isMQ2AlarmAt(i) ? "danger" : "safe");
     }
 
-    _client.publish(buildTopic("binary_sensor/motion").c_str(), 0, false,
-                    motion ? "ON" : "OFF");
-
-    if (probeTemp > -55.0f && probeTemp < 130.0f) {
-        dtostrf(probeTemp, 1, 1, buf);
-        _client.publish(buildTopic("sensor/water_temp").c_str(), 0, false, buf);
+    // BH1750 Ambient Light Sensors
+    for (uint8_t i = 0; i < sensorMgr.getLightCount(); i++) {
+        if (!sensorMgr.isLightActiveAt(i)) continue;
+        dtostrf(sensorMgr.getLuxAt(i), 1, 1, buf);
+        _client.publish(buildTopic(indexedTopic("sensor/illuminance", i)).c_str(), 0, false, buf);
     }
 
-    if (tankLevel >= 0) {
-        itoa(tankLevel, buf, 10);
-        _client.publish(buildTopic("sensor/tank_level").c_str(), 0, false, buf);
+    // Motion / Occupancy Sensors
+    for (uint8_t i = 0; i < sensorMgr.getMotionCount(); i++) {
+        if (!sensorMgr.isMotionActiveAt(i)) continue;
+        _client.publish(buildTopic(indexedTopic("binary_sensor/motion", i)).c_str(), 0, false,
+                        sensorMgr.isMotionDetectedAt(i) ? "ON" : "OFF");
+    }
+
+    // Water Temp Probes (DS18B20)
+    for (uint8_t i = 0; i < sensorMgr.getProbeCount(); i++) {
+        if (!sensorMgr.isProbeActiveAt(i) || sensorMgr.isProbeFaultAt(i)) continue;
+        float pt = sensorMgr.getProbeTemperatureAt(i);
+        if (pt > -55.0f && pt < 130.0f) {
+            dtostrf(pt, 1, 1, buf);
+            _client.publish(buildTopic(indexedTopic("sensor/water_temp", i)).c_str(), 0, false, buf);
+        }
+    }
+
+    // Ultrasonic Tank Level Sensors
+    for (uint8_t i = 0; i < sensorMgr.getUltrasonicCount(); i++) {
+        if (!sensorMgr.isUltrasonicActiveAt(i)) continue;
+        itoa(sensorMgr.getTankLevelPercentAt(i), buf, 10);
+        _client.publish(buildTopic(indexedTopic("sensor/tank_level", i)).c_str(), 0, false, buf);
     }
 }
 
@@ -200,6 +239,38 @@ void MqttManager::publishAvailability(bool online) {
     _client.publish(buildTopic("status").c_str(), 1, true, online ? "online" : "offline");
 }
 
+void MqttManager::publishHaSensorEntity(const char* component, const String& objSuffix, const String& name,
+                                        const String& statTopicSuffix, const char* unit, const char* devClass,
+                                        const char* icon, const char* plOn, const char* plOff,
+                                        const String& deviceId, const String& deviceName,
+                                        const String& availabilityTopic, bool enabled) {
+    String cfgTopic = "homeassistant/" + String(component) + "/" + deviceId + "/" + objSuffix + "/config";
+    if (!enabled) {
+        _client.publish(cfgTopic.c_str(), 0, true, "");
+        return;
+    }
+
+    JsonDocument doc;
+    doc["name"] = name;
+    doc["uniq_id"] = deviceId + "_" + objSuffix;
+    doc["obj_id"] = deviceId + "_" + objSuffix;
+    doc["stat_t"] = buildTopic(statTopicSuffix);
+    doc["avty_t"] = availabilityTopic;
+    doc["pl_avail"] = "online";
+    doc["pl_not_avail"] = "offline";
+    if (unit && unit[0])     doc["unit_of_meas"] = unit;
+    if (devClass && devClass[0]) doc["dev_cla"] = devClass;
+    if (strcmp(component, "sensor") == 0) doc["stat_cla"] = "measurement";
+    if (icon && icon[0])     doc["icon"] = icon;
+    if (plOn && plOn[0])     doc["pl_on"] = plOn;
+    if (plOff && plOff[0])   doc["pl_off"] = plOff;
+
+    JsonObject device = doc["dev"].to<JsonObject>();
+    addDeviceInfo(device);
+    device["name"] = deviceName;
+    publishDiscoveryConfig(cfgTopic, doc);
+}
+
 void MqttManager::publishHomeAssistantDiscovery() {
     if (!_client.connected()) return;
 
@@ -208,15 +279,21 @@ void MqttManager::publishHomeAssistantDiscovery() {
     const String availabilityTopic = buildTopic("status");
 
     JsonDocument relayDoc;
-    JsonArray relays = relayDoc["relays"].as<JsonArray>();
+    JsonArray relays;
     uint8_t relayCount = NUM_RELAYS;
-    bool dhtEnabled = true;
-    bool bmeEnabled = false;
-    bool mq2Enabled = true;
-    bool lightEnabled = false;
-    bool motionEnabled = false;
-    bool probeEnabled = false;
-    bool tankEnabled = false;
+
+    bool climateEn[MAX_CLIMATE_SENSORS]    = {false};
+    bool bmeEn[MAX_CLIMATE_SENSORS]        = {false};
+    bool lightEn[MAX_LIGHT_SENSORS]        = {false};
+    bool motionEn[MAX_MOTION_SENSORS]      = {false};
+    bool probeEn[MAX_PROBE_SENSORS]        = {false};
+    bool tankEn[MAX_ULTRASONIC_SENSORS]    = {false};
+    bool mq2En[MAX_MQ2_SENSORS]            = {false};
+
+#if !defined(ESP8266)
+    climateEn[0] = true;
+#endif
+    mq2En[0] = true;
 
     bool channelEnabled[MAX_RELAYS];
     for (uint8_t i = 0; i < MAX_RELAYS; i++) channelEnabled[i] = true;
@@ -231,25 +308,65 @@ void MqttManager::publishHomeAssistantDiscovery() {
                     channelEnabled[i] = chArr[i]["enabled"] | true;
                 }
             }
-            if (hwDoc.containsKey("dht")) {
+
+            if (hwDoc.containsKey("climates")) {
+                memset(climateEn, 0, sizeof(climateEn));
+                JsonArray arr = hwDoc["climates"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS && i < arr.size(); i++) {
+                    uint8_t dt = arr[i]["type"] | 0;
+                    climateEn[i] = (dt != 0);
+                    bmeEn[i] = (dt == 3);
+                }
+            } else if (hwDoc.containsKey("dht")) {
                 uint8_t dt = hwDoc["dht"]["type"] | 2;
-                dhtEnabled = (dt != 0);
-                bmeEnabled = (dt == 3);
+                climateEn[0] = (dt != 0);
+                bmeEn[0] = (dt == 3);
             }
-            if (hwDoc.containsKey("mq2")) {
-                mq2Enabled = hwDoc["mq2"]["enabled"] | true;
+
+            if (hwDoc.containsKey("lights")) {
+                JsonArray arr = hwDoc["lights"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_LIGHT_SENSORS && i < arr.size(); i++) {
+                    lightEn[i] = ((arr[i]["type"] | 0) != 0);
+                }
+            } else if (hwDoc.containsKey("light")) {
+                lightEn[0] = ((hwDoc["light"]["type"] | 0) != 0);
             }
-            if (hwDoc.containsKey("light")) {
-                lightEnabled = ((hwDoc["light"]["type"] | 0) != 0);
+
+            if (hwDoc.containsKey("motions")) {
+                JsonArray arr = hwDoc["motions"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_MOTION_SENSORS && i < arr.size(); i++) {
+                    motionEn[i] = ((arr[i]["type"] | 0) != 0);
+                }
+            } else if (hwDoc.containsKey("motion")) {
+                motionEn[0] = ((hwDoc["motion"]["type"] | 0) != 0);
             }
-            if (hwDoc.containsKey("motion")) {
-                motionEnabled = ((hwDoc["motion"]["type"] | 0) != 0);
+
+            if (hwDoc.containsKey("probes")) {
+                JsonArray arr = hwDoc["probes"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_PROBE_SENSORS && i < arr.size(); i++) {
+                    probeEn[i] = ((arr[i]["type"] | 0) != 0);
+                }
+            } else if (hwDoc.containsKey("probe")) {
+                probeEn[0] = ((hwDoc["probe"]["type"] | 0) != 0);
             }
-            if (hwDoc.containsKey("probe")) {
-                probeEnabled = ((hwDoc["probe"]["type"] | 0) != 0);
+
+            if (hwDoc.containsKey("ultrasonics")) {
+                JsonArray arr = hwDoc["ultrasonics"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_ULTRASONIC_SENSORS && i < arr.size(); i++) {
+                    tankEn[i] = ((arr[i]["type"] | 0) != 0);
+                }
+            } else if (hwDoc.containsKey("ultrasonic")) {
+                tankEn[0] = ((hwDoc["ultrasonic"]["type"] | 0) != 0);
             }
-            if (hwDoc.containsKey("ultrasonic")) {
-                tankEnabled = ((hwDoc["ultrasonic"]["type"] | 0) != 0);
+
+            if (hwDoc.containsKey("mq2_sensors")) {
+                memset(mq2En, 0, sizeof(mq2En));
+                JsonArray arr = hwDoc["mq2_sensors"].as<JsonArray>();
+                for (uint8_t i = 0; i < MAX_MQ2_SENSORS && i < arr.size(); i++) {
+                    mq2En[i] = arr[i]["enabled"] | true;
+                }
+            } else if (hwDoc.containsKey("mq2")) {
+                mq2En[0] = hwDoc["mq2"]["enabled"] | true;
             }
         }
         _storage->loadJson(PATH_RELAYS, relayDoc);
@@ -290,180 +407,57 @@ void MqttManager::publishHomeAssistantDiscovery() {
         String topic = "homeassistant/switch/" + deviceId + "/relay_" + String(i + 1) + "/config";
         publishDiscoveryConfig(topic, doc);
     }
-
-    if (dhtEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Temperature";
-        doc["uniq_id"] = deviceId + "_temperature";
-        doc["obj_id"] = deviceId + "_temperature";
-        doc["stat_t"] = buildTopic("sensor/temperature");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "°C";
-        doc["dev_cla"] = "temperature";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/temperature/config", doc);
+    for (uint8_t i = relayCount; i < MAX_RELAYS; i++) {
+        publishHomeAssistantDiscoveryRemove(i);
     }
 
-    if (dhtEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Humidity";
-        doc["uniq_id"] = deviceId + "_humidity";
-        doc["obj_id"] = deviceId + "_humidity";
-        doc["stat_t"] = buildTopic("sensor/humidity");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "%";
-        doc["dev_cla"] = "humidity";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/humidity/config", doc);
+    auto slotTitle = [](const char* base, uint8_t i) -> String {
+        return (i == 0) ? String(base) : (String(base) + " " + String(i + 1));
+    };
+
+    for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
+        publishHaSensorEntity("sensor", indexedTopic("temperature", i), slotTitle("Temperature", i),
+                              indexedTopic("sensor/temperature", i), "\xC2\xB0""C", "temperature",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, climateEn[i]);
+        publishHaSensorEntity("sensor", indexedTopic("humidity", i), slotTitle("Humidity", i),
+                              indexedTopic("sensor/humidity", i), "%", "humidity",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, climateEn[i]);
+        publishHaSensorEntity("sensor", indexedTopic("pressure", i), slotTitle("Barometric Pressure", i),
+                              indexedTopic("sensor/pressure", i), "hPa", "atmospheric_pressure",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, bmeEn[i]);
     }
 
-    if (mq2Enabled) {
-        JsonDocument doc;
-        doc["name"] = "Gas Level";
-        doc["uniq_id"] = deviceId + "_gas";
-        doc["obj_id"] = deviceId + "_gas";
-        doc["stat_t"] = buildTopic("sensor/gas");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "raw";
-        doc["stat_cla"] = "measurement";
-        doc["icon"] = "mdi:molecule-co";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/gas/config", doc);
+    for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+        publishHaSensorEntity("sensor", indexedTopic("gas", i), slotTitle("Gas Level", i),
+                              indexedTopic("sensor/gas", i), "raw", nullptr,
+                              "mdi:molecule-co", nullptr, nullptr, deviceId, deviceName, availabilityTopic, mq2En[i]);
+        publishHaSensorEntity("binary_sensor", indexedTopic("gas_alarm", i), slotTitle("Gas Alarm", i),
+                              indexedTopic("sensor/gas_alarm", i), nullptr, "gas",
+                              nullptr, "danger", "safe", deviceId, deviceName, availabilityTopic, mq2En[i]);
     }
 
-    if (mq2Enabled) {
-        JsonDocument doc;
-        doc["name"] = "Gas Alarm";
-        doc["uniq_id"] = deviceId + "_gas_alarm";
-        doc["obj_id"] = deviceId + "_gas_alarm";
-        doc["stat_t"] = buildTopic("sensor/gas_alarm");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["pl_on"] = "danger";
-        doc["pl_off"] = "safe";
-        doc["dev_cla"] = "gas";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/binary_sensor/" + deviceId + "/gas_alarm/config", doc);
+    for (uint8_t i = 0; i < MAX_LIGHT_SENSORS; i++) {
+        publishHaSensorEntity("sensor", indexedTopic("lux", i), slotTitle("Ambient Light", i),
+                              indexedTopic("sensor/illuminance", i), "lx", "illuminance",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, lightEn[i]);
     }
 
-    // Barometric Pressure (BME280)
-    if (bmeEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Barometric Pressure";
-        doc["uniq_id"] = deviceId + "_pressure";
-        doc["obj_id"] = deviceId + "_pressure";
-        doc["stat_t"] = buildTopic("sensor/pressure");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "hPa";
-        doc["dev_cla"] = "atmospheric_pressure";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/pressure/config", doc);
-    } else {
-        _client.publish(("homeassistant/sensor/" + deviceId + "/pressure/config").c_str(), 1, true, "");
+    for (uint8_t i = 0; i < MAX_MOTION_SENSORS; i++) {
+        publishHaSensorEntity("binary_sensor", indexedTopic("motion", i), slotTitle("Motion Occupancy", i),
+                              indexedTopic("binary_sensor/motion", i), nullptr, "motion",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, motionEn[i]);
     }
 
-    // Ambient Light (BH1750)
-    if (lightEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Ambient Light";
-        doc["uniq_id"] = deviceId + "_lux";
-        doc["obj_id"] = deviceId + "_lux";
-        doc["stat_t"] = buildTopic("sensor/illuminance");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "lx";
-        doc["dev_cla"] = "illuminance";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/illuminance/config", doc);
-    } else {
-        _client.publish(("homeassistant/sensor/" + deviceId + "/illuminance/config").c_str(), 1, true, "");
+    for (uint8_t i = 0; i < MAX_PROBE_SENSORS; i++) {
+        publishHaSensorEntity("sensor", indexedTopic("water_temp", i), slotTitle("Water Temperature", i),
+                              indexedTopic("sensor/water_temp", i), "\xC2\xB0""C", "temperature",
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, probeEn[i]);
     }
 
-    // Motion / Occupancy (PIR / Radar)
-    if (motionEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Motion Occupancy";
-        doc["uniq_id"] = deviceId + "_motion";
-        doc["obj_id"] = deviceId + "_motion";
-        doc["stat_t"] = buildTopic("binary_sensor/motion");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["dev_cla"] = "motion";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/binary_sensor/" + deviceId + "/motion/config", doc);
-    } else {
-        _client.publish(("homeassistant/binary_sensor/" + deviceId + "/motion/config").c_str(), 1, true, "");
-    }
-
-    // Water Temp Probe (DS18B20)
-    if (probeEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Water Temperature";
-        doc["uniq_id"] = deviceId + "_water_temp";
-        doc["obj_id"] = deviceId + "_water_temp";
-        doc["stat_t"] = buildTopic("sensor/water_temp");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "°C";
-        doc["dev_cla"] = "temperature";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/water_temp/config", doc);
-    } else {
-        _client.publish(("homeassistant/sensor/" + deviceId + "/water_temp/config").c_str(), 1, true, "");
-    }
-
-    // Water Tank Level (HC-SR04/P / JSN-SR04T)
-    if (tankEnabled) {
-        JsonDocument doc;
-        doc["name"] = "Water Tank Level";
-        doc["uniq_id"] = deviceId + "_tank_level";
-        doc["obj_id"] = deviceId + "_tank_level";
-        doc["stat_t"] = buildTopic("sensor/tank_level");
-        doc["avty_t"] = availabilityTopic;
-        doc["pl_avail"] = "online";
-        doc["pl_not_avail"] = "offline";
-        doc["unit_of_meas"] = "%";
-        doc["icon"] = "mdi:water-percent";
-        doc["stat_cla"] = "measurement";
-        JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
-        publishDiscoveryConfig("homeassistant/sensor/" + deviceId + "/tank_level/config", doc);
-    } else {
-        _client.publish(("homeassistant/sensor/" + deviceId + "/tank_level/config").c_str(), 1, true, "");
+    for (uint8_t i = 0; i < MAX_ULTRASONIC_SENSORS; i++) {
+        publishHaSensorEntity("sensor", indexedTopic("tank_level", i), slotTitle("Water Tank Level", i),
+                              indexedTopic("sensor/tank_level", i), "%", nullptr,
+                              "mdi:water-percent", nullptr, nullptr, deviceId, deviceName, availabilityTopic, tankEn[i]);
     }
 }
 
@@ -472,7 +466,7 @@ void MqttManager::publishHomeAssistantDiscoveryRemove(uint8_t index) {
     String deviceId = getDeviceId();
     String topic = "homeassistant/switch/" + deviceId + "/relay_" + String(index + 1) + "/config";
     _client.publish(topic.c_str(), 1, true, "");
-    Serial.printf("[MQTT] Sent discovery remove for relay %d\n", index + 1);
+    SERIAL_PRINTF("[MQTT] Sent discovery remove for relay %d\n", index + 1);
 }
 
 void MqttManager::publishInitialStates() {
@@ -483,6 +477,7 @@ void MqttManager::publishInitialStates() {
     if (_storage->loadJson(PATH_HARDWARE, hwDoc)) {
         relayCount = hwDoc["num_relays"] | MAX_RELAYS;
     }
+    if (relayCount > MAX_RELAYS) relayCount = MAX_RELAYS;
 
     bool logical[MAX_RELAYS] = {0};
     bool wallSw[MAX_RELAYS] = {0};
@@ -524,7 +519,7 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
         uint32_t chipId = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
 #endif
         char defaultId[20];
-        snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", chipId);
+        snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", (unsigned int)chipId);
         _clientId = String(defaultId);
     }
     _prefix = prefix;
@@ -549,7 +544,7 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
     disconnect();
     if (_enabled && _broker.length() > 0) {
         applyClientConfig();
-        Serial.printf("[MQTT] Configured: %s:%d prefix=%s client_id=%s user=%s (pass_len=%d)\n",
+        SERIAL_PRINTF("[MQTT] Configured: %s:%d prefix=%s client_id=%s user=%s (pass_len=%d)\n",
                       _broker.c_str(), _port, _prefix.c_str(), _clientId.c_str(), _user.c_str(), _pass.length());
 
         _reconnectInterval = MQTT_RECONNECT_BASE;
@@ -608,7 +603,7 @@ void MqttManager::onConnect(bool sessionPresent) {
 }
 
 void MqttManager::onDisconnect(AsyncMqttClientDisconnectReason reason) {
-    Serial.printf("[MQTT] Disconnected (reason: %d)\n", (int)reason);
+    SERIAL_PRINTF("[MQTT] Disconnected (reason: %d)\n", (int)reason);
     _wasConnected = false;
     _connectInProgress = false;
     _connectStartedAt = 0;
@@ -647,7 +642,7 @@ void MqttManager::onMessage(char* topic, char* payload,
     String topicStr = String(topic);
     String payloadStr = String(payloadBuf);
 
-    Serial.printf("[MQTT] Received: %s = %s\n", topic, payloadBuf);
+    SERIAL_PRINTF("[MQTT] Received: %s = %s\n", topic, payloadBuf);
 
     // Parse relay commands: {prefix}/relay/{N}/set
     String relayPrefix = _prefix + "/relay/";
@@ -695,7 +690,7 @@ void MqttManager::loadConfig() {
     uint32_t chipId = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
 #endif
     char defaultId[20];
-    snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", chipId);
+    snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", (unsigned int)chipId);
     _clientId = String(defaultId);
 
     if (!_storage) return;
@@ -703,12 +698,12 @@ void MqttManager::loadConfig() {
     if (!_storage->loadJson(PATH_MQTT, doc)) return;
 
     _enabled   = doc["enabled"] | false;
-    _broker    = doc["broker"].as<String>();
+    _broker    = doc["broker"] | "";
     _broker.trim();
     _port      = doc["port"] | MQTT_DEFAULT_PORT;
-    _user      = doc["user"].as<String>();
+    _user      = doc["user"] | "";
     _user.trim();
-    _pass      = doc["pass"].as<String>();
+    _pass      = doc["pass"] | "";
     _pass.trim();
     _clientId  = doc["client_id"] | _clientId;
     _clientId.trim();
@@ -779,7 +774,7 @@ bool MqttManager::publishDiscoveryConfig(const String& topic, JsonDocument& doc)
     serializeJson(doc, payload);
 
     bool ok = _client.publish(topic.c_str(), 1, true, payload.c_str());
-    Serial.printf("[MQTT] Discovery %s: %s\n", topic.c_str(), ok ? "OK" : "FAIL");
+    SERIAL_PRINTF("[MQTT] Discovery %s: %s\n", topic.c_str(), ok ? "OK" : "FAIL");
     return ok;
 }
 
@@ -787,7 +782,7 @@ void MqttManager::subscribeTopics() {
     // Subscribe to relay command topics: {prefix}/relay/+/set
     String topic = _prefix + "/relay/+/set";
     _client.subscribe(topic.c_str(), 1);
-    Serial.printf("[MQTT] Subscribed: %s\n", topic.c_str());
+    SERIAL_PRINTF("[MQTT] Subscribed: %s\n", topic.c_str());
 }
 
 String MqttManager::buildTopic(const String& suffix) {

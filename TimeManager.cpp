@@ -42,7 +42,7 @@ void TimeManager::begin(StorageManager& storage) {
 
     // Configure NTP
     configureNTP();
-    Serial.printf("[Time] Timezone: %s, 24h: %s\n", _timezone.c_str(), _use24h ? "yes" : "no");
+    SERIAL_PRINTF("[Time] Timezone: %s, 24h: %s\n", _timezone.c_str(), _use24h ? "yes" : "no");
 }
 
 void TimeManager::loop() {
@@ -56,7 +56,7 @@ void TimeManager::loop() {
             if (!_timeSet && _timeInfo.tm_year > (2020 - 1900)) {
                 _timeSet = true;
                 _lastSyncTime = now;
-                Serial.printf("[Time] NTP synced: %s\n", getFormattedDateTime().c_str());
+                SERIAL_PRINTF("[Time] NTP synced: %s\n", getFormattedDateTime().c_str());
 
 #ifdef ENABLE_DS3231
                 if (_rtcAvailable) syncRTCFromNTP();
@@ -78,17 +78,18 @@ bool TimeManager::isTimeSet() { return _timeSet; }
 String TimeManager::getFormattedTime() {
     if (!updateTimeInfo()) return F("--:--:--");
 
-    char buf[12];
+    const uint8_t hr = (uint8_t)constrain(_timeInfo.tm_hour, 0, 23);
+    const uint8_t mn = (uint8_t)constrain(_timeInfo.tm_min, 0, 59);
+    const uint8_t sc = (uint8_t)constrain(_timeInfo.tm_sec, 0, 59);
+
+    char buf[24];
     if (_use24h) {
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d",
-                 _timeInfo.tm_hour, _timeInfo.tm_min, _timeInfo.tm_sec);
+        snprintf(buf, sizeof(buf), "%02u:%02u:%02u", hr, mn, sc);
     } else {
-        int h = _timeInfo.tm_hour;
-        const char* ampm = (h >= 12) ? "PM" : "AM";
-        if (h > 12) h -= 12;
-        if (h == 0) h = 12;
-        snprintf(buf, sizeof(buf), "%d:%02d:%02d %s",
-                 h, _timeInfo.tm_min, _timeInfo.tm_sec, ampm);
+        const char* ampm = (hr >= 12) ? "PM" : "AM";
+        uint8_t h12 = hr % 12;
+        if (h12 == 0) h12 = 12;
+        snprintf(buf, sizeof(buf), "%u:%02u:%02u %s", h12, mn, sc, ampm);
     }
     return String(buf);
 }
@@ -101,11 +102,12 @@ String TimeManager::getFormattedDate() {
         "Jul","Aug","Sep","Oct","Nov","Dec"
     };
 
-    char buf[16];
-    snprintf(buf, sizeof(buf), "%02d %s %04d",
-             _timeInfo.tm_mday,
-             months[_timeInfo.tm_mon],
-             _timeInfo.tm_year + 1900);
+    const uint8_t d = (uint8_t)constrain(_timeInfo.tm_mday, 1, 31);
+    const uint8_t m = (uint8_t)constrain(_timeInfo.tm_mon, 0, 11);
+    const int yr = _timeInfo.tm_year + 1900;
+
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%02u %s %04d", d, months[m], yr);
     return String(buf);
 }
 
@@ -116,7 +118,8 @@ String TimeManager::getFormattedDateTime() {
 String TimeManager::getDayOfWeek() {
     if (!updateTimeInfo()) return F("---");
     static const char* days[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-    return String(days[_timeInfo.tm_wday]);
+    const uint8_t w = (uint8_t)constrain(_timeInfo.tm_wday, 0, 6);
+    return String(days[w]);
 }
 
 int TimeManager::getDayOfWeekNum() {
@@ -145,7 +148,7 @@ void TimeManager::setTimezone(const String& tz) {
         doc["timezone"] = _timezone;
         _storage->saveJson(PATH_CONFIG, doc);
     }
-    Serial.printf("[Time] Timezone changed to: %s\n", _timezone.c_str());
+    SERIAL_PRINTF("[Time] Timezone changed to: %s\n", _timezone.c_str());
 }
 
 void TimeManager::setUse24h(bool use24h) {
@@ -208,6 +211,6 @@ void TimeManager::loadTimeFromRTC() {
     settimeofday(&tv, nullptr);
 
     _timeSet = true;
-    Serial.printf("[Time] Loaded from RTC: %s\n", getFormattedDateTime().c_str());
+    SERIAL_PRINTF("[Time] Loaded from RTC: %s\n", getFormattedDateTime().c_str());
 }
 #endif

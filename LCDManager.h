@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * LCDManager.h — Non-blocking LCD1602 I2C Display Manager
+ * LCDManager.h — Non-blocking LCD1602 / LCD2004 I2C Display Manager
  * ============================================================================
  */
 
@@ -16,6 +16,9 @@
 
 class HardwareManager;
 class TimeManager;
+#define LCD_MAX_COLS        20
+#define LCD_MAX_ROWS        4
+
 #define LCD_PAGE_SENSOR     0  // Temp/Hum + Relay states
 #define LCD_PAGE_NETWORK    1  // Date + IP
 #define LCD_PAGE_GAS        2  // MQ2 value
@@ -58,6 +61,7 @@ public:
 
     // Settings
     bool isEnabled();
+    bool isHardwareAllowed() const { return _hwLcdAllowed; }
     void setEnabled(bool enabled);
     bool getBacklight();
     void setBacklight(bool on);
@@ -80,12 +84,12 @@ public:
     void setDimmedBrightness(uint8_t brightness);
 
     // Data update methods (called from main loop)
-    void updateSensorData(float temp, float hum, bool dhtFault);
+    void updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled = true);
     void updateRelayStates(const bool states[5]);
     void updateRelayStates(const bool states[], uint8_t count);
     void updateNetworkInfo(const String& ip, const String& date, const String& dayOfWeek,
                            bool isAP = false, const String& apSSID = "", const String& apPass = "");
-    void updateGasData(int gasValue, int threshold, bool alarm, bool warming);
+    void updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled = true);
     void updateMqttStatus(bool connected, const String& uptime);
 
 private:
@@ -94,6 +98,12 @@ private:
     TimeManager* _time;
 
     bool _enabled;
+    bool _hwLcdAllowed;
+    uint8_t _sdaPin;
+    uint8_t _sclPin;
+    uint8_t _i2cAddr;
+    uint8_t _lcdCols;
+    uint8_t _lcdRows;
     bool _backlight;
     String _displayMode;      // "rotate" | "dht_relay"
     uint16_t _rotationInterval;  // seconds
@@ -107,8 +117,8 @@ private:
     uint8_t _currentAppliedBrightness;
 
     // Display buffers (diff-based update)
-    char _buffer[LCD_ROWS][LCD_COLS + 1];
-    char _prevBuffer[LCD_ROWS][LCD_COLS + 1];
+    char _buffer[LCD_MAX_ROWS][LCD_MAX_COLS + 1];
+    char _prevBuffer[LCD_MAX_ROWS][LCD_MAX_COLS + 1];
     bool _forceRedraw;
 
     // Page rotation
@@ -124,11 +134,12 @@ private:
     // Cached data for pages
     float _temp, _hum;
     bool _dhtFault;
+    bool _dhtEnabled;
     uint8_t _numRelays;
     bool _relayStates[MAX_RELAYS];
     String _ipAddr, _dateStr, _dowStr;
     int _gasValue, _gasThreshold;
-    bool _gasAlarm, _gasWarming;
+    bool _gasAlarm, _gasWarming, _mq2Enabled;
     bool _mqttConnected;
     String _uptimeStr;
     bool _isAPMode;

@@ -137,9 +137,15 @@
 #endif
 
 // ============================================================================
-// Relay Configuration (Dynamic Hardware Profile supports up to MAX_RELAYS)
+// Relay & Sensor Configuration (Dynamic Hardware Profile limits)
 // ============================================================================
-#define MAX_RELAYS          8
+#define MAX_RELAYS              8
+#define MAX_CLIMATE_SENSORS     4
+#define MAX_LIGHT_SENSORS       2
+#define MAX_MOTION_SENSORS      6
+#define MAX_PROBE_SENSORS       4
+#define MAX_ULTRASONIC_SENSORS  4
+#define MAX_MQ2_SENSORS         4
 
 // Legacy static pin arrays (used for default board initialization)
 static const uint8_t RELAY_PINS[NUM_RELAYS] = {
@@ -315,10 +321,11 @@ enum BootStateMode : uint8_t {
 #if defined(ESP8266)
 #define MAX_ALARMS              10        // Maximum scheduled alarms (scaled for ESP8266 RAM)
 #define MAX_SENSOR_RULES        6         // Maximum sensor automation rules
-#define MAX_LOG_ENTRIES         30        // Ring buffer log capacity (saves ~16KB RAM on ESP8266)
+#define MAX_LOG_ENTRIES         20        // Ring buffer log capacity (saves ~18KB RAM on ESP8266)
 #define MAX_WS_CLIENTS          3         // Simultaneous WebSocket connections
 #define MIN_FREE_HEAP           4096      // 4KB threshold on ESP8266
 #define MAX_JSON_DOC_SIZE       2048      // ArduinoJson document capacity
+#define SERIAL_PRINTF(fmt, ...) Serial.printf_P(PSTR(fmt), ##__VA_ARGS__)
 #else
 #define MAX_ALARMS              20        // Maximum scheduled alarms
 #define MAX_SENSOR_RULES        10        // Maximum sensor automation rules
@@ -326,6 +333,7 @@ enum BootStateMode : uint8_t {
 #define MAX_WS_CLIENTS          8         // Simultaneous WebSocket connections
 #define MIN_FREE_HEAP           10240     // 10KB — reduce functionality below this
 #define MAX_JSON_DOC_SIZE       4096      // ArduinoJson document capacity
+#define SERIAL_PRINTF(fmt, ...) Serial.printf(fmt, ##__VA_ARGS__)
 #endif
 
 // ============================================================================

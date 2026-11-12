@@ -17,7 +17,7 @@ void AlarmScheduler::begin(StorageManager& storage) {
     _storage = &storage;
     loadAlarms();
     _lastCheck = millis();
-    Serial.printf("[Alarm] Initialized with %d alarm(s)\n", _alarmCount);
+    SERIAL_PRINTF("[Alarm] Initialized with %d alarm(s)\n", _alarmCount);
 }
 
 void AlarmScheduler::loop() {
@@ -80,7 +80,7 @@ void AlarmScheduler::loop() {
             if (!shouldFire(a, hour, minute, dow)) continue;
         }
 
-            Serial.printf("[Alarm] Firing alarm %d: action=%d relay=%d\n",
+            SERIAL_PRINTF("[Alarm] Firing alarm %d: action=%d relay=%d\n",
                           a.id, a.action, a.targetRelay);
 
         if (_actionCallback) {
@@ -242,6 +242,7 @@ bool AlarmScheduler::fromJson(const JsonObject& obj, ScheduledAlarm& alarm) {
     if (alarm.mode == SCHEDULE_CLOCK && (alarm.hour > 23 || alarm.minute > 59)) return false;
     if (alarm.mode == SCHEDULE_DELAY && alarm.delayMinutes == 0) return false;
     if (alarm.type > ALARM_WEEKEND) return false;
+    if (alarm.type == ALARM_WEEKLY && alarm.dayOfWeek > 6) return false;
     if (alarm.action > ACTION_ALL_OFF) return false;
     if (alarm.targetRelay >= MAX_RELAYS && alarm.targetRelay != 0xFF) return false;
     return true;

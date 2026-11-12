@@ -29,10 +29,10 @@ void HardwareManager::begin(StorageManager& storage) {
 #endif
         save();
     }
-    Serial.printf("[Hardware] Profile loaded: %s (%d relays, DHT:%d pin:%d, MQ2:%s pin:%d, LCD:%s, Buzzer:%s)\n",
+    SERIAL_PRINTF("[Hardware] Profile loaded: %s (%d relays, Climates:%d, Lights:%d, Motions:%d, Probes:%d, Tanks:%d, MQ2:%d, LCD:%s, Buzzer:%s)\n",
                   _config.boardName, _config.numRelays,
-                  (int)_config.dhtType, _config.dhtPin,
-                  _config.mq2Enabled ? "YES" : "NO", _config.mq2AnalogPin,
+                  _config.numClimates, _config.numLights, _config.numMotions,
+                  _config.numProbes, _config.numUltrasonics, _config.numMq2s,
                   _config.lcdEnabled ? "YES" : "NO",
                   _config.buzzerEnabled ? "YES" : "NO");
 }
@@ -65,6 +65,109 @@ SwitchMode HardwareManager::getSwitchMode(uint8_t ch) const {
 TriggerMode HardwareManager::getTriggerMode(uint8_t ch) const {
     if (ch >= _config.numRelays) return TRIGGER_ACTIVE_LOW;
     return _config.channels[ch].triggerMode;
+}
+
+void HardwareManager::setTriggerMode(uint8_t ch, TriggerMode mode) {
+    if (ch >= _config.numRelays) return;
+    _config.channels[ch].triggerMode = mode;
+    save();
+}
+
+static void assignDefaultLabel(char* dst, size_t dstSize, const char* raw, const char* prefix, uint8_t idx) {
+    if (raw && raw[0] != '\0') {
+        strncpy(dst, raw, dstSize - 1);
+        dst[dstSize - 1] = '\0';
+    } else {
+        snprintf(dst, dstSize, "%s %u", prefix, (unsigned)(idx + 1));
+    }
+}
+
+uint8_t HardwareManager::defaultI2cAddrForClimate(ClimateSensorType t) {
+    switch (t) {
+        case CLIMATE_BME280: return 0x76;
+        case CLIMATE_AHT20:  return 0x38;
+        case CLIMATE_SHT3X:  return 0x44;
+        default:             return 0;
+    }
+}
+
+uint8_t HardwareManager::defaultI2cAddrForLight(LightSensorType t) {
+    return (t == LIGHT_BH1750) ? 0x23 : 0;
+}
+
+const ClimateSensorConfig* HardwareManager::getClimate(uint8_t idx) const {
+    return (idx < _config.numClimates) ? &_config.climates[idx] : nullptr;
+}
+const LightSensorConfig* HardwareManager::getLight(uint8_t idx) const {
+    return (idx < _config.numLights) ? &_config.lights[idx] : nullptr;
+}
+const MotionSensorConfig* HardwareManager::getMotion(uint8_t idx) const {
+    return (idx < _config.numMotions) ? &_config.motions[idx] : nullptr;
+}
+const ProbeSensorConfig* HardwareManager::getProbe(uint8_t idx) const {
+    return (idx < _config.numProbes) ? &_config.probes[idx] : nullptr;
+}
+const UltrasonicSensorConfig* HardwareManager::getUltrasonic(uint8_t idx) const {
+    return (idx < _config.numUltrasonics) ? &_config.ultrasonics[idx] : nullptr;
+}
+const Mq2SensorConfig* HardwareManager::getMq2(uint8_t idx) const {
+    return (idx < _config.numMq2s) ? &_config.mq2Sensors[idx] : nullptr;
+}
+
+bool HardwareManager::hasAnyI2cSensor() const {
+    for (uint8_t i = 0; i < _config.numClimates; i++) {
+        if (_config.climates[i].type >= CLIMATE_BME280) return true;
+    }
+    for (uint8_t i = 0; i < _config.numLights; i++) {
+        if (_config.lights[i].type == LIGHT_BH1750) return true;
+    }
+    return false;
+}
+
+ClimateSensorType HardwareManager::getDhtType() const {
+    return (_config.numClimates > 0) ? _config.climates[0].type : CLIMATE_NONE;
+}
+uint8_t HardwareManager::getDhtPin() const {
+    return (_config.numClimates > 0) ? _config.climates[0].pin : PIN_UNUSED;
+}
+LightSensorType HardwareManager::getLightType() const {
+    return (_config.numLights > 0) ? _config.lights[0].type : LIGHT_NONE;
+}
+MotionSensorType HardwareManager::getMotionType() const {
+    return (_config.numMotions > 0) ? _config.motions[0].type : MOTION_NONE;
+}
+uint8_t HardwareManager::getMotionPin() const {
+    return (_config.numMotions > 0) ? _config.motions[0].pin : PIN_UNUSED;
+}
+ProbeSensorType HardwareManager::getProbeType() const {
+    return (_config.numProbes > 0) ? _config.probes[0].type : PROBE_NONE;
+}
+uint8_t HardwareManager::getProbePin() const {
+    return (_config.numProbes > 0) ? _config.probes[0].pin : PIN_UNUSED;
+}
+UltrasonicSensorType HardwareManager::getUltrasonicType() const {
+    return (_config.numUltrasonics > 0) ? _config.ultrasonics[0].type : ULTRASONIC_NONE;
+}
+uint8_t HardwareManager::getTrigPin() const {
+    return (_config.numUltrasonics > 0) ? _config.ultrasonics[0].trigPin : PIN_UNUSED;
+}
+uint8_t HardwareManager::getEchoPin() const {
+    return (_config.numUltrasonics > 0) ? _config.ultrasonics[0].echoPin : PIN_UNUSED;
+}
+uint16_t HardwareManager::getTankDepthCm() const {
+    return (_config.numUltrasonics > 0) ? _config.ultrasonics[0].tankDepthCm : 150;
+}
+uint16_t HardwareManager::getTankAirGapCm() const {
+    return (_config.numUltrasonics > 0) ? _config.ultrasonics[0].tankAirGapCm : 15;
+}
+bool HardwareManager::isMq2Enabled() const {
+    return (_config.numMq2s > 0) && _config.mq2Sensors[0].enabled;
+}
+uint8_t HardwareManager::getMq2AnalogPin() const {
+    return (_config.numMq2s > 0) ? _config.mq2Sensors[0].analogPin : PIN_UNUSED;
+}
+uint8_t HardwareManager::getMq2DigitalPin() const {
+    return (_config.numMq2s > 0) ? _config.mq2Sensors[0].digitalPin : PIN_UNUSED;
 }
 
 void HardwareManager::resetToDefault() {
@@ -146,12 +249,12 @@ bool HardwareManager::isSafeOutputPin(uint8_t pin) {
 bool HardwareManager::isSafeInputPin(uint8_t pin) {
     if (pin == PIN_UNUSED) return true;
 #if defined(ESP8266)
-    // Disallow SPI flash pins (6-11), UART0 (1, 3)
+    // Disallow SPI flash pins (6-11), UART0 (1, 3), and analog-only ADC pin A0 (17)
     if (pin >= 6 && pin <= 11) return false;
-    if (pin == 1 || pin == 3) return false;
-    // Safe inputs: 0, 2, 4, 5, 12, 13, 14, 15, 16, 17(A0)
+    if (pin == 1 || pin == 3 || pin == 17) return false;
+    // Safe digital inputs: 0, 2, 4, 5, 12, 13, 14, 15, 16
     return (pin == 0 || pin == 2 || pin == 4 || pin == 5 ||
-            pin == 12 || pin == 13 || pin == 14 || pin == 15 || pin == 16 || pin == 17);
+            pin == 12 || pin == 13 || pin == 14 || pin == 15 || pin == 16);
 #else
     // Disallow SPI flash pins (6-11)
     if (pin >= 6 && pin <= 11) return false;
@@ -181,7 +284,31 @@ bool HardwareManager::isAdc1Pin(uint8_t pin) {
 // ============================================================================
 bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError) {
     if (cfg.numRelays > MAX_RELAYS) {
-        outError = "Number of relays exceeds maximum limit (" + String(MAX_RELAYS) + ")";
+        outError = String(F("Number of relays exceeds maximum limit (")) + String(MAX_RELAYS) + ")";
+        return false;
+    }
+    if (cfg.numClimates > MAX_CLIMATE_SENSORS) {
+        outError = String(F("Number of climate sensors exceeds maximum limit (")) + String(MAX_CLIMATE_SENSORS) + ")";
+        return false;
+    }
+    if (cfg.numLights > MAX_LIGHT_SENSORS) {
+        outError = String(F("Number of light sensors exceeds maximum limit (")) + String(MAX_LIGHT_SENSORS) + ")";
+        return false;
+    }
+    if (cfg.numMotions > MAX_MOTION_SENSORS) {
+        outError = String(F("Number of motion sensors exceeds maximum limit (")) + String(MAX_MOTION_SENSORS) + ")";
+        return false;
+    }
+    if (cfg.numProbes > MAX_PROBE_SENSORS) {
+        outError = String(F("Number of temperature probes exceeds maximum limit (")) + String(MAX_PROBE_SENSORS) + ")";
+        return false;
+    }
+    if (cfg.numUltrasonics > MAX_ULTRASONIC_SENSORS) {
+        outError = String(F("Number of ultrasonic tank sensors exceeds maximum limit (")) + String(MAX_ULTRASONIC_SENSORS) + ")";
+        return false;
+    }
+    if (cfg.numMq2s > MAX_MQ2_SENSORS) {
+        outError = String(F("Number of MQ-2 gas sensors exceeds maximum limit (")) + String(MAX_MQ2_SENSORS) + ")";
         return false;
     }
 
@@ -189,23 +316,49 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
     int8_t pinUsage[40];
     for (int i = 0; i < 40; i++) pinUsage[i] = -1;
 
+    // Tracker for claimed 7-bit I2C addresses on shared I2C bus
+    uint8_t usedI2cAddrs[16];
+    String usedI2cOwners[16];
+    uint8_t usedI2cCount = 0;
+
     auto claimPin = [&](uint8_t pin, const char* component) -> bool {
         if (pin == PIN_UNUSED) return true;
         if (pin >= 40) {
-            outError = String(component) + ": invalid GPIO " + String(pin);
+            outError = String(component) + F(": invalid GPIO ") + String(pin);
             return false;
         }
 #if defined(ESP8266)
         if (pin > 17) {
-            outError = String(component) + ": invalid GPIO " + String(pin) + " (ESP8266 supports GPIO 0-16, A0/17)";
+            outError = String(component) + F(": invalid GPIO ") + String(pin) + F(" (ESP8266 supports GPIO 0-16, A0/17)");
             return false;
         }
 #endif
         if (pinUsage[pin] != -1) {
-            outError = "GPIO conflict: Pin " + String(pin) + " assigned to multiple peripherals (" + String(component) + ")";
+            outError = String(F("GPIO conflict: Pin ")) + String(pin) + F(" assigned to multiple peripherals (") + String(component) + ")";
             return false;
         }
         pinUsage[pin] = 1;
+        return true;
+    };
+
+    auto claimI2cAddr = [&](uint8_t addr, const String& owner) -> bool {
+        if (addr < 0x08 || addr > 0x77) {
+            outError = owner + F(": invalid I2C address 0x") + String(addr, HEX);
+            return false;
+        }
+        for (uint8_t k = 0; k < usedI2cCount; k++) {
+            if (usedI2cAddrs[k] == addr) {
+                char hexBuf[8];
+                snprintf(hexBuf, sizeof(hexBuf), "0x%02X", addr);
+                outError = String(F("I2C address conflict: ")) + String(hexBuf) + F(" assigned to both ") + usedI2cOwners[k] + F(" and ") + owner;
+                return false;
+            }
+        }
+        if (usedI2cCount < 16) {
+            usedI2cAddrs[usedI2cCount] = addr;
+            usedI2cOwners[usedI2cCount] = owner;
+            usedI2cCount++;
+        }
         return true;
     };
 
@@ -216,7 +369,7 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
         uint8_t rPin = cfg.channels[i].relayPin;
         if (rPin != PIN_UNUSED) {
             if (!isSafeOutputPin(rPin)) {
-                outError = "Relay " + String(i + 1) + ": GPIO " + String(rPin) + " cannot be used as an output (input-only or system pin)";
+                outError = String(F("Relay ")) + String(i + 1) + F(": GPIO ") + String(rPin) + F(" cannot be used as an output (input-only or system pin)");
                 return false;
             }
             if (!claimPin(rPin, ("Relay " + String(i + 1)).c_str())) return false;
@@ -226,7 +379,7 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
             uint8_t sPin = cfg.channels[i].switchPin;
             if (sPin != PIN_UNUSED) {
                 if (!isSafeInputPin(sPin)) {
-                    outError = "Switch " + String(i + 1) + ": GPIO " + String(sPin) + " is not a valid input pin";
+                    outError = String(F("Switch ")) + String(i + 1) + F(": GPIO ") + String(sPin) + F(" is not a valid input pin");
                     return false;
                 }
                 if (!claimPin(sPin, ("Switch " + String(i + 1)).c_str())) return false;
@@ -234,107 +387,178 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
         }
     }
 
-    // 2. DHT Climate Sensor
-    if ((cfg.dhtType == CLIMATE_DHT11 || cfg.dhtType == CLIMATE_DHT22) && cfg.dhtPin != PIN_UNUSED) {
-        // DHT requires bidirectional open-drain, so input-only pins (34-39) are INVALID
-        if (!isSafeOutputPin(cfg.dhtPin)) {
-            outError = "DHT Climate Sensor: GPIO " + String(cfg.dhtPin) + " cannot be an input-only pin (requires bidirectional output)";
-            return false;
-        }
-        if (!claimPin(cfg.dhtPin, "DHT Sensor")) return false;
-    }
-    // Note: CLIMATE_BME280, CLIMATE_AHT20, CLIMATE_SHT3X use shared I2C bus (i2cSdaPin/i2cSclPin)
+    bool i2cActive = cfg.lcdEnabled;
 
-    // 2b. Motion / Occupancy Sensor
-    if (cfg.motionType != MOTION_NONE && cfg.motionPin != PIN_UNUSED) {
-        if (!isSafeInputPin(cfg.motionPin)) {
-            outError = "Motion Sensor: GPIO " + String(cfg.motionPin) + " is not a valid input pin";
-            return false;
-        }
-        if (!claimPin(cfg.motionPin, "Motion Sensor")) return false;
-    }
-
-    // 2c. Submersible Water Temp Probe (DS18B20)
-    if (cfg.probeType == PROBE_DS18B20 && cfg.probePin != PIN_UNUSED) {
-        if (!isSafeOutputPin(cfg.probePin)) {
-            outError = "DS18B20 Probe: GPIO " + String(cfg.probePin) + " cannot be an input-only pin";
-            return false;
-        }
-        if (!claimPin(cfg.probePin, "DS18B20 Probe")) return false;
-    }
-
-    // 2d. Ultrasonic Distance & Water Tank Level Sensor
-    if (cfg.ultrasonicType != ULTRASONIC_NONE) {
-        if (cfg.trigPin != PIN_UNUSED) {
-            if (!isSafeOutputPin(cfg.trigPin)) {
-                outError = "Ultrasonic Trig: GPIO " + String(cfg.trigPin) + " cannot be an input-only pin";
+    // 2. Climate Sensors (DHT11/22 per-GPIO, BME280/AHT20/SHT3X shared I2C)
+    for (uint8_t i = 0; i < cfg.numClimates; i++) {
+        const ClimateSensorConfig& c = cfg.climates[i];
+        String tag = "Climate " + String(i + 1);
+        if (c.type == CLIMATE_NONE) continue;
+        if (c.type == CLIMATE_DHT11 || c.type == CLIMATE_DHT22) {
+            if (c.pin == PIN_UNUSED) {
+                outError = tag + F(": Please select a bidirectional GPIO pin");
                 return false;
             }
-            if (!claimPin(cfg.trigPin, "Ultrasonic Trig")) return false;
-        }
-        if (cfg.echoPin != PIN_UNUSED) {
-            if (!isSafeInputPin(cfg.echoPin)) {
-                outError = "Ultrasonic Echo: GPIO " + String(cfg.echoPin) + " is not a valid input pin";
+            if (!isSafeOutputPin(c.pin)) {
+                outError = tag + F(": GPIO ") + String(c.pin) + F(" cannot be an input-only pin (requires bidirectional output)");
                 return false;
             }
-            if (!claimPin(cfg.echoPin, "Ultrasonic Echo")) return false;
+            if (!claimPin(c.pin, tag.c_str())) return false;
+        } else {
+            uint8_t addr = c.i2cAddr ? c.i2cAddr : defaultI2cAddrForClimate(c.type);
+            if (c.type == CLIMATE_BME280 && addr != 0x76 && addr != 0x77) {
+                outError = tag + F(": BME280/BMP280 supports I2C address 0x76 or 0x77");
+                return false;
+            }
+            if (c.type == CLIMATE_AHT20 && addr != 0x38) {
+                outError = tag + F(": AHT20 uses fixed I2C address 0x38");
+                return false;
+            }
+            if (c.type == CLIMATE_SHT3X && addr != 0x44 && addr != 0x45) {
+                outError = tag + F(": SHT3x supports I2C address 0x44 or 0x45");
+                return false;
+            }
+            if (!claimI2cAddr(addr, tag)) return false;
+            i2cActive = true;
         }
     }
 
-    // 3. MQ-2 Gas Sensor
-    if (cfg.mq2Enabled) {
-        if (cfg.mq2AnalogPin != PIN_UNUSED) {
-            if (!isAdc1Pin(cfg.mq2AnalogPin)) {
+    // 2a. Ambient Light Sensors (BH1750 on shared I2C bus)
+    for (uint8_t i = 0; i < cfg.numLights; i++) {
+        const LightSensorConfig& l = cfg.lights[i];
+        if (l.type == LIGHT_NONE) continue;
+        String tag = "Light " + String(i + 1);
+        uint8_t addr = l.i2cAddr ? l.i2cAddr : defaultI2cAddrForLight(l.type);
+        if (addr != 0x23 && addr != 0x5C) {
+            outError = tag + F(": BH1750 supports I2C address 0x23 or 0x5C");
+            return false;
+        }
+        if (!claimI2cAddr(addr, tag)) return false;
+        i2cActive = true;
+    }
+
+    // 2b. Motion / Occupancy Sensors
+    for (uint8_t i = 0; i < cfg.numMotions; i++) {
+        const MotionSensorConfig& m = cfg.motions[i];
+        if (m.type == MOTION_NONE) continue;
+        String tag = "Motion " + String(i + 1);
+        if (m.pin == PIN_UNUSED) {
+            outError = tag + F(": Please select a valid input GPIO pin");
+            return false;
+        }
+        if (!isSafeInputPin(m.pin)) {
+            outError = tag + F(": GPIO ") + String(m.pin) + F(" is not a valid input pin");
+            return false;
+        }
+        if (!claimPin(m.pin, tag.c_str())) return false;
+    }
+
+    // 2c. Submersible Water Temp Probes (DS18B20)
+    for (uint8_t i = 0; i < cfg.numProbes; i++) {
+        const ProbeSensorConfig& p = cfg.probes[i];
+        if (p.type == PROBE_NONE) continue;
+        String tag = "Probe " + String(i + 1);
+        if (p.pin == PIN_UNUSED) {
+            outError = tag + F(": Please select a valid 1-Wire GPIO pin");
+            return false;
+        }
+        if (!isSafeOutputPin(p.pin)) {
+            outError = tag + F(": GPIO ") + String(p.pin) + F(" cannot be an input-only pin");
+            return false;
+        }
+        if (!claimPin(p.pin, tag.c_str())) return false;
+    }
+
+    // 2d. Ultrasonic Distance & Water Tank Level Sensors
+    for (uint8_t i = 0; i < cfg.numUltrasonics; i++) {
+        const UltrasonicSensorConfig& u = cfg.ultrasonics[i];
+        if (u.type == ULTRASONIC_NONE) continue;
+        String tag = "Ultrasonic Tank " + String(i + 1);
+        if (u.trigPin == PIN_UNUSED || u.echoPin == PIN_UNUSED) {
+            outError = tag + F(": Both Trig and Echo GPIO pins are required");
+            return false;
+        }
+        if (u.tankDepthCm < 20 || u.tankDepthCm > 500 ||
+            u.tankAirGapCm < 5 || u.tankAirGapCm > 100 ||
+            u.tankDepthCm <= u.tankAirGapCm) {
+            outError = tag + F(": Tank depth (20-500 cm) must be greater than air gap (5-100 cm)");
+            return false;
+        }
+        if (!isSafeOutputPin(u.trigPin)) {
+            outError = tag + F(" Trig: GPIO ") + String(u.trigPin) + F(" cannot be an input-only pin");
+            return false;
+        }
+        if (!claimPin(u.trigPin, (tag + " Trig").c_str())) return false;
+        if (!isSafeInputPin(u.echoPin)) {
+            outError = tag + F(" Echo: GPIO ") + String(u.echoPin) + F(" is not a valid input pin");
+            return false;
+        }
+        if (!claimPin(u.echoPin, (tag + " Echo").c_str())) return false;
+    }
+
+    // 3. MQ-2 Gas Sensors
+    for (uint8_t i = 0; i < cfg.numMq2s; i++) {
+        const Mq2SensorConfig& g = cfg.mq2Sensors[i];
+        if (!g.enabled) continue;
+        String tag = "MQ-2 " + String(i + 1);
+        if (g.analogPin == PIN_UNUSED && g.digitalPin == PIN_UNUSED) {
+            outError = tag + F(": Enable requires at least an Analog or Digital GPIO pin");
+            return false;
+        }
+        if (g.analogPin != PIN_UNUSED) {
+            if (!isAdc1Pin(g.analogPin)) {
 #if defined(ESP8266)
-                outError = "MQ-2 Analog: GPIO " + String(cfg.mq2AnalogPin) + " is not A0 (ESP8266 only has A0 / GPIO 17 for analog input).";
+                outError = tag + F(" Analog: GPIO ") + String(g.analogPin) + F(" is not A0 (ESP8266 only has A0 / GPIO 17 for analog input).");
 #else
-                outError = "MQ-2 Analog: GPIO " + String(cfg.mq2AnalogPin) + " is not on ADC1 (ADC2 conflicts with Wi-Fi). Use GPIO 32-36 or 39.";
+                outError = tag + F(" Analog: GPIO ") + String(g.analogPin) + F(" is not on ADC1 (ADC2 conflicts with Wi-Fi). Use GPIO 32-36 or 39.");
 #endif
                 return false;
             }
-            if (!claimPin(cfg.mq2AnalogPin, "MQ2 Analog")) return false;
+            if (!claimPin(g.analogPin, (tag + " Analog").c_str())) return false;
         }
-        if (cfg.mq2DigitalPin != PIN_UNUSED) {
-            if (!isSafeInputPin(cfg.mq2DigitalPin)) {
-                outError = "MQ-2 Digital: GPIO " + String(cfg.mq2DigitalPin) + " is not a valid input pin";
+        if (g.digitalPin != PIN_UNUSED) {
+            if (!isSafeInputPin(g.digitalPin)) {
+                outError = tag + F(" Digital: GPIO ") + String(g.digitalPin) + F(" is not a valid input pin");
                 return false;
             }
-            if (!claimPin(cfg.mq2DigitalPin, "MQ2 Digital")) return false;
+            if (!claimPin(g.digitalPin, (tag + " Digital").c_str())) return false;
         }
     }
 
     // 4. Buzzer
     if (cfg.buzzerEnabled && cfg.buzzerPin != PIN_UNUSED) {
         if (!isSafeOutputPin(cfg.buzzerPin)) {
-            outError = "Buzzer: GPIO " + String(cfg.buzzerPin) + " cannot be used as an output (input-only or system pin)";
+            outError = String(F("Buzzer: GPIO ")) + String(cfg.buzzerPin) + F(" cannot be used as an output (input-only or system pin)");
             return false;
         }
         if (!claimPin(cfg.buzzerPin, "Buzzer")) return false;
     }
 
     // 5. I2C Bus (LCD Display and/or I2C Sensors: BME280, AHT20, SHT31, BH1750)
-    bool i2cActive = cfg.lcdEnabled || (cfg.dhtType >= CLIMATE_BME280) || (cfg.lightType == LIGHT_BH1750);
+    if (cfg.lcdEnabled) {
+        if (!claimI2cAddr(cfg.lcdI2cAddr, "LCD Display")) return false;
+    }
     if (i2cActive) {
-        if (cfg.i2cSdaPin != PIN_UNUSED) {
-            if (!isSafeOutputPin(cfg.i2cSdaPin)) {
-                outError = "I2C SDA: GPIO " + String(cfg.i2cSdaPin) + " cannot be an input-only pin";
-                return false;
-            }
-            if (!claimPin(cfg.i2cSdaPin, "I2C SDA")) return false;
+        if (cfg.i2cSdaPin == PIN_UNUSED || cfg.i2cSclPin == PIN_UNUSED) {
+            outError = F("I2C Bus: Both SDA and SCL GPIO pins are required when LCD or I2C sensors are enabled");
+            return false;
         }
-        if (cfg.i2cSclPin != PIN_UNUSED) {
-            if (!isSafeOutputPin(cfg.i2cSclPin)) {
-                outError = "I2C SCL: GPIO " + String(cfg.i2cSclPin) + " cannot be an input-only pin";
-                return false;
-            }
-            if (!claimPin(cfg.i2cSclPin, "I2C SCL")) return false;
+        if (!isSafeOutputPin(cfg.i2cSdaPin)) {
+            outError = String(F("I2C SDA: GPIO ")) + String(cfg.i2cSdaPin) + F(" cannot be an input-only pin");
+            return false;
         }
+        if (!claimPin(cfg.i2cSdaPin, "I2C SDA")) return false;
+        if (!isSafeOutputPin(cfg.i2cSclPin)) {
+            outError = String(F("I2C SCL: GPIO ")) + String(cfg.i2cSclPin) + F(" cannot be an input-only pin");
+            return false;
+        }
+        if (!claimPin(cfg.i2cSclPin, "I2C SCL")) return false;
     }
 
     // 6. Multi-function Button
     if (cfg.btnMultiPin != PIN_UNUSED) {
         if (!isSafeInputPin(cfg.btnMultiPin)) {
-            outError = "Multi-function Button: GPIO " + String(cfg.btnMultiPin) + " is not a valid input pin";
+            outError = String(F("Multi-function Button: GPIO ")) + String(cfg.btnMultiPin) + F(" is not a valid input pin");
             return false;
         }
         if (!claimPin(cfg.btnMultiPin, "Multi-Button")) return false;
@@ -361,32 +585,92 @@ void HardwareManager::toJson(JsonObject& obj) const {
         ch["trigger"]        = (uint8_t)_config.channels[i].triggerMode;
     }
 
+    JsonArray climatesArr = obj["climates"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numClimates; i++) {
+        JsonObject c = climatesArr.add<JsonObject>();
+        c["type"]     = (uint8_t)_config.climates[i].type;
+        c["pin"]      = _config.climates[i].pin;
+        c["i2c_addr"] = _config.climates[i].i2cAddr;
+        c["label"]    = _config.climates[i].label;
+    }
+
+    JsonArray lightsArr = obj["lights"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numLights; i++) {
+        JsonObject l = lightsArr.add<JsonObject>();
+        l["type"]     = (uint8_t)_config.lights[i].type;
+        l["i2c_addr"] = _config.lights[i].i2cAddr;
+        l["label"]    = _config.lights[i].label;
+    }
+
+    JsonArray motionsArr = obj["motions"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numMotions; i++) {
+        JsonObject m = motionsArr.add<JsonObject>();
+        m["type"]  = (uint8_t)_config.motions[i].type;
+        m["pin"]   = _config.motions[i].pin;
+        m["label"] = _config.motions[i].label;
+    }
+
+    JsonArray probesArr = obj["probes"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numProbes; i++) {
+        JsonObject p = probesArr.add<JsonObject>();
+        p["type"]  = (uint8_t)_config.probes[i].type;
+        p["pin"]   = _config.probes[i].pin;
+        p["label"] = _config.probes[i].label;
+    }
+
+    JsonArray usArr = obj["ultrasonics"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numUltrasonics; i++) {
+        JsonObject u = usArr.add<JsonObject>();
+        u["type"]       = (uint8_t)_config.ultrasonics[i].type;
+        u["trig_pin"]   = _config.ultrasonics[i].trigPin;
+        u["echo_pin"]   = _config.ultrasonics[i].echoPin;
+        u["tank_depth"] = _config.ultrasonics[i].tankDepthCm;
+        u["air_gap"]    = _config.ultrasonics[i].tankAirGapCm;
+        u["label"]      = _config.ultrasonics[i].label;
+    }
+
+    JsonArray mq2Arr = obj["mq2_sensors"].to<JsonArray>();
+    for (uint8_t i = 0; i < _config.numMq2s; i++) {
+        JsonObject g = mq2Arr.add<JsonObject>();
+        g["enabled"]     = _config.mq2Sensors[i].enabled;
+        g["analog_pin"]  = _config.mq2Sensors[i].analogPin;
+        g["digital_pin"] = _config.mq2Sensors[i].digitalPin;
+        g["label"]       = _config.mq2Sensors[i].label;
+    }
+
+    // Legacy slot-0 summary objects (backward compatibility for existing tooling/backups)
     JsonObject dht = obj["dht"].to<JsonObject>();
-    dht["type"] = (uint8_t)_config.dhtType;
-    dht["pin"]  = _config.dhtPin;
+    dht["type"] = (uint8_t)getDhtType();
+    dht["pin"]  = getDhtPin();
+    if (_config.numClimates > 0 && _config.climates[0].i2cAddr > 0) {
+        dht["i2c_addr"] = _config.climates[0].i2cAddr;
+    }
 
     JsonObject light = obj["light"].to<JsonObject>();
-    light["type"] = (uint8_t)_config.lightType;
+    light["type"] = (uint8_t)getLightType();
+    if (_config.numLights > 0 && _config.lights[0].i2cAddr > 0) {
+        light["i2c_addr"] = _config.lights[0].i2cAddr;
+    }
 
     JsonObject motion = obj["motion"].to<JsonObject>();
-    motion["type"] = (uint8_t)_config.motionType;
-    motion["pin"]  = _config.motionPin;
+    motion["type"] = (uint8_t)getMotionType();
+    motion["pin"]  = getMotionPin();
 
     JsonObject probe = obj["probe"].to<JsonObject>();
-    probe["type"] = (uint8_t)_config.probeType;
-    probe["pin"]  = _config.probePin;
+    probe["type"] = (uint8_t)getProbeType();
+    probe["pin"]  = getProbePin();
 
     JsonObject ultrasonic = obj["ultrasonic"].to<JsonObject>();
-    ultrasonic["type"]       = (uint8_t)_config.ultrasonicType;
-    ultrasonic["trig_pin"]   = _config.trigPin;
-    ultrasonic["echo_pin"]   = _config.echoPin;
-    ultrasonic["tank_depth"] = _config.tankDepthCm;
-    ultrasonic["air_gap"]    = _config.tankAirGapCm;
+    ultrasonic["type"]       = (uint8_t)getUltrasonicType();
+    ultrasonic["trig_pin"]   = getTrigPin();
+    ultrasonic["echo_pin"]   = getEchoPin();
+    ultrasonic["tank_depth"] = getTankDepthCm();
+    ultrasonic["air_gap"]    = getTankAirGapCm();
 
     JsonObject mq2 = obj["mq2"].to<JsonObject>();
-    mq2["enabled"]    = _config.mq2Enabled;
-    mq2["analog_pin"] = _config.mq2AnalogPin;
-    mq2["digital_pin"] = _config.mq2DigitalPin;
+    mq2["enabled"]     = isMq2Enabled();
+    mq2["analog_pin"]  = getMq2AnalogPin();
+    mq2["digital_pin"] = getMq2DigitalPin();
 
     JsonObject buzzer = obj["buzzer"].to<JsonObject>();
     buzzer["enabled"] = _config.buzzerEnabled;
@@ -420,12 +704,18 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         if (idx >= MAX_RELAYS) break;
         uint8_t rPin = ch["relay_pin"] | PIN_UNUSED;
         uint8_t sPin = ch["switch_pin"] | PIN_UNUSED;
+        uint8_t swMode = ch["switch_mode"] | (uint8_t)SWITCH_MODE_TOGGLE;
+        uint8_t trigMode = ch["trigger"] | (uint8_t)TRIGGER_ACTIVE_LOW;
+        if (swMode > SWITCH_MODE_DETACHED || trigMode > TRIGGER_ACTIVE_HIGH) {
+            outError = "Channel " + String(idx + 1) + ": invalid switch_mode or trigger mode";
+            return false;
+        }
         newCfg.channels[idx].enabled       = ch.containsKey("enabled") ? (bool)ch["enabled"] : (rPin != PIN_UNUSED);
         newCfg.channels[idx].relayPin      = rPin;
         newCfg.channels[idx].switchEnabled = ch.containsKey("switch_enabled") ? (bool)ch["switch_enabled"] : (sPin != PIN_UNUSED);
         newCfg.channels[idx].switchPin     = sPin;
-        newCfg.channels[idx].switchMode    = (SwitchMode)(ch["switch_mode"] | (uint8_t)SWITCH_MODE_TOGGLE);
-        newCfg.channels[idx].triggerMode   = (TriggerMode)(ch["trigger"] | (uint8_t)TRIGGER_ACTIVE_LOW);
+        newCfg.channels[idx].switchMode    = (SwitchMode)swMode;
+        newCfg.channels[idx].triggerMode   = (TriggerMode)trigMode;
         idx++;
     }
 
@@ -465,64 +755,228 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
     const uint8_t defBtnPin    = 33;
 #endif
 
-    if (obj.containsKey("dht")) {
+    // 1. Climate Sensors (array preferred, fallback to legacy "dht" object)
+    if (obj.containsKey("climates") && obj["climates"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["climates"].as<JsonArrayConst>();
+        if (arr.size() > MAX_CLIMATE_SENSORS) {
+            outError = "Number of climate sensors exceeds maximum limit (" + String(MAX_CLIMATE_SENSORS) + ")";
+            return false;
+        }
+        uint8_t cIdx = 0;
+        for (JsonObjectConst c : arr) {
+            uint8_t dType = c["type"] | (uint8_t)CLIMATE_NONE;
+            if (dType > CLIMATE_SHT3X) { outError = "Invalid climate sensor type"; return false; }
+            ClimateSensorType ct = (ClimateSensorType)dType;
+            uint8_t addr = c["i2c_addr"] | (uint8_t)0;
+            if (addr == 0 && ct >= CLIMATE_BME280) addr = defaultI2cAddrForClimate(ct);
+            newCfg.climates[cIdx].type    = ct;
+            newCfg.climates[cIdx].pin     = c["pin"] | PIN_UNUSED;
+            newCfg.climates[cIdx].i2cAddr = addr;
+            assignDefaultLabel(newCfg.climates[cIdx].label, sizeof(newCfg.climates[cIdx].label),
+                               c["label"] | "", "Climate", cIdx);
+            cIdx++;
+        }
+        newCfg.numClimates = cIdx;
+    } else if (obj.containsKey("dht")) {
         JsonObjectConst dht = obj["dht"];
-        newCfg.dhtType = (ClimateSensorType)(dht["type"] | (uint8_t)(dht["pin"] != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE));
-        newCfg.dhtPin  = dht["pin"] | defDhtPin;
-    } else {
-        newCfg.dhtType = (defDhtPin != PIN_UNUSED) ? CLIMATE_DHT22 : CLIMATE_NONE;
-        newCfg.dhtPin  = defDhtPin;
+        uint8_t dPin = dht["pin"] | defDhtPin;
+        uint8_t dType = dht["type"] | (uint8_t)(dPin != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE);
+        if (dType > CLIMATE_SHT3X) { outError = "Invalid climate sensor type"; return false; }
+        if (dType != CLIMATE_NONE) {
+            ClimateSensorType ct = (ClimateSensorType)dType;
+            uint8_t addr = dht["i2c_addr"] | (uint8_t)0;
+            if (addr == 0 && ct >= CLIMATE_BME280) addr = defaultI2cAddrForClimate(ct);
+            newCfg.numClimates = 1;
+            newCfg.climates[0].type    = ct;
+            newCfg.climates[0].pin     = dPin;
+            newCfg.climates[0].i2cAddr = addr;
+            assignDefaultLabel(newCfg.climates[0].label, sizeof(newCfg.climates[0].label), nullptr, "Climate", 0);
+        }
+    } else if (defDhtPin != PIN_UNUSED) {
+        newCfg.numClimates = 1;
+        newCfg.climates[0].type    = CLIMATE_DHT22;
+        newCfg.climates[0].pin     = defDhtPin;
+        newCfg.climates[0].i2cAddr = 0;
+        assignDefaultLabel(newCfg.climates[0].label, sizeof(newCfg.climates[0].label), nullptr, "Climate", 0);
     }
 
-    if (obj.containsKey("light")) {
+    // 2. Ambient Light Sensors
+    if (obj.containsKey("lights") && obj["lights"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["lights"].as<JsonArrayConst>();
+        if (arr.size() > MAX_LIGHT_SENSORS) {
+            outError = "Number of light sensors exceeds maximum limit (" + String(MAX_LIGHT_SENSORS) + ")";
+            return false;
+        }
+        uint8_t lIdx = 0;
+        for (JsonObjectConst l : arr) {
+            uint8_t lType = l["type"] | (uint8_t)LIGHT_NONE;
+            if (lType > LIGHT_BH1750) { outError = "Invalid ambient light sensor type"; return false; }
+            LightSensorType lt = (LightSensorType)lType;
+            uint8_t addr = l["i2c_addr"] | (uint8_t)0;
+            if (addr == 0 && lt == LIGHT_BH1750) addr = defaultI2cAddrForLight(lt);
+            newCfg.lights[lIdx].type    = lt;
+            newCfg.lights[lIdx].i2cAddr = addr;
+            assignDefaultLabel(newCfg.lights[lIdx].label, sizeof(newCfg.lights[lIdx].label),
+                               l["label"] | "", "Light", lIdx);
+            lIdx++;
+        }
+        newCfg.numLights = lIdx;
+    } else if (obj.containsKey("light")) {
         JsonObjectConst light = obj["light"];
-        newCfg.lightType = (LightSensorType)(light["type"] | (uint8_t)LIGHT_NONE);
-    } else {
-        newCfg.lightType = LIGHT_NONE;
+        uint8_t lType = light["type"] | (uint8_t)LIGHT_NONE;
+        if (lType > LIGHT_BH1750) { outError = "Invalid ambient light sensor type"; return false; }
+        if (lType != LIGHT_NONE) {
+            LightSensorType lt = (LightSensorType)lType;
+            uint8_t addr = light["i2c_addr"] | (uint8_t)0;
+            if (addr == 0) addr = defaultI2cAddrForLight(lt);
+            newCfg.numLights = 1;
+            newCfg.lights[0].type    = lt;
+            newCfg.lights[0].i2cAddr = addr;
+            assignDefaultLabel(newCfg.lights[0].label, sizeof(newCfg.lights[0].label), nullptr, "Light", 0);
+        }
     }
 
-    if (obj.containsKey("motion")) {
+    // 3. Motion Sensors
+    if (obj.containsKey("motions") && obj["motions"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["motions"].as<JsonArrayConst>();
+        if (arr.size() > MAX_MOTION_SENSORS) {
+            outError = "Number of motion sensors exceeds maximum limit (" + String(MAX_MOTION_SENSORS) + ")";
+            return false;
+        }
+        uint8_t mIdx = 0;
+        for (JsonObjectConst m : arr) {
+            uint8_t mType = m["type"] | (uint8_t)MOTION_NONE;
+            if (mType > MOTION_RADAR_LD2410) { outError = "Invalid motion sensor type"; return false; }
+            newCfg.motions[mIdx].type = (MotionSensorType)mType;
+            newCfg.motions[mIdx].pin  = m["pin"] | PIN_UNUSED;
+            assignDefaultLabel(newCfg.motions[mIdx].label, sizeof(newCfg.motions[mIdx].label),
+                               m["label"] | "", "Motion", mIdx);
+            mIdx++;
+        }
+        newCfg.numMotions = mIdx;
+    } else if (obj.containsKey("motion")) {
         JsonObjectConst mot = obj["motion"];
-        newCfg.motionType = (MotionSensorType)(mot["type"] | (uint8_t)MOTION_NONE);
-        newCfg.motionPin  = mot["pin"] | defMotionPin;
-    } else {
-        newCfg.motionType = MOTION_NONE;
-        newCfg.motionPin  = defMotionPin;
+        uint8_t mType = mot["type"] | (uint8_t)MOTION_NONE;
+        if (mType > MOTION_RADAR_LD2410) { outError = "Invalid motion sensor type"; return false; }
+        if (mType != MOTION_NONE) {
+            newCfg.numMotions = 1;
+            newCfg.motions[0].type = (MotionSensorType)mType;
+            newCfg.motions[0].pin  = mot["pin"] | defMotionPin;
+            assignDefaultLabel(newCfg.motions[0].label, sizeof(newCfg.motions[0].label), nullptr, "Motion", 0);
+        }
     }
 
-    if (obj.containsKey("probe")) {
+    // 4. Water Temp Probes (DS18B20)
+    if (obj.containsKey("probes") && obj["probes"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["probes"].as<JsonArrayConst>();
+        if (arr.size() > MAX_PROBE_SENSORS) {
+            outError = "Number of temperature probes exceeds maximum limit (" + String(MAX_PROBE_SENSORS) + ")";
+            return false;
+        }
+        uint8_t pIdx = 0;
+        for (JsonObjectConst p : arr) {
+            uint8_t pType = p["type"] | (uint8_t)PROBE_NONE;
+            if (pType > PROBE_DS18B20) { outError = "Invalid probe sensor type"; return false; }
+            newCfg.probes[pIdx].type = (ProbeSensorType)pType;
+            newCfg.probes[pIdx].pin  = p["pin"] | PIN_UNUSED;
+            assignDefaultLabel(newCfg.probes[pIdx].label, sizeof(newCfg.probes[pIdx].label),
+                               p["label"] | "", "Probe", pIdx);
+            pIdx++;
+        }
+        newCfg.numProbes = pIdx;
+    } else if (obj.containsKey("probe")) {
         JsonObjectConst prb = obj["probe"];
-        newCfg.probeType = (ProbeSensorType)(prb["type"] | (uint8_t)PROBE_NONE);
-        newCfg.probePin  = prb["pin"] | defProbePin;
-    } else {
-        newCfg.probeType = PROBE_NONE;
-        newCfg.probePin  = defProbePin;
+        uint8_t pType = prb["type"] | (uint8_t)PROBE_NONE;
+        if (pType > PROBE_DS18B20) { outError = "Invalid probe sensor type"; return false; }
+        if (pType != PROBE_NONE) {
+            newCfg.numProbes = 1;
+            newCfg.probes[0].type = (ProbeSensorType)pType;
+            newCfg.probes[0].pin  = prb["pin"] | defProbePin;
+            assignDefaultLabel(newCfg.probes[0].label, sizeof(newCfg.probes[0].label), nullptr, "Probe", 0);
+        }
     }
 
-    if (obj.containsKey("ultrasonic")) {
+    // 5. Ultrasonic Tank Level Sensors
+    if (obj.containsKey("ultrasonics") && obj["ultrasonics"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["ultrasonics"].as<JsonArrayConst>();
+        if (arr.size() > MAX_ULTRASONIC_SENSORS) {
+            outError = "Number of ultrasonic tank sensors exceeds maximum limit (" + String(MAX_ULTRASONIC_SENSORS) + ")";
+            return false;
+        }
+        uint8_t uIdx = 0;
+        for (JsonObjectConst u : arr) {
+            uint8_t uType = u["type"] | (uint8_t)ULTRASONIC_NONE;
+            if (uType > ULTRASONIC_JSN_SR04T) { outError = "Invalid ultrasonic sensor type"; return false; }
+            int depthVal = u["tank_depth"] | 150;
+            int airVal   = u["air_gap"] | 15;
+            if (depthVal < 0 || depthVal > 65535 || airVal < 0 || airVal > 65535) {
+                outError = "Ultrasonic Tank Sensor: Tank depth and air gap must be valid positive values";
+                return false;
+            }
+            newCfg.ultrasonics[uIdx].type         = (UltrasonicSensorType)uType;
+            newCfg.ultrasonics[uIdx].trigPin      = u["trig_pin"] | PIN_UNUSED;
+            newCfg.ultrasonics[uIdx].echoPin      = u["echo_pin"] | PIN_UNUSED;
+            newCfg.ultrasonics[uIdx].tankDepthCm  = (uint16_t)depthVal;
+            newCfg.ultrasonics[uIdx].tankAirGapCm = (uint16_t)airVal;
+            assignDefaultLabel(newCfg.ultrasonics[uIdx].label, sizeof(newCfg.ultrasonics[uIdx].label),
+                               u["label"] | "", "Tank", uIdx);
+            uIdx++;
+        }
+        newCfg.numUltrasonics = uIdx;
+    } else if (obj.containsKey("ultrasonic")) {
         JsonObjectConst us = obj["ultrasonic"];
-        newCfg.ultrasonicType = (UltrasonicSensorType)(us["type"] | (uint8_t)ULTRASONIC_NONE);
-        newCfg.trigPin        = us["trig_pin"] | defTrigPin;
-        newCfg.echoPin        = us["echo_pin"] | defEchoPin;
-        newCfg.tankDepthCm    = us["tank_depth"] | 150;
-        newCfg.tankAirGapCm   = us["air_gap"] | 15;
-    } else {
-        newCfg.ultrasonicType = ULTRASONIC_NONE;
-        newCfg.trigPin        = defTrigPin;
-        newCfg.echoPin        = defEchoPin;
-        newCfg.tankDepthCm    = 150;
-        newCfg.tankAirGapCm   = 15;
+        uint8_t uType = us["type"] | (uint8_t)ULTRASONIC_NONE;
+        if (uType > ULTRASONIC_JSN_SR04T) { outError = "Invalid ultrasonic sensor type"; return false; }
+        if (uType != ULTRASONIC_NONE) {
+            int depthVal = us["tank_depth"] | 150;
+            int airVal   = us["air_gap"] | 15;
+            if (depthVal < 0 || depthVal > 65535 || airVal < 0 || airVal > 65535) {
+                outError = "Ultrasonic Tank Sensor: Tank depth and air gap must be valid positive values";
+                return false;
+            }
+            newCfg.numUltrasonics = 1;
+            newCfg.ultrasonics[0].type         = (UltrasonicSensorType)uType;
+            newCfg.ultrasonics[0].trigPin      = us["trig_pin"] | defTrigPin;
+            newCfg.ultrasonics[0].echoPin      = us["echo_pin"] | defEchoPin;
+            newCfg.ultrasonics[0].tankDepthCm  = (uint16_t)depthVal;
+            newCfg.ultrasonics[0].tankAirGapCm = (uint16_t)airVal;
+            assignDefaultLabel(newCfg.ultrasonics[0].label, sizeof(newCfg.ultrasonics[0].label), nullptr, "Tank", 0);
+        }
     }
 
-    if (obj.containsKey("mq2")) {
+    // 6. MQ-2 Gas Sensors
+    if (obj.containsKey("mq2_sensors") && obj["mq2_sensors"].is<JsonArrayConst>()) {
+        JsonArrayConst arr = obj["mq2_sensors"].as<JsonArrayConst>();
+        if (arr.size() > MAX_MQ2_SENSORS) {
+            outError = "Number of MQ-2 gas sensors exceeds maximum limit (" + String(MAX_MQ2_SENSORS) + ")";
+            return false;
+        }
+        uint8_t gIdx = 0;
+        for (JsonObjectConst g : arr) {
+            newCfg.mq2Sensors[gIdx].enabled    = g["enabled"] | true;
+            newCfg.mq2Sensors[gIdx].analogPin  = g["analog_pin"] | PIN_UNUSED;
+            newCfg.mq2Sensors[gIdx].digitalPin = g["digital_pin"] | PIN_UNUSED;
+            assignDefaultLabel(newCfg.mq2Sensors[gIdx].label, sizeof(newCfg.mq2Sensors[gIdx].label),
+                               g["label"] | "", "Gas", gIdx);
+            gIdx++;
+        }
+        newCfg.numMq2s = gIdx;
+    } else if (obj.containsKey("mq2")) {
         JsonObjectConst mq2 = obj["mq2"];
-        newCfg.mq2Enabled    = mq2["enabled"] | true;
-        newCfg.mq2AnalogPin  = mq2["analog_pin"] | defMq2APin;
-        newCfg.mq2DigitalPin = mq2["digital_pin"] | defMq2DPin;
+        bool en = mq2["enabled"] | true;
+        if (en) {
+            newCfg.numMq2s = 1;
+            newCfg.mq2Sensors[0].enabled    = true;
+            newCfg.mq2Sensors[0].analogPin  = mq2["analog_pin"] | defMq2APin;
+            newCfg.mq2Sensors[0].digitalPin = mq2["digital_pin"] | defMq2DPin;
+            assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
+        }
     } else {
-        newCfg.mq2Enabled    = true;
-        newCfg.mq2AnalogPin  = defMq2APin;
-        newCfg.mq2DigitalPin = defMq2DPin;
+        newCfg.numMq2s = 1;
+        newCfg.mq2Sensors[0].enabled    = true;
+        newCfg.mq2Sensors[0].analogPin  = defMq2APin;
+        newCfg.mq2Sensors[0].digitalPin = defMq2DPin;
+        assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
     }
 
     if (obj.containsKey("buzzer")) {
@@ -582,7 +1036,7 @@ bool HardwareManager::load() {
     String err;
     JsonObjectConst root = doc.as<JsonObjectConst>();
     if (!fromJson(root, err)) {
-        Serial.printf("[Hardware] Error parsing hardware.json: %s\n", err.c_str());
+        SERIAL_PRINTF("[Hardware] Error parsing hardware.json: %s\n", err.c_str());
         return false;
     }
     return true;
@@ -591,589 +1045,217 @@ bool HardwareManager::load() {
 // ============================================================================
 // Presets
 // ============================================================================
-void HardwareManager::setPreset5CH(HardwareConfig& cfg) {
+static void initPresetBase(HardwareConfig& cfg, const char* name, uint8_t numRelays,
+                           const uint8_t* relayPins, const uint8_t* switchPins,
+                           SwitchMode swMode = SWITCH_MODE_TOGGLE) {
     memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome 5-CH Standard", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 5;
+    strncpy(cfg.boardName, name, sizeof(cfg.boardName) - 1);
+    cfg.numRelays = numRelays;
+    for (int i = 0; i < MAX_RELAYS; i++) {
+        bool active = (i < numRelays);
+        uint8_t rp = (active && relayPins) ? relayPins[i] : PIN_UNUSED;
+        uint8_t sp = (active && switchPins) ? switchPins[i] : PIN_UNUSED;
+        cfg.channels[i].enabled       = active;
+        cfg.channels[i].relayPin      = rp;
+        cfg.channels[i].switchEnabled = active && (sp != PIN_UNUSED);
+        cfg.channels[i].switchPin     = sp;
+        cfg.channels[i].switchMode    = swMode;
+        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
+    }
+    cfg.lcdI2cAddr  = 0x27;
+    cfg.lcdCols     = 16;
+    cfg.lcdRows     = 2;
+    cfg.i2cSdaPin   = PIN_UNUSED;
+    cfg.i2cSclPin   = PIN_UNUSED;
+    cfg.buzzerPin   = PIN_UNUSED;
+    cfg.btnMultiPin = PIN_UNUSED;
+}
 
+static void addPresetClimate(HardwareConfig& cfg, ClimateSensorType t, uint8_t pin, uint8_t addr = 0) {
+    if (cfg.numClimates >= MAX_CLIMATE_SENSORS || t == CLIMATE_NONE) return;
+    uint8_t idx = cfg.numClimates++;
+    cfg.climates[idx].type    = t;
+    cfg.climates[idx].pin     = pin;
+    cfg.climates[idx].i2cAddr = addr;
+    assignDefaultLabel(cfg.climates[idx].label, sizeof(cfg.climates[idx].label), nullptr, "Climate", idx);
+}
+
+static void addPresetMq2(HardwareConfig& cfg, uint8_t aPin, uint8_t dPin) {
+    if (cfg.numMq2s >= MAX_MQ2_SENSORS) return;
+    uint8_t idx = cfg.numMq2s++;
+    cfg.mq2Sensors[idx].enabled    = true;
+    cfg.mq2Sensors[idx].analogPin  = aPin;
+    cfg.mq2Sensors[idx].digitalPin = dPin;
+    assignDefaultLabel(cfg.mq2Sensors[idx].label, sizeof(cfg.mq2Sensors[idx].label), nullptr, "Gas", idx);
+}
+
+void HardwareManager::setPreset5CH(HardwareConfig& cfg) {
     const uint8_t rPins[5] = {16, 17, 18, 19, 23};
     const uint8_t sPins[5] = {13, 14, 27, 26, 25};
-    for (int i = 0; i < 5; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = true;
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 5; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
+    initPresetBase(cfg, "SmartHome 5-CH Standard", 5, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 34;
-    cfg.mq2DigitalPin = 35;
-
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
+    addPresetMq2(cfg, 34, 35);
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 5;
-
-    cfg.lcdEnabled  = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = 21;
-    cfg.i2cSclPin  = 22;
-
-    cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 21;
+    cfg.i2cSclPin     = 22;
+    cfg.btnMultiPin   = 33;
 }
 
 void HardwareManager::setPreset1CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome 1-CH Mini", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 1;
+    const uint8_t rPins[1] = {16};
+    const uint8_t sPins[1] = {13};
+    initPresetBase(cfg, "SmartHome 1-CH Mini", 1, rPins, sPins, SWITCH_MODE_PUSHBUTTON);
 
-    cfg.channels[0].enabled       = true;
-    cfg.channels[0].relayPin      = 16;
-    cfg.channels[0].switchEnabled = true;
-    cfg.channels[0].switchPin     = 13;
-    cfg.channels[0].switchMode    = SWITCH_MODE_PUSHBUTTON;
-    cfg.channels[0].triggerMode   = TRIGGER_ACTIVE_LOW;
-
-    for (int i = 1; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
-
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-
-    cfg.mq2Enabled    = false;
-    cfg.mq2AnalogPin  = PIN_UNUSED;
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
-    cfg.buzzerEnabled = false;
-    cfg.buzzerPin     = PIN_UNUSED;
-
-    cfg.lcdEnabled  = false;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = PIN_UNUSED;
-    cfg.i2cSclPin  = PIN_UNUSED;
-
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
     cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
 }
 
 void HardwareManager::setPreset2CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome 2-CH Dual", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 2;
-
     const uint8_t rPins[2] = {16, 17};
     const uint8_t sPins[2] = {13, 14};
-    for (int i = 0; i < 2; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = true;
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 2; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
+    initPresetBase(cfg, "SmartHome 2-CH Dual", 2, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-    cfg.mq2Enabled = true;
-    cfg.mq2AnalogPin = 34;
-    cfg.mq2DigitalPin = 35;
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
+    addPresetMq2(cfg, 34, 35);
     cfg.buzzerEnabled = true;
-    cfg.buzzerPin = 5;
-    cfg.lcdEnabled = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols = 16;
-    cfg.lcdRows = 2;
-    cfg.i2cSdaPin = 21;
-    cfg.i2cSclPin = 22;
-    cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.buzzerPin     = 5;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 21;
+    cfg.i2cSclPin     = 22;
+    cfg.btnMultiPin   = 33;
 }
 
 void HardwareManager::setPreset4CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome 4-CH Pro", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 4;
-
     const uint8_t rPins[4] = {16, 17, 18, 19};
     const uint8_t sPins[4] = {13, 14, 27, 26};
-    for (int i = 0; i < 4; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = true;
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 4; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
+    initPresetBase(cfg, "SmartHome 4-CH Pro", 4, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-    cfg.mq2Enabled = true;
-    cfg.mq2AnalogPin = 34;
-    cfg.mq2DigitalPin = 35;
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
+    addPresetMq2(cfg, 34, 35);
     cfg.buzzerEnabled = true;
-    cfg.buzzerPin = 5;
-    cfg.lcdEnabled = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols = 16;
-    cfg.lcdRows = 2;
-    cfg.i2cSdaPin = 21;
-    cfg.i2cSclPin = 22;
-    cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.buzzerPin     = 5;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 21;
+    cfg.i2cSclPin     = 22;
+    cfg.btnMultiPin   = 33;
 }
 
 void HardwareManager::setPreset8CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome 8-CH Max", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 8;
-
     const uint8_t rPins[8] = {16, 17, 18, 19, 23, 25, 26, 27};
-    for (int i = 0; i < 8; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
+    initPresetBase(cfg, "SmartHome 8-CH Max", 8, rPins, nullptr);
 
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-    cfg.mq2Enabled = false;
-    cfg.mq2AnalogPin = PIN_UNUSED;
-    cfg.mq2DigitalPin = PIN_UNUSED;
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
     cfg.buzzerEnabled = true;
-    cfg.buzzerPin = 5;
-    cfg.lcdEnabled = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols = 16;
-    cfg.lcdRows = 2;
-    cfg.i2cSdaPin = 21;
-    cfg.i2cSclPin = 22;
-    cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.buzzerPin     = 5;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 21;
+    cfg.i2cSclPin     = 22;
+    cfg.btnMultiPin   = 33;
 }
 
 void HardwareManager::setPresetSensorNode(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome Sensor Node", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 0;
+    initPresetBase(cfg, "SmartHome Sensor Node", 0, nullptr, nullptr);
 
-    for (int i = 0; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
-
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 4;
-    cfg.mq2Enabled = true;
-    cfg.mq2AnalogPin = 34;
-    cfg.mq2DigitalPin = 35;
+    addPresetClimate(cfg, CLIMATE_DHT22, 4);
+    addPresetMq2(cfg, 34, 35);
     cfg.buzzerEnabled = true;
-    cfg.buzzerPin = 5;
-    cfg.lcdEnabled = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols = 16;
-    cfg.lcdRows = 2;
-    cfg.i2cSdaPin = 21;
-    cfg.i2cSclPin = 22;
-    cfg.btnMultiPin = 33;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = 32;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = 15;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = 15;
-    cfg.echoPin = 35;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.buzzerPin     = 5;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 21;
+    cfg.i2cSclPin     = 22;
+    cfg.btnMultiPin   = 33;
 }
 
 void HardwareManager::setPresetESP8266_2CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 2-CH Dual", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 2;
-
     const uint8_t rPins[2] = {12, 14}; // D6, D5
     const uint8_t sPins[2] = {13, 16}; // D7 (pullup), D0 (wake)
-    for (int i = 0; i < 2; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = true;
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 2; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
+    initPresetBase(cfg, "SmartHome ESP8266 2-CH Dual", 2, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_NONE;
-    cfg.dhtPin  = PIN_UNUSED;
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetMq2(cfg, 17, PIN_UNUSED); // A0
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2; // D4
-
-    cfg.lcdEnabled  = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = 4; // D2
-    cfg.i2cSclPin  = 5; // D1
-
-    cfg.btnMultiPin = 0; // D3 / FLASH button
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = PIN_UNUSED;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = PIN_UNUSED;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 4; // D2
+    cfg.i2cSclPin     = 5; // D1
+    cfg.btnMultiPin   = 0; // D3 / FLASH button
 }
 
 void HardwareManager::setPresetESP8266_1CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 1-CH Mini", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 1;
+    const uint8_t rPins[1] = {12}; // D6
+    const uint8_t sPins[1] = {13}; // D7
+    initPresetBase(cfg, "SmartHome ESP8266 1-CH Mini", 1, rPins, sPins, SWITCH_MODE_PUSHBUTTON);
 
-    cfg.channels[0].enabled       = true;
-    cfg.channels[0].relayPin      = 12; // D6
-    cfg.channels[0].switchEnabled = true;
-    cfg.channels[0].switchPin     = 13; // D7
-    cfg.channels[0].switchMode    = SWITCH_MODE_PUSHBUTTON;
-    cfg.channels[0].triggerMode   = TRIGGER_ACTIVE_LOW;
-
-    for (int i = 1; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
-
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 14; // D5
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetClimate(cfg, CLIMATE_DHT22, 14); // D5
+    addPresetMq2(cfg, 17, PIN_UNUSED);       // A0
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2;
-
-    cfg.lcdEnabled  = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = 4;
-    cfg.i2cSclPin  = 5;
-
-    cfg.btnMultiPin = 0;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = PIN_UNUSED;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = PIN_UNUSED;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 4;
+    cfg.i2cSclPin     = 5;
+    cfg.btnMultiPin   = 0;
 }
 
 void HardwareManager::setPresetESP8266_3CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 3-CH Pro", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 3;
-
     const uint8_t rPins[3] = {12, 14, 15}; // D6, D5, D8
     const uint8_t sPins[3] = {13, 16, PIN_UNUSED}; // D7, D0
-    for (int i = 0; i < 3; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = (sPins[i] != PIN_UNUSED);
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 3; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
+    initPresetBase(cfg, "SmartHome ESP8266 3-CH Pro", 3, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_NONE;
-    cfg.dhtPin  = PIN_UNUSED;
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetMq2(cfg, 17, PIN_UNUSED); // A0
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2;
-
-    cfg.lcdEnabled  = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = 4;
-    cfg.i2cSclPin  = 5;
-
-    cfg.btnMultiPin = 0;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = PIN_UNUSED;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = PIN_UNUSED;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 4;
+    cfg.i2cSclPin     = 5;
+    cfg.btnMultiPin   = 0;
 }
 
 void HardwareManager::setPresetESP8266_SensorNode(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 Sensor Node", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 0;
+    initPresetBase(cfg, "SmartHome ESP8266 Sensor Node", 0, nullptr, nullptr);
 
-    for (int i = 0; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
-
-    cfg.dhtType = CLIMATE_DHT22;
-    cfg.dhtPin  = 12; // D6
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetClimate(cfg, CLIMATE_DHT22, 12); // D6
+    addPresetMq2(cfg, 17, PIN_UNUSED);        // A0
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2;
+    cfg.lcdEnabled    = true;
+    cfg.i2cSdaPin     = 4;
+    cfg.i2cSclPin     = 5;
+    cfg.btnMultiPin   = 0;
 
-    cfg.lcdEnabled  = true;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = 4;
-    cfg.i2cSclPin  = 5;
+    cfg.numMotions = 1;
+    cfg.motions[0].type = MOTION_PIR;
+    cfg.motions[0].pin  = 14; // D5
+    assignDefaultLabel(cfg.motions[0].label, sizeof(cfg.motions[0].label), nullptr, "Motion", 0);
 
-    cfg.btnMultiPin = 0;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_PIR;
-    cfg.motionPin = 14; // D5
-    cfg.probeType = PROBE_DS18B20;
-    cfg.probePin = 13; // D7
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.numProbes = 1;
+    cfg.probes[0].type = PROBE_DS18B20;
+    cfg.probes[0].pin  = 13; // D7
+    assignDefaultLabel(cfg.probes[0].label, sizeof(cfg.probes[0].label), nullptr, "Probe", 0);
 }
 
 void HardwareManager::setPresetESP8266_4CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 4-CH Quad", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 4;
-
     const uint8_t rPins[4] = {12, 14, 4, 5}; // D6, D5, D2, D1
     const uint8_t sPins[4] = {13, 16, PIN_UNUSED, PIN_UNUSED}; // D7, D0
-    for (int i = 0; i < 4; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = (sPins[i] != PIN_UNUSED);
-        cfg.channels[i].switchPin     = sPins[i];
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
-    for (int i = 4; i < MAX_RELAYS; i++) {
-        cfg.channels[i].enabled       = false;
-        cfg.channels[i].relayPin      = PIN_UNUSED;
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-    }
+    initPresetBase(cfg, "SmartHome ESP8266 4-CH Quad", 4, rPins, sPins);
 
-    cfg.dhtType = CLIMATE_NONE;
-    cfg.dhtPin  = PIN_UNUSED;
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetMq2(cfg, 17, PIN_UNUSED); // A0
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2; // D4
-
-    cfg.lcdEnabled  = false;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = PIN_UNUSED;
-    cfg.i2cSclPin  = PIN_UNUSED;
-
-    cfg.btnMultiPin = 0; // D3 / FLASH
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = PIN_UNUSED;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = PIN_UNUSED;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
+    cfg.btnMultiPin   = 0; // D3 / FLASH
 }
 
 void HardwareManager::setPresetESP8266_8CH(HardwareConfig& cfg) {
-    memset(&cfg, 0, sizeof(cfg));
-    strncpy(cfg.boardName, "SmartHome ESP8266 8-CH Max", sizeof(cfg.boardName) - 1);
-    cfg.numRelays = 8;
-
     // 8 Relays on ESP8266:
     // GPIO 12 (D6), GPIO 14 (D5), GPIO 4 (D2), GPIO 5 (D1),
     // GPIO 13 (D7), GPIO 15 (D8), GPIO 0 (D3), GPIO 16 (D0)
     const uint8_t rPins[8] = {12, 14, 4, 5, 13, 15, 0, 16};
-    for (int i = 0; i < 8; i++) {
-        cfg.channels[i].enabled       = true;
-        cfg.channels[i].relayPin      = rPins[i];
-        cfg.channels[i].switchEnabled = false;
-        cfg.channels[i].switchPin     = PIN_UNUSED;
-        cfg.channels[i].switchMode    = SWITCH_MODE_TOGGLE;
-        cfg.channels[i].triggerMode   = TRIGGER_ACTIVE_LOW;
-    }
+    initPresetBase(cfg, "SmartHome ESP8266 8-CH Max", 8, rPins, nullptr);
 
-    cfg.dhtType = CLIMATE_NONE;
-    cfg.dhtPin  = PIN_UNUSED;
-
-    cfg.mq2Enabled    = true;
-    cfg.mq2AnalogPin  = 17; // A0 (ADC0)
-    cfg.mq2DigitalPin = PIN_UNUSED;
-
+    addPresetMq2(cfg, 17, PIN_UNUSED); // A0 (ADC0)
     cfg.buzzerEnabled = true;
     cfg.buzzerPin     = 2; // D4
-
-    cfg.lcdEnabled  = false;
-    cfg.lcdI2cAddr = 0x27;
-    cfg.lcdCols    = 16;
-    cfg.lcdRows    = 2;
-    cfg.i2cSdaPin  = PIN_UNUSED;
-    cfg.i2cSclPin  = PIN_UNUSED;
-
-    cfg.btnMultiPin = PIN_UNUSED;
-
-    cfg.lightType = LIGHT_NONE;
-    cfg.motionType = MOTION_NONE;
-    cfg.motionPin = PIN_UNUSED;
-    cfg.probeType = PROBE_NONE;
-    cfg.probePin = PIN_UNUSED;
-    cfg.ultrasonicType = ULTRASONIC_NONE;
-    cfg.trigPin = PIN_UNUSED;
-    cfg.echoPin = PIN_UNUSED;
-    cfg.tankDepthCm = 150;
-    cfg.tankAirGapCm = 15;
 }
 
 void HardwareManager::getPresetsJson(JsonArray& arr) {
@@ -1206,7 +1288,7 @@ void HardwareManager::getPinCapabilitiesJson(JsonObject& obj) {
     for (uint8_t p : safeOutputs) outputs.add(p);
 
     JsonArray inputs = obj["inputs"].to<JsonArray>();
-    const uint8_t safeInputs[] = {0, 2, 4, 5, 12, 13, 14, 15, 16, 17};
+    const uint8_t safeInputs[] = {0, 2, 4, 5, 12, 13, 14, 15, 16};
     for (uint8_t p : safeInputs) inputs.add(p);
 
     JsonArray adc1 = obj["adc1"].to<JsonArray>();
@@ -1239,4 +1321,13 @@ void HardwareManager::getPinCapabilitiesJson(JsonObject& obj) {
     const uint8_t strapPins[] = {0, 2, 12, 15};
     for (uint8_t p : strapPins) strapping.add(p);
 #endif
+
+    JsonObject limits = obj["sensor_limits"].to<JsonObject>();
+    limits["relays"]      = MAX_RELAYS;
+    limits["climates"]    = MAX_CLIMATE_SENSORS;
+    limits["lights"]      = MAX_LIGHT_SENSORS;
+    limits["motions"]     = MAX_MOTION_SENSORS;
+    limits["probes"]      = MAX_PROBE_SENSORS;
+    limits["ultrasonics"] = MAX_ULTRASONIC_SENSORS;
+    limits["mq2s"]        = MAX_MQ2_SENSORS;
 }

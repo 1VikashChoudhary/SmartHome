@@ -107,7 +107,7 @@ void WifiManager::loop() {
                 _state = WIFI_ST_CONNECTED;
                 _lastConnectTime = now;
                 _failCount = 0;
-                Serial.printf("[WiFi] Connected to %s  IP: %s  RSSI: %d dBm\n",
+                SERIAL_PRINTF("[WiFi] Connected to %s  IP: %s  RSSI: %d dBm\n",
                               WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
                 // Cache BSSID and channel for fast reconnect
@@ -131,7 +131,7 @@ void WifiManager::loop() {
             // Check timeout
             else if (now - _connectStartTime > WIFI_CONNECT_TIMEOUT) {
                 _failCount++;
-                Serial.printf("[WiFi] Connection timeout (attempt %d/%d)\n",
+                SERIAL_PRINTF("[WiFi] Connection timeout (attempt %d/%d)\n",
                               _failCount, WIFI_AP_FALLBACK_ATTEMPTS);
 
                 if (_failCount >= WIFI_AP_FALLBACK_ATTEMPTS) {
@@ -148,6 +148,10 @@ void WifiManager::loop() {
             break;
 
         case WIFI_ST_CONNECTED:
+            // Keep ESP8266 mDNS responder servicing queries continuously
+#if defined(ESP8266)
+            MDNS.update();
+#endif
             // Monitor connection
             if (WiFi.status() != WL_CONNECTED) {
                 Serial.println(F("[WiFi] Connection lost, reconnecting..."));
@@ -275,7 +279,7 @@ void WifiManager::startAP() {
 
     _state = WIFI_ST_AP_MODE;
 
-    Serial.printf("[WiFi] AP Mode: SSID=%s  Pass=%s  IP=%s\n",
+    SERIAL_PRINTF("[WiFi] AP Mode: SSID=%s  Pass=%s  IP=%s\n",
                   _apSSID.c_str(), pass ? pass : "None (Open)", WiFi.softAPIP().toString().c_str());
 
     // If we have credentials, keep trying STA in background
@@ -339,7 +343,7 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
     }
     _storage->saveJson(PATH_WIFI, doc);
 
-    Serial.printf("[WiFi] Saved %d network(s)\n", _networkCount);
+    SERIAL_PRINTF("[WiFi] Saved %d network(s)\n", _networkCount);
 
     // Attempt connection to new network
     _currentNetwork = _networkCount - 1;
@@ -378,11 +382,12 @@ void WifiManager::loadCredentials() {
     for (JsonObject net : arr) {
         if (_networkCount >= WIFI_MAX_SAVED_NETWORKS) break;
 
-        _networks[_networkCount].ssid = net["ssid"].as<String>();
-        _networks[_networkCount].pass = net["pass"].as<String>();
+        _networks[_networkCount].ssid = net["ssid"] | "";
+        _networks[_networkCount].pass = net["pass"] | "";
+        if (_networks[_networkCount].ssid.length() == 0) continue;
 
-        if (net.containsKey("bssid")) {
-            String bssidStr = net["bssid"].as<String>();
+        if (net["bssid"].is<const char*>()) {
+            String bssidStr = net["bssid"] | "";
             if (bssidStr.length() == 17) {
                 sscanf(bssidStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
                        &_networks[_networkCount].bssid[0], &_networks[_networkCount].bssid[1],
@@ -401,7 +406,7 @@ void WifiManager::loadCredentials() {
         _networkCount++;
     }
 
-    Serial.printf("[WiFi] Loaded %d saved network(s)\n", _networkCount);
+    SERIAL_PRINTF("[WiFi] Loaded %d saved network(s)\n", _networkCount);
 }
 
 // ============================================================================
@@ -426,11 +431,11 @@ void WifiManager::tryConnect() {
 
     // Fast reconnect if we have cached BSSID and channel
     if (net.hasBssid && net.channel > 0) {
-        Serial.printf("[WiFi] Fast connecting to %s (ch %d)\n",
-                      net.ssid.c_str(), net.channel);
+        SERIAL_PRINTF("[WiFi] Fast connecting to %s (ch %d)\n",
+                      net.ssid.c_str(), (int)net.channel);
         WiFi.begin(net.ssid.c_str(), net.pass.c_str(), net.channel, net.bssid, true);
     } else {
-        Serial.printf("[WiFi] Connecting to %s\n", net.ssid.c_str());
+        SERIAL_PRINTF("[WiFi] Connecting to %s\n", net.ssid.c_str());
         WiFi.begin(net.ssid.c_str(), net.pass.c_str());
     }
 }
@@ -505,7 +510,7 @@ void WifiManager::setupMDNS() {
         }
         MDNS.addServiceTxt("smarthome", "tcp", "name", devName);
 
-        Serial.printf("[WiFi] mDNS started: %s.local (_smarthome._tcp registered)\n", _hostname.c_str());
+        SERIAL_PRINTF("[WiFi] mDNS started: %s.local (_smarthome._tcp registered)\n", _hostname.c_str());
     } else {
         Serial.println(F("[WiFi] mDNS failed to start"));
     }
@@ -544,7 +549,7 @@ void WifiManager::staticWiFiEvent(WiFiEvent_t event) {
 void WifiManager::onWiFiEvent(WiFiEvent_t event) {
     switch (event) {
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-            Serial.printf("[WiFi] Got IP: %s\n", WiFi.localIP().toString().c_str());
+            SERIAL_PRINTF("[WiFi] Got IP: %s\n", WiFi.localIP().toString().c_str());
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
             if (_state == WIFI_ST_CONNECTED) {

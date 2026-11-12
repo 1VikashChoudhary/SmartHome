@@ -14,8 +14,8 @@
 
 RelayManager::RelayManager()
     : _storage(nullptr), _hw(nullptr), _numRelays(NUM_RELAYS),
-      _statesDirty(false), _lastStateSave(0),
-      _lastRelaySwitchTime(0), _lastStaggerStep(0), _changeCallback(nullptr) {
+      _lastRelaySwitchTime(0), _lastStaggerStep(0),
+      _statesDirty(false), _lastStateSave(0), _changeCallback(nullptr) {
     memset(_timers, 0, sizeof(_timers));
     memset(_pendingStaggerOn, 0, sizeof(_pendingStaggerOn));
     memset(_pendingNotifyOff, 0, sizeof(_pendingNotifyOff));
@@ -74,7 +74,7 @@ void RelayManager::begin(StorageManager& storage) {
     }
 
     _lastStateSave = millis();
-    Serial.printf("[Relay] Initialized (%d relays, legacy mode)\n", _numRelays);
+    SERIAL_PRINTF("[Relay] Initialized (%d relays, legacy mode)\n", _numRelays);
 }
 
 // ============================================================================
@@ -126,7 +126,7 @@ void RelayManager::begin(StorageManager& storage, HardwareManager& hw) {
     bool firstOnEnergized = false;
     for (uint8_t i = 0; i < _numRelays; i++) {
         if (!isChannelEnabled(i)) {
-            Serial.printf("[Relay] %d '%s': DISABLED (unused)\n", i + 1, _config[i].name);
+            SERIAL_PRINTF("[Relay] %d '%s': DISABLED (unused)\n", i + 1, _config[i].name);
             continue;
         }
         if (_state[i].logicalState) {
@@ -148,7 +148,7 @@ void RelayManager::begin(StorageManager& storage, HardwareManager& hw) {
             applyState(i);
         }
 
-        Serial.printf("[Relay] %d '%s' (%s, GPIO %d): %s (trigger: %s, boot: %d)\n",
+        SERIAL_PRINTF("[Relay] %d '%s' (%s, GPIO %d): %s (trigger: %s, boot: %d)\n",
                       i + 1, _config[i].name, _config[i].icon, getRelayPin(i),
                       _state[i].logicalState ? (_pendingStaggerOn[i] ? "ON (staggered)" : "ON") : "OFF",
                       _config[i].triggerMode == TRIGGER_ACTIVE_LOW ? "ActiveLOW" : "ActiveHIGH",
@@ -156,7 +156,7 @@ void RelayManager::begin(StorageManager& storage, HardwareManager& hw) {
     }
 
     _lastStateSave = millis();
-    Serial.printf("[Relay] Initialized (%d configured channels)\n", _numRelays);
+    SERIAL_PRINTF("[Relay] Initialized (%d configured channels)\n", _numRelays);
 }
 
 uint8_t RelayManager::getRelayPin(uint8_t index) const {
@@ -203,7 +203,7 @@ void RelayManager::loop() {
                 if (_state[i].logicalState) {
                     applyState(i);
                     _lastRelaySwitchTime = now;
-                    Serial.printf("[Relay] %d staggered ON coil energized\n", i + 1);
+                    SERIAL_PRINTF("[Relay] %d staggered ON coil energized\n", i + 1);
                     if (_changeCallback) {
                         _changeCallback(i, true);
                     }
@@ -219,7 +219,7 @@ void RelayManager::loop() {
             if (now - _state[i].autoOffStart >= (unsigned long)_config[i].autoOffMinutes * 60000UL) {
                 _state[i].autoOffStart = 0;
                 setState(i, false);
-                Serial.printf("[Relay] %d auto-OFF triggered\n", i + 1);
+                SERIAL_PRINTF("[Relay] %d auto-OFF triggered\n", i + 1);
             }
         }
     }
@@ -230,7 +230,7 @@ void RelayManager::loop() {
             if (now - _state[i].autoOnStart >= (unsigned long)_config[i].autoOnMinutes * 60000UL) {
                 _state[i].autoOnStart = 0;
                 setState(i, true);
-                Serial.printf("[Relay] %d auto-ON triggered\n", i + 1);
+                SERIAL_PRINTF("[Relay] %d auto-ON triggered\n", i + 1);
             }
         }
     }
@@ -244,7 +244,7 @@ void RelayManager::loop() {
                 _timers[i].durationMillis = 0;
                 _timers[i].startMillis = 0;
                 setState(i, target);
-                Serial.printf("[Relay] %d quick timer finished -> state %s\n", i + 1, target ? "ON" : "OFF");
+                SERIAL_PRINTF("[Relay] %d quick timer finished -> state %s\n", i + 1, target ? "ON" : "OFF");
             }
         }
     }
@@ -406,7 +406,7 @@ void RelayManager::setTriggerMode(uint8_t index, TriggerMode mode) {
     _config[index].triggerMode = mode;
     applyState(index);
     saveConfig();
-    Serial.printf("[Relay] %d trigger mode → %s\n", index + 1,
+    SERIAL_PRINTF("[Relay] %d trigger mode → %s\n", index + 1,
                   mode == TRIGGER_ACTIVE_LOW ? "ActiveLOW" : "ActiveHIGH");
 }
 
@@ -495,7 +495,7 @@ void RelayManager::initWallSwitchStates() {
         bool savedSwitch = _state[i].lastSwitchState;
 
         if (currentSwitch != savedSwitch) {
-            Serial.printf("[Relay] Switch %d changed during power off (%s→%s), toggling\n",
+            SERIAL_PRINTF("[Relay] Switch %d changed during power off (%s→%s), toggling\n",
                           i + 1, savedSwitch ? "ON" : "OFF", currentSwitch ? "ON" : "OFF");
             _state[i].logicalState = !_state[i].logicalState;
         }
@@ -521,7 +521,7 @@ void RelayManager::activateFailsafe() {
     for (uint8_t i = 0; i < _numRelays; i++) {
         if (_config[i].failsafe && _state[i].logicalState) {
             setState(i, false);
-            Serial.printf("[Relay] Failsafe: relay %d turned OFF\n", i + 1);
+            SERIAL_PRINTF("[Relay] Failsafe: relay %d turned OFF\n", i + 1);
         }
     }
 }
@@ -621,8 +621,8 @@ void RelayManager::startTimer(uint8_t index, bool targetState, uint32_t duration
     _timers[index].startMillis = millis();
     _timers[index].durationMillis = (unsigned long)durationSeconds * 1000UL;
     _timers[index].active = true;
-    Serial.printf("[Relay] %d quick timer started: %s in %u s\n",
-                  index + 1, targetState ? "ON" : "OFF", durationSeconds);
+    SERIAL_PRINTF("[Relay] %d quick timer started: %s in %lu s\n",
+                  index + 1, targetState ? "ON" : "OFF", (unsigned long)durationSeconds);
 }
 
 void RelayManager::cancelTimer(uint8_t index) {
@@ -630,7 +630,7 @@ void RelayManager::cancelTimer(uint8_t index) {
     _timers[index].active = false;
     _timers[index].durationMillis = 0;
     _timers[index].startMillis = 0;
-    Serial.printf("[Relay] %d quick timer cancelled\n", index + 1);
+    SERIAL_PRINTF("[Relay] %d quick timer cancelled\n", index + 1);
 }
 
 bool RelayManager::hasActiveTimer(uint8_t index) {
@@ -719,7 +719,7 @@ void RelayManager::loadStates() {
             _state[i].logicalState = logical[i];
             _state[i].lastSwitchState = wallSw[i];
         }
-        Serial.printf("[Relay] Restored %d channel states from wear-leveled NVS\n", _numRelays);
+        SERIAL_PRINTF("[Relay] Restored %d channel states from wear-leveled NVS\n", _numRelays);
     } else {
         Serial.println(F("[Relay] No prior states in NVS; defaults applied"));
     }

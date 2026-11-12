@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-35%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-55%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
 A commercial-grade, production-hardened IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
@@ -38,15 +38,15 @@ A commercial-grade, production-hardened IoT smart home automation hub powered by
 ## Key Features & Pillars
 
 * **Single Unified Codebase**: Runs on both ESP8266 and ESP32 without code branching, conditional hacks, or separate applications.
-* **100% Non-Blocking Asynchronous Core**: Zero calls to `delay()`. Built entirely on asynchronous networking (`ESPAsyncWebServer`, `ESPAsyncTCP` / `AsyncTCP`) and event-driven non-blocking loop managers.
-* **TCP Packet Fragmentation Reassembly**: Employs dynamic stream buffering (`collectJsonBody`) across all 14 REST JSON endpoints, completely eliminating `IncompleteInput` or `Invalid JSON` parse errors caused by ESP8266 LWIP TCP MSS packet fragmentation.
+* **Non-Blocking Asynchronous Core**: Built on asynchronous networking (`ESPAsyncWebServer`, `ESPAsyncTCP` / `AsyncTCP`) and `millis()`-driven state managers without blocking main event loops.
+* **TCP Packet Fragmentation Reassembly**: Employs dynamic stream buffering (`collectJsonBody`) across REST JSON endpoints, eliminating `IncompleteInput` or `Invalid JSON` parse errors caused by ESP8266 LWIP TCP MSS packet fragmentation.
 * **Zero-Brick Dual-Partition OTA (ESP32)**: Two 1.9MB application partitions (`ota_0`, `ota_1`). If newly flashed firmware boot-loops or panics, the hardware bootloader automatically reverts to the previous working slot within 30 seconds.
 * **Seamless Web OTA (ESP8266 & ESP32)**: Intuitive drag-and-drop web updater at `http://<device_ip>/update` allowing 1-click updates over Wi-Fi without needing `esptool.py` or serial cables.
 * **Decoupled Wear-Leveled NVS Runtime State**: Rapid relay cycles and switch events are packed into bitmasks and stored in wear-leveled NVS (ESP32) or EEPROM (ESP8266), reserving LittleFS strictly for static JSON configurations and guaranteeing 100,000+ power-cycle endurance.
 * **Multi-User Privilege Tiers (Admin vs. Family/Guest)**:
   * **Admin**: Complete system control, GPIO template editing, Wi-Fi credentials, backups, factory reset, and firmware updates.
   * **Family / Guest**: Clean restricted mode allowing switch toggling, sensor monitoring, and quick timers, while locking out hardware changes, network settings, and flashing.
-* **Dynamic GPIO Template Engine**: Runtime configuration of relay channels (1 to 8 relays), pin remapping, boot modes, active-HIGH/LOW polarities, and switch interlocking without reflashing.
+* **Dynamic GPIO Template Engine**: Runtime configuration of relay channels (0 to 8 relays, including relayless Sensor Nodes), pin remapping, boot modes, active-HIGH/LOW polarities, and switch interlocking without reflashing.
 * **Obsidian Glassmorphism Web Dashboard**: Single-page application embedded directly in PROGMEM with dark/light themes, SVG iconography, real-time WebSocket telemetry, gauge animations, and a symmetrical 6-card Settings grid.
 * **Cross-Platform Flutter Companion App**: Single app controls both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, batch multi-device OTA updates, backup management, and encrypted credential storage.
 * **Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics.
@@ -63,13 +63,13 @@ The firmware dynamically detects and adapts to the host silicon at compile-time 
 | **Silicon Architecture** | Tensilica Xtensa L106 @ 80/160 MHz | Tensilica Xtensa Dual-Core LX6 @ 240 MHz |
 | **Available RAM / Heap** | ~80 KB (35–45 KB Free Heap) | 520 KB (250–320 KB Free Heap) |
 | **Flash Partition Scheme** | 4MB Flash (1MB SPIFFS/LittleFS, 1MB Code) | 4MB Custom Partition (`min_spiffs`: 2x 1.9MB OTA + 192KB LittleFS) |
-| **Default Relay Channels** | **2 Channels** (expandable up to 3) | **5 Channels** (expandable up to 8) |
+| **Default Relay Channels** | **2 Channels** (0–8 relays via Custom DIY Mode) | **5 Channels** (0–8 relays via Custom DIY Mode) |
 | **Pin Naming** | NodeMCU Pin Names (`D0`–`D8`, `A0`) | Standard GPIO numbers (`GPIO 0`–`39`) |
 | **Analog Gas Sensor (MQ-2)** | Dedicated `A0` (10-bit ADC: `0`–`1023`) | Selectable ADC1 channels (12-bit ADC: `0`–`4095`) |
 | **Buzzer Acoustic Alert** | Software Non-Blocking PWM Timer | LEDC Hardware PWM Timer Channels |
 | **OTA Update Architecture** | Single-Slot Web OTA (`/update`) with safe reboot | Dual-Partition Rollback (`ota_0` / `ota_1`) with 30s stability check |
 | **Runtime State Storage** | Wear-leveled EEPROM Bitmasks | Wear-leveled NVS Flash Engine |
-| **Hardware Presets** | 2-CH Dual, 1-CH Mini, 3-CH Pro, Sensor Node | 5-CH Standard, 1-CH Mini, 2-CH Dual, 4-CH Quad, 8-CH Octa |
+| **Hardware Presets** | 2-CH Dual, 1-CH Mini, 3-CH Pro, 4-CH Quad, 8-CH Max, Sensor Node | 5-CH Standard, 1-CH Mini, 2-CH Dual, 4-CH Pro, 8-CH Max, Sensor Node |
 
 ---
 
@@ -94,10 +94,10 @@ graph TB
         end
 
         subgraph Hardware_Controllers["Hardware Subsystem Managers"]
-            RELAY_MG["RelayManager<br/>(1-8 Channels + Interlock)"]
-            SENSOR_MG["SensorManager<br/>(DHT22, BME280, MQ2, DS18B20)"]
+            RELAY_MG["RelayManager<br/>(0-8 Channels + Interlock)"]
+            SENSOR_MG["SensorManager<br/>(DHT11/22, BME280/AHT20/SHT3x, BH1750, PIR/LD2410, DS18B20, HC-SR04/JSN-SR04T, MQ-2)"]
             BUZZER_MG["BuzzerManager<br/>(LEDC PWM or ESP8266 PWM)"]
-            LCD_MG["LCDManager<br/>(16x2 I2C Auto-Rotation)"]
+            LCD_MG["LCDManager<br/>(16x2 / 20x4 I2C Auto-Rotation)"]
             TIME_MG["TimeManager<br/>(SNTP + RTC Fallback)"]
             RULE_MG["RuleManager & AlarmScheduler<br/>(Sensor Automation Engine)"]
             BTN_MG["ButtonManager<br/>(Unified Multi-Function Button)"]
@@ -152,7 +152,7 @@ To meet the security demands of commercial installations and multi-tenant homes,
 ### 1. Web OTA via Browser (Easiest & Recommended)
 Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
 1. Navigate to: `http://<device_ip>/update`
-2. Drop the corresponding `.bin` file from [`binaries/`](file:///p:/app/SmartHome/binaries):
+2. Drop the corresponding `.bin` file from [`binaries/`](binaries/):
    - For ESP8266: `binaries/esp8266/SmartHome_ESP8266.bin`
    - For ESP32: `binaries/esp32/SmartHome_ESP32.bin`
 3. Click **"Upload & Flash"**. The controller verifies the binary, flashes, and reboots in ~10 seconds.
@@ -183,8 +183,8 @@ The firmware provides a two-mode GPIO Template and Hardware Profile engine acces
 * **🛠️ Custom DIY Mode**: Total configuration freedom with zero artificial board or relay limits:
   * **0 to 8 Relays**: Add or remove relay channels dynamically (`+ Add Channel` / `− Remove`) to match your exact hardware.
   * **Custom Wall Switches**: Pair any digital input pin with any relay channel in Toggle, Follow, Inverted Follow, Pushbutton, or Detached mode.
-  * **Sensor Integration**: Freely allocate Climate (DHT11/22, BME280, AHT20, SHT3x), Optics (BH1750), Motion (PIR, mmWave Radar LD2410), Water Temp (DS18B20), Ultrasonic Tank Level (HC-SR04P, HC-SR04, JSN-SR04T), Gas (MQ-2), Buzzer, LCD Display, and Status Button.
-  * **Shared I2C Bus Multiplier**: Connect multiple I2C devices (LCD1602/2004, BME280, AHT20, SHT3x, BH1750) simultaneously on the same 2 wire pins (SDA/SCL) with automatic address arbitration.
+  * **Dynamic Multi-Instance Sensors**: Add or remove multiple sensors per group (`+ Add` / `− Remove` up to hardware GPIO, ADC1/A0, and I2C address availability) across Climate (DHT11/22, BME280, AHT20, SHT3x — up to 4), Light (BH1750 — up to 2), Motion (PIR, LD2410 — up to 6), Water Temp Probe (DS18B20 — up to 4), Ultrasonic Tank Level (HC-SR04P, HC-SR04, JSN-SR04T — up to 4), and Gas (MQ-2 analog/digital — up to 4, keeping ESP8266 `A0` single-analog safe), plus Buzzer, LCD Display, and Status Button.
+  * **Shared I2C Bus & 7-Bit Address Arbitration**: Connect multiple I2C devices (LCD1602/2004 `0x27`/`0x3F`, BME280 `0x76`/`0x77`, AHT20 `0x38`, SHT3x `0x44`/`0x45`, BH1750 `0x23`/`0x5C`) simultaneously on the same SDA/SCL bus with automatic next-free address selection and collision blocking.
 
 ### 2. Live GPIO Pin Allocation & Capability Matrix
 Both Web Dashboard and Companion App include real-time pin capability matrices:
@@ -203,9 +203,10 @@ Both Web Dashboard and Companion App include real-time pin capability matrices:
 | **Relay 2 Output** | `D5` | GPIO 14 | Active LOW trigger |
 | **Wall Switch 1** | `D7` | GPIO 13 | Toggle Rocker (Internal Pull-Up) |
 | **Wall Switch 2** | `D0` | GPIO 16 | Toggle Rocker (External Pull-Up) |
-| **Climate Sensor (DHT22)** | `D2` | GPIO 4 | Bidirectional 1-Wire |
-| **I2C SDA (LCD / BME280)** | `D1` | GPIO 5 | Shared I2C Bus |
-| **I2C SCL (LCD / BME280)** | `D2` | GPIO 4 | Shared I2C Bus |
+| **Climate Sensor** | `—` | Disabled (`255`) | Add I2C (`BME280`/`AHT20`/`SHT3x`) on shared `D2`/`D1` or 1-Wire DHT in Custom DIY |
+| **I2C SDA (LCD / Sensors)** | `D2` | GPIO 4 | Shared I2C Bus |
+| **I2C SCL (LCD / Sensors)** | `D1` | GPIO 5 | Shared I2C Bus |
+| **Acoustic Buzzer** | `D4` | GPIO 2 | Software PWM / Active LOW |
 | **Gas Sensor (MQ-2)** | `A0` | ADC0 / GPIO 17 | Analog Gas Reading (`0`–`1023`) |
 | **Multi-Button** | `D3` | GPIO 0 | Pull-up Button / AP Reset |
 
@@ -234,21 +235,21 @@ The backup & restore subsystem guarantees complete data preservation and cross-a
 
 ## Pre-Compiled Binaries & Release APKs
 
-All pre-compiled firmware binaries and mobile application packages are included directly in [`binaries/`](file:///p:/app/SmartHome/binaries):
+All pre-compiled firmware binaries and mobile application packages are included directly in [`binaries/`](binaries/):
 
 ### 1. Embedded Firmware Binaries
 | Board | File Path | Usage |
 |:---|:---|:---|
-| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](file:///p:/app/SmartHome/binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (768 KB) |
-| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](file:///p:/app/SmartHome/binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.55 MB) |
-| **ESP32 (Full Flash)** | [`binaries/esp32/SmartHome_ESP32_merged_0x0.bin`](file:///p:/app/SmartHome/binaries/esp32/SmartHome_ESP32_merged_0x0.bin) | Serial flasher at offset `0x0` (4.19 MB) |
+| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (824 KB) |
+| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.55 MB) |
+| **ESP32 (Full Flash)** | [`binaries/esp32/SmartHome_ESP32_merged_0x0.bin`](binaries/esp32/SmartHome_ESP32_merged_0x0.bin) | Serial flasher at offset `0x0` (4.00 MB) |
 
 ### 2. Flutter Companion App Release APKs
 | Target Architecture | File Path | Size | Device Compatibility |
 |:---|:---|:---:|:---|
-| **ARM 64-bit** | [`binaries/app/app-arm64-v8a-release.apk`](file:///p:/app/SmartHome/binaries/app/app-arm64-v8a-release.apk) | **20.1 MB** | **All modern Android phones** (Samsung, Pixel, OnePlus, Xiaomi) |
-| **ARM 32-bit** | [`binaries/app/app-armeabi-v7a-release.apk`](file:///p:/app/SmartHome/binaries/app/app-armeabi-v7a-release.apk) | **17.6 MB** | Older 32-bit Android phones |
-| **x86_64** | [`binaries/app/app-x86_64-release.apk`](file:///p:/app/SmartHome/binaries/app/app-x86_64-release.apk) | **21.6 MB** | Android Emulators & ChromeOS |
+| **ARM 64-bit** | [`binaries/app/app-arm64-v8a-release.apk`](binaries/app/app-arm64-v8a-release.apk) | **21.1 MB** | **All modern Android phones** (Samsung, Pixel, OnePlus, Xiaomi) |
+| **ARM 32-bit** | [`binaries/app/app-armeabi-v7a-release.apk`](binaries/app/app-armeabi-v7a-release.apk) | **18.8 MB** | Older 32-bit Android phones |
+| **x86_64** | [`binaries/app/app-x86_64-release.apk`](binaries/app/app-x86_64-release.apk) | **22.5 MB** | Android Emulators & ChromeOS |
 
 ---
 
@@ -278,7 +279,7 @@ All pre-compiled firmware binaries and mobile application packages are included 
 
 ## Flutter Companion App
 
-The Flutter companion app (`P:\app\SmartHome\app`) provides unified control over all ESP8266 and ESP32 controllers on your local network:
+The Flutter companion app (`app/`) provides unified control over all ESP8266 and ESP32 controllers on your local network:
 
 * **Radar Discovery**: Automatically detects online controllers via UDP broadcasts and mDNS without manual IP configuration. Displays Amber badges for ESP8266 and Cyan badges for ESP32.
 * **Architecture-Aware Hardware Editor**: Adapts pin dropdowns and preset templates dynamically based on whether the selected controller is ESP8266 or ESP32.
@@ -352,7 +353,7 @@ sequenceDiagram
 ## Troubleshooting
 
 ### "Invalid JSON" error when saving settings on ESP8266
-This was caused by TCP MSS body fragmentation in older builds. Flash the latest firmware binary ([`binaries/esp8266/SmartHome_ESP8266.bin`](file:///p:/app/SmartHome/binaries/esp8266/SmartHome_ESP8266.bin)) via `/update` which reassembles fragmented TCP packets seamlessly.
+This was caused by TCP MSS body fragmentation in older builds. Flash the latest firmware binary ([`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin)) via `/update` which reassembles fragmented TCP packets seamlessly.
 
 ### Captive portal does not open automatically
 Manually navigate to `http://192.168.4.1` in your browser while connected to the controller's Wi-Fi access point.
@@ -376,13 +377,13 @@ SmartHome/
 ├── WebServerManager.h / .cpp      # REST API endpoints, RBAC tiers, TCP reassembly, rate limiter
 ├── WebSocketManager.h / .cpp      # Real-time WebSocket event broadcaster
 ├── RelayManager.h / .cpp          # Multi-channel relay control, polarity, quick timers
-├── SensorManager.h / .cpp         # DHT22, BME280, MQ-2, DS18B20 sensor telemetry engine
+├── SensorManager.h / .cpp         # DHT11/22, BME280/AHT20/SHT3x, BH1750, PIR/LD2410, DS18B20, HC-SR04/JSN-SR04T, MQ-2
 ├── HardwareManager.h / .cpp       # Dynamic GPIO template manager and pin safety catalogs
 ├── StorageManager.h / .cpp        # Decoupled wear-leveled NVS & LittleFS storage
 ├── OTAManager.h / .cpp            # Zero-brick dual-partition rollback and Web OTA manager
 ├── WifiManager.h / .cpp           # Multi-AP Wi-Fi manager and captive portal
 ├── MqttManager.h / .cpp           # Home Assistant MQTT auto-discovery client
-├── LCDManager.h / .cpp            # 16x2 I2C LCD screen auto-rotation and alert display
+├── LCDManager.h / .cpp            # 16x2 / 20x4 I2C LCD screen auto-rotation and alert display
 ├── BuzzerManager.h / .cpp         # Acoustic alert patterns (LEDC PWM on ESP32, PWM on ESP8266)
 ├── ButtonManager.h / .cpp         # Multi-function button hardware debounce handler
 ├── EventLogger.h / .cpp           # Circular memory-buffered diagnostic event logger
@@ -390,15 +391,16 @@ SmartHome/
 ├── TimeManager.h / .cpp           # SNTP network clock and DS3231 RTC fallback
 ├── AlarmScheduler.h / .cpp        # Scheduled calendar and delay event manager
 ├── RuleManager.h / .cpp           # Condition-action sensor automation engine
-├── min_spiffs.csv                 # 4MB Dual-partition OTA partition table for ESP32
+├── CHANGELOG.md                   # Release notes and version history
+├── asset/                         # Project icon and branding assets
 ├── binaries/                      # Ready-to-flash binaries & release APKs
-│   ├── esp8266/                   # Compiled SmartHome_ESP8266.bin for Web OTA
-│   ├── esp32/                     # Compiled SmartHome_ESP32.bin & merged 0x0 binary
+│   ├── esp8266/                   # Compiled SmartHome_ESP8266.bin & SmartHome.ino.bin for Web OTA
+│   ├── esp32/                     # Compiled SmartHome_ESP32.bin, bootloader, partitions & merged 0x0 binary
 │   └── app/                       # Release APKs (arm64-v8a, armeabi-v7a, x86_64)
 └── app/                           # Flutter cross-platform companion app
     ├── pubspec.yaml               # Flutter dependencies and assets
     ├── lib/                       # Dart application source code
-    └── test/                      # Automated unit and widget test suite (35 tests)
+    └── test/                      # Automated unit and widget test suite (55 tests)
 ```
 
 ---

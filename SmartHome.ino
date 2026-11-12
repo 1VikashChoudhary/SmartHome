@@ -105,31 +105,9 @@ String wsDataProvider() {
     doc["datetime"] = timeMgr.getFormattedDateTime();
     doc["free_heap"] = diag.getFreeHeap();
 
-    // Sensors
-    doc["temperature"] = serialized(String(sensorMgr.getTemperature(), 1));
-    doc["humidity"] = serialized(String(sensorMgr.getHumidity(), 1));
-    doc["pressure"] = serialized(String(sensorMgr.getPressure(), 1));
-    doc["pressure_enabled"] = sensorMgr.hasBarometer();
-    doc["dht_fault"] = sensorMgr.isDHTFault();
-    doc["temp_threshold"] = sensorMgr.getTempAlarmThreshold();
-    doc["lux"] = serialized(String(sensorMgr.getLux(), 1));
-    doc["lux_enabled"] = sensorMgr.isLuxEnabled();
-    doc["motion"] = sensorMgr.isMotionDetected();
-    doc["motion_age_s"] = sensorMgr.getMotionAgeSeconds();
-    doc["motion_enabled"] = sensorMgr.isMotionEnabled();
-    doc["probe_temp"] = serialized(String(sensorMgr.getProbeTemperature(), 1));
-    doc["probe_fault"] = sensorMgr.isProbeFault();
-    doc["probe_enabled"] = sensorMgr.isProbeEnabled();
-    doc["distance_cm"] = serialized(String(sensorMgr.getDistanceCm(), 1));
-    doc["tank_level_pct"] = sensorMgr.getTankLevelPercent();
-    doc["tank_enabled"] = sensorMgr.isUltrasonicEnabled();
-    doc["gas_raw"] = sensorMgr.getMQ2Raw();
-    doc["gas_percent"] = sensorMgr.getMQ2Percent();
-    doc["gas_max"] = MQ2_ADC_MAX;
-    doc["gas_alarm"] = sensorMgr.isMQ2Alarm();
-    doc["gas_enabled"] = sensorMgr.isMQ2Enabled();
-    doc["gas_threshold"] = sensorMgr.getMQ2Threshold();
-    doc["gas_warming"] = sensorMgr.isMQ2Warming();
+    // Sensors (primary summary + multi-instance telemetry arrays)
+    JsonObject statusObj = doc.as<JsonObject>();
+    sensorMgr.appendStatusJson(statusObj);
 
     // Relays
     JsonArray relays = doc["relays"].to<JsonArray>();
@@ -153,13 +131,21 @@ String wsDataProvider() {
 void onAlarmAction(AlarmAction action, uint8_t relay) {
     switch (action) {
         case ACTION_RELAY_ON:
-            if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, true);
+            if (relay == 0xFF || relay == 255) relayMgr.allOn();
+            else if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, true);
             break;
         case ACTION_RELAY_OFF:
-            if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, false);
+            if (relay == 0xFF || relay == 255) relayMgr.allOff();
+            else if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, false);
             break;
         case ACTION_RELAY_TOGGLE:
-            if (relay < relayMgr.getRelayCount()) relayMgr.toggle(relay);
+            if (relay == 0xFF || relay == 255) {
+                for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
+                    if (relayMgr.isChannelEnabled(i)) relayMgr.toggle(i);
+                }
+            } else if (relay < relayMgr.getRelayCount()) {
+                relayMgr.toggle(relay);
+            }
             break;
         case ACTION_BUZZER:
             buzzerMgr.startAlarm(BUZZER_ALARM_SCHEDULED);
@@ -183,33 +169,50 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
             case ALARM_TYPE_GAS:
                 buzzerMgr.startAlarm(BUZZER_ALARM_GAS);
                 lcdMgr.showAlarm(LCD_ALARM_GAS);
-                logger.logCritical("Sensor", "GAS ALARM triggered!");
+                logger.logCritical("Sensor", F("GAS ALARM triggered!"));
                 wsMgr.broadcastAlarm("gas", true);
                 break;
             case ALARM_TYPE_TEMP:
                 buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
                 lcdMgr.showAlarm(LCD_ALARM_TEMP);
-                logger.logCritical("Sensor", "HIGH TEMPERATURE alarm!");
+                logger.logCritical("Sensor", F("HIGH TEMPERATURE alarm!"));
                 wsMgr.broadcastAlarm("temperature", true);
                 break;
             case ALARM_TYPE_SENSOR_FAULT:
                 buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
-                logger.logError("Sensor", "DHT22 sensor fault detected");
+                logger.logError("Sensor", F("DHT22 sensor fault detected"));
                 wsMgr.broadcastAlarm("sensor_fault", true);
                 // Activate failsafe relays
                 relayMgr.activateFailsafe();
                 break;
         }
     } else {
-        // Alarm cleared
-        buzzerMgr.stopAlarm();
-        lcdMgr.clearAlarm();
+        // Alarm cleared — preserve any other concurrent active alarm
+        if (sensorMgr.isMQ2Alarm()) {
+            if (!buzzerMgr.isAlarming() || buzzerMgr.getActiveAlarmType() != BUZZER_ALARM_GAS) {
+                buzzerMgr.startAlarm(BUZZER_ALARM_GAS);
+            }
+            lcdMgr.showAlarm(LCD_ALARM_GAS);
+        } else if (sensorMgr.isTempAlarm()) {
+            if (!buzzerMgr.isAlarming() || buzzerMgr.getActiveAlarmType() != BUZZER_ALARM_TEMP) {
+                buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
+            }
+            lcdMgr.showAlarm(LCD_ALARM_TEMP);
+        } else if (sensorMgr.isDHTFault()) {
+            if (!buzzerMgr.isAlarming() || buzzerMgr.getActiveAlarmType() != BUZZER_ALARM_FAULT) {
+                buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
+            }
+            lcdMgr.clearAlarm();
+        } else {
+            buzzerMgr.stopAlarm();
+            lcdMgr.clearAlarm();
+        }
         wsMgr.broadcastAlarm(
             alarmType == ALARM_TYPE_GAS ? "gas" :
             alarmType == ALARM_TYPE_TEMP ? "temperature" : "sensor_fault",
             false
         );
-        logger.logInfo("Sensor", "Alarm cleared");
+        logger.logInfo("Sensor", F("Alarm cleared"));
     }
 }
 
@@ -249,7 +252,7 @@ void onWallSwitchAction(uint8_t index, uint8_t action) {
         relayMgr.toggle(index);
     }
     relayMgr.updateSwitchState(index);
-    Serial.printf("[Main] Wall switch %d action %d → %s\n",
+    SERIAL_PRINTF("[Main] Wall switch %d action %d → %s\n",
                   index + 1, action, relayMgr.getState(index) ? "ON" : "OFF");
 }
 
@@ -264,7 +267,7 @@ void onWiFiConnect(bool connected) {
     if (connected) {
         logger.logInfo("WiFi", "Connected to " + wifiMgr.getSSID() + " (" + wifiMgr.getIP() + ")");
     } else {
-        logger.logWarning("WiFi", "Disconnected");
+        logger.logWarning("WiFi", F("Disconnected"));
     }
 }
 
@@ -277,7 +280,7 @@ void onMultiButtonEvent(uint8_t event) {
     if (alarmActive) {
         if (event == BUTTON_EVENT_DOWN) {
             buzzerMgr.mute();
-            logger.logInfo("Button", "Buzzer muted via multi-button");
+            logger.logInfo("Button", F("Buzzer muted via multi-button"));
             wsMgr.broadcastToast("Buzzer muted for 5 minutes", "info");
         }
         return;
@@ -310,13 +313,13 @@ void onMultiButtonEvent(uint8_t event) {
 
         case BUTTON_EVENT_RELEASE_WIFI:
             lcdMgr.clearAlarm();
-            logger.logWarning("Button", "WiFi reset via button");
+            logger.logWarning("Button", F("WiFi reset via button"));
             wifiMgr.resetWiFi();
             break;
 
         case BUTTON_EVENT_RELEASE_FACT:
             lcdMgr.clearAlarm();
-            logger.logCritical("Button", "Factory reset via button");
+            logger.logCritical("Button", F("Factory reset via button"));
             logger.persistNow();
             storage.factoryReset();
             ESP.restart();
@@ -324,23 +327,26 @@ void onMultiButtonEvent(uint8_t event) {
 
         case BUTTON_EVENT_RELEASE_CANCEL:
             lcdMgr.clearAlarm();
-            logger.logInfo("Button", "Reset cancelled");
+            logger.logInfo("Button", F("Reset cancelled"));
             wsMgr.broadcastToast("Reset cancelled", "info");
             break;
 
         case BUTTON_EVENT_RELEASE_LONG:
             lcdMgr.clearAlarm();
             lcdMgr.setBacklight(!lcdMgr.getBacklight());
-            logger.logInfo("Button", "LCD Backlight toggled via multi-button");
+            logger.logInfo("Button", F("LCD Backlight toggled via multi-button"));
             break;
     }
 }
+
+static int g_lastOtaLcdPct = -1;
 
 // ============================================================================
 // OTA callbacks
 // ============================================================================
 void onOTAStart() {
-    logger.logInfo("OTA", "Update started");
+    g_lastOtaLcdPct = -1;
+    logger.logInfo("OTA", F("Update started"));
     // Suspend competing network activity before OTA takes the socket
     mqttMgr.suspend();
     wsMgr.disconnectAll();   // Actively close WS connections first
@@ -350,16 +356,17 @@ void onOTAStart() {
 }
 
 void onOTAProgress(int progress, int total) {
+    if (total <= 0) return;
     int pct = (progress * 100) / total;
-    static int lastLcdPct = -1;
-    if (pct >= lastLcdPct + 10 || pct == 100) {
-        lastLcdPct = pct;
+    if (pct >= g_lastOtaLcdPct + 10 || pct == 100) {
+        g_lastOtaLcdPct = pct;
         lcdMgr.showOTAProgress(pct);
     }
 }
 
 void onOTAEnd() {
-    logger.logInfo("OTA", "Update complete, rebooting");
+    g_lastOtaLcdPct = -1;
+    logger.logInfo("OTA", F("Update complete, rebooting"));
     // Note: For HTTP OTA, we do NOT resume MQTT/WS/Storage here because:
     // 1. The device is about to reboot (Ticker scheduled in WebServerManager)
     // 2. Resuming network services could generate traffic that competes with
@@ -370,6 +377,7 @@ void onOTAEnd() {
 }
 
 void onOTAError(const String& error) {
+    g_lastOtaLcdPct = -1;
     logger.logError("OTA", "Update failed: " + error);
     mqttMgr.resume();
     wsMgr.setEnabled(true);
@@ -386,8 +394,8 @@ void setup() {
     while (!Serial && millis() < 2000) {} // Wait up to 2s for serial
     Serial.println();
     Serial.println(F("========================================"));
-    Serial.printf("  %s v%s\n", FW_NAME, FW_VERSION);
-    Serial.printf("  Build: %s %s\n", FW_BUILD_DATE, FW_BUILD_TIME);
+    SERIAL_PRINTF("  %s v%s\n", FW_NAME, FW_VERSION);
+    SERIAL_PRINTF("  Build: %s %s\n", FW_BUILD_DATE, FW_BUILD_TIME);
     Serial.println(F("========================================"));
 
     // --- Watchdog ---
@@ -507,9 +515,9 @@ void setup() {
     logger.logInfo("System", "Boot complete. Free heap: " + String(diag.getFreeHeap()));
 
     Serial.println(F("========================================"));
-    Serial.printf("  Boot complete in %lu ms\n", millis());
-    Serial.printf("  Free Heap: %u bytes\n", ESP.getFreeHeap());
-    Serial.printf("  IP: %s\n", wifiMgr.getIP().c_str());
+    SERIAL_PRINTF("  Boot complete in %lu ms\n", millis());
+    SERIAL_PRINTF("  Free Heap: %lu bytes\n", (unsigned long)ESP.getFreeHeap());
+    SERIAL_PRINTF("  IP: %s\n", wifiMgr.getIP().c_str());
     Serial.println(F("========================================"));
 }
 
@@ -548,13 +556,7 @@ void loop() {
     relayMgr.loop();        // Auto timers, wall switch flags, state persistence
     buttonMgr.loop();       // Debounce + press detection
     alarmSched.loop();      // Scheduled alarm check
-    ruleMgr.loop(sensorMgr.getTemperature(), sensorMgr.getHumidity(), sensorMgr.isDHTFault(),
-                 sensorMgr.getMQ2Raw(), sensorMgr.isMQ2Warming(),
-                 sensorMgr.isLuxEnabled() ? sensorMgr.getLux() : -1.0f,
-                 sensorMgr.getProbeTemperature(),
-                 sensorMgr.isProbeFault() || !sensorMgr.isProbeEnabled(),
-                 sensorMgr.isUltrasonicEnabled() ? sensorMgr.getTankLevelPercent() : -1,
-                 relayMgr);
+    ruleMgr.loop(sensorMgr, relayMgr);
     mqttMgr.loop();         // MQTT reconnect
     lcdMgr.loop();          // Display update + page rotation
     logger.loop();          // Periodic persist + auto-clean
@@ -567,7 +569,8 @@ void loop() {
         lastLCDDataUpdate = millis();
 
         // Sensor data for LCD
-        lcdMgr.updateSensorData(sensorMgr.getTemperature(), sensorMgr.getHumidity(), sensorMgr.isDHTFault());
+        lcdMgr.updateSensorData(sensorMgr.getTemperature(), sensorMgr.getHumidity(),
+                                sensorMgr.isDHTFault(), sensorMgr.isDhtEnabled());
 
         // Relay states for LCD
         bool relayStates[MAX_RELAYS] = {false};
@@ -582,7 +585,7 @@ void loop() {
 
         // Gas data for LCD
         lcdMgr.updateGasData(sensorMgr.getMQ2Raw(), sensorMgr.getMQ2Threshold(),
-                             sensorMgr.isMQ2Alarm(), sensorMgr.isMQ2Warming());
+                             sensorMgr.isMQ2Alarm(), sensorMgr.isMQ2Warming(), sensorMgr.isMQ2Enabled());
 
         // MQTT + uptime for LCD
         lcdMgr.updateMqttStatus(mqttMgr.isConnected(), diag.getUptimeString());
@@ -590,17 +593,7 @@ void loop() {
 
     // --- Periodic MQTT sensor publish ---
     if (mqttMgr.isConnected()) {
-        mqttMgr.publishSensorData(
-            sensorMgr.getTemperature(),
-            sensorMgr.getHumidity(),
-            sensorMgr.getMQ2Raw(),
-            sensorMgr.isMQ2Alarm(),
-            sensorMgr.hasBarometer() ? sensorMgr.getPressure() : 0.0f,
-            sensorMgr.isLuxEnabled() ? sensorMgr.getLux() : -1.0f,
-            sensorMgr.isMotionDetected(),
-            sensorMgr.isProbeEnabled() ? sensorMgr.getProbeTemperature() : -127.0f,
-            sensorMgr.isUltrasonicEnabled() ? sensorMgr.getTankLevelPercent() : -1
-        );
+        mqttMgr.publishSensorData(sensorMgr);
     }
 
     // --- Handle deferred reboot ---

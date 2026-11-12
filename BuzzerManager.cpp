@@ -42,40 +42,44 @@ const uint16_t BuzzerManager::PATTERN_CANCEL[] = {100, 50, 100, 0};
 const uint8_t  BuzzerManager::PATTERN_CANCEL_LEN = 4;
 
 BuzzerManager::BuzzerManager()
-    : _storage(nullptr), _buzzerPin(PIN_BUZZER), _enabled(DEFAULT_BUZZER_ENABLED), _muted(false),
+    : _storage(nullptr), _buzzerPin(PIN_BUZZER), _hwAllowed(true), _enabled(DEFAULT_BUZZER_ENABLED), _muted(false),
       _alarming(false), _alarmType(0), _volume(BUZZER_DEFAULT_VOLUME),
       _muteStart(0), _toneOn(false), _patternStep(0), _stepStart(0) {}
 
 void BuzzerManager::begin(StorageManager& storage) {
     _storage = &storage;
     _buzzerPin = PIN_BUZZER;
+    _hwAllowed = (_buzzerPin != PIN_UNUSED);
 
     // Setup buzzer PWM
+    if (_hwAllowed) {
 #if defined(ESP8266)
-    pinMode(_buzzerPin, OUTPUT);
-    analogWriteFreq(BUZZER_DEFAULT_FREQ);
-    analogWrite(_buzzerPin, 0);
+        pinMode(_buzzerPin, OUTPUT);
+        analogWriteFreq(BUZZER_DEFAULT_FREQ);
+        analogWrite(_buzzerPin, 0);
 #elif ESP_ARDUINO_VERSION_MAJOR >= 3
-    ledcAttach(_buzzerPin, BUZZER_DEFAULT_FREQ, BUZZER_LEDC_RESOLUTION);
-    ledcWrite(_buzzerPin, 0); // Start silent
+        ledcAttach(_buzzerPin, BUZZER_DEFAULT_FREQ, BUZZER_LEDC_RESOLUTION);
+        ledcWrite(_buzzerPin, 0); // Start silent
 #else
-    ledcSetup(BUZZER_LEDC_CHANNEL, BUZZER_DEFAULT_FREQ, BUZZER_LEDC_RESOLUTION);
-    ledcAttachPin(_buzzerPin, BUZZER_LEDC_CHANNEL);
-    ledcWrite(BUZZER_LEDC_CHANNEL, 0); // Start silent
+        ledcSetup(BUZZER_LEDC_CHANNEL, BUZZER_DEFAULT_FREQ, BUZZER_LEDC_RESOLUTION);
+        ledcAttachPin(_buzzerPin, BUZZER_LEDC_CHANNEL);
+        ledcWrite(BUZZER_LEDC_CHANNEL, 0); // Start silent
 #endif
+    }
 
     loadConfig();
+    if (!_hwAllowed) _enabled = false;
 
-    Serial.printf("[Buzzer] Ready on GPIO %d, enabled: %s, volume: %d\n",
+    SERIAL_PRINTF("[Buzzer] Ready on GPIO %d, enabled: %s, volume: %d\n",
                   _buzzerPin, _enabled ? "yes" : "no", _volume);
 }
 
 void BuzzerManager::begin(StorageManager& storage, HardwareManager& hw) {
     _storage = &storage;
-    _enabled = hw.isBuzzerEnabled();
     _buzzerPin = hw.getBuzzerPin();
+    _hwAllowed = hw.isBuzzerEnabled() && (_buzzerPin != PIN_UNUSED);
 
-    if (_enabled && _buzzerPin != PIN_UNUSED) {
+    if (_hwAllowed) {
 #if defined(ESP8266)
         pinMode(_buzzerPin, OUTPUT);
         analogWriteFreq(BUZZER_DEFAULT_FREQ);
@@ -88,13 +92,15 @@ void BuzzerManager::begin(StorageManager& storage, HardwareManager& hw) {
         ledcAttachPin(_buzzerPin, BUZZER_LEDC_CHANNEL);
         ledcWrite(BUZZER_LEDC_CHANNEL, 0);
 #endif
-        Serial.printf("[Buzzer] Ready on GPIO %d, enabled: yes\n", _buzzerPin);
+        loadConfig();
+        SERIAL_PRINTF("[Buzzer] Ready on GPIO %d, enabled: %s, volume: %d\n",
+                      _buzzerPin, _enabled ? "yes" : "no", _volume);
     } else {
+        _buzzerPin = PIN_UNUSED;
+        loadConfig();
         _enabled = false;
         Serial.println(F("[Buzzer] Disabled in hardware profile"));
     }
-
-    loadConfig();
 }
 
 void BuzzerManager::loop() {
@@ -157,7 +163,7 @@ void BuzzerManager::startAlarm(uint8_t type) {
     // Start with tone ON
     toneOn();
 
-    Serial.printf("[Buzzer] Alarm started: type %d\n", type);
+    SERIAL_PRINTF("[Buzzer] Alarm started: type %d\n", type);
 }
 
 void BuzzerManager::stopAlarm() {
@@ -193,6 +199,12 @@ uint8_t BuzzerManager::getVolume() { return _volume; }
 uint8_t BuzzerManager::getActiveAlarmType() { return _alarmType; }
 
 void BuzzerManager::setEnabled(bool enabled) {
+    if (enabled && !_hwAllowed) {
+        _enabled = false;
+        stopAlarm();
+        saveConfig();
+        return;
+    }
     _enabled = enabled;
     if (!_enabled) stopAlarm();
     saveConfig();

@@ -17,7 +17,7 @@ void EventLogger::begin(StorageManager& storage) {
     loadFromStorage();
     _lastPersist = millis();
     _lastAutoClean = millis();
-    Serial.printf("[Logger] Initialized with %d entries\n", _count);
+    SERIAL_PRINTF("[Logger] Initialized with %d entries\n", _count);
 }
 
 void EventLogger::loop() {
@@ -49,7 +49,7 @@ void EventLogger::log(uint8_t level, const char* source, const String& message) 
     _dirty = true;
 
     // Also print to Serial
-    Serial.printf("[LOG][%s][%s] %s\n", levelToString(level), source, message.c_str());
+    SERIAL_PRINTF("[LOG][%s][%s] %s\n", levelToString(level), source, message.c_str());
 }
 
 void EventLogger::logInfo(const char* source, const String& message)     { log(LOG_INFO, source, message); }
@@ -119,9 +119,19 @@ String EventLogger::toCSV() {
         int idx = (start + i) % MAX_LOG_ENTRIES;
         const LogEntry& e = _entries[idx];
 
+        String src = String(e.source);
+        src.replace("\"", "\"\"");
+        src.replace("\r", " ");
+        src.replace("\n", " ");
+
+        String msg = String(e.message);
+        msg.replace("\"", "\"\"");
+        msg.replace("\r", " ");
+        msg.replace("\n", " ");
+
         csv += String(e.timestamp) + "," +
-               levelToString(e.level) + "," +
-               e.source + ",\"" + e.message + "\"\n";
+               levelToString(e.level) + ",\"" +
+               src + "\",\"" + msg + "\"\n";
     }
     return csv;
 }
@@ -131,13 +141,6 @@ void EventLogger::persistNow() {
 
     JsonDocument doc;
     JsonArray arr = doc["logs"].to<JsonArray>();
-
-    int start;
-    if (_count >= MAX_LOG_ENTRIES) {
-        start = _head;
-    } else {
-        start = 0;
-    }
 
     // Save last 100 entries max to keep file size manageable
     int saveCount = min((int)_count, 100);
@@ -198,7 +201,7 @@ void EventLogger::autoClean() {
 
     if (cleaned > 0) {
         _dirty = true;
-        Serial.printf("[Logger] Auto-cleaned %d old entries\n", cleaned);
+        SERIAL_PRINTF("[Logger] Auto-cleaned %d old entries\n", cleaned);
     }
 }
 
@@ -211,30 +214,20 @@ void EventLogger::loadFromStorage() {
     JsonArray arr = doc["logs"].as<JsonArray>();
     _head = 0;
     _count = 0;
+    memset(_entries, 0, sizeof(_entries));
 
     for (JsonObject obj : arr) {
-        if (_count >= MAX_LOG_ENTRIES) {
-            // Ring buffer full, overwrite oldest
-            _head = (_head + 1) % MAX_LOG_ENTRIES;
-        }
+        LogEntry& entry = _entries[_head];
+        entry.timestamp = obj["ts"] | 0;
+        entry.level = obj["lvl"] | 0;
+        strncpy(entry.source, obj["src"] | "???", sizeof(entry.source) - 1);
+        entry.source[sizeof(entry.source) - 1] = '\0';
+        strncpy(entry.message, obj["msg"] | "", sizeof(entry.message) - 1);
+        entry.message[sizeof(entry.message) - 1] = '\0';
 
-        int idx = (_head + _count) % MAX_LOG_ENTRIES;
-        if (_count < MAX_LOG_ENTRIES) {
-            idx = _count;
-        } else {
-            idx = _head;
-            _head = (_head + 1) % MAX_LOG_ENTRIES;
-        }
-
-        _entries[idx].timestamp = obj["ts"] | 0;
-        _entries[idx].level = obj["lvl"] | 0;
-        strncpy(_entries[idx].source, obj["src"] | "???", sizeof(_entries[idx].source) - 1);
-        strncpy(_entries[idx].message, obj["msg"] | "", sizeof(_entries[idx].message) - 1);
-
+        _head = (_head + 1) % MAX_LOG_ENTRIES;
         if (_count < MAX_LOG_ENTRIES) _count++;
     }
-
-    _head = _count % MAX_LOG_ENTRIES;
 }
 
 const char* EventLogger::levelToString(uint8_t level) {

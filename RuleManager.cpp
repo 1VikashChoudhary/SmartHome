@@ -5,6 +5,7 @@
  */
 
 #include "RuleManager.h"
+#include "SensorManager.h"
 
 RuleManager::RuleManager()
     : _storage(nullptr), _ruleCount(0), _lastCheck(0) {
@@ -15,11 +16,10 @@ void RuleManager::begin(StorageManager& storage) {
     _storage = &storage;
     loadRules();
     _lastCheck = millis();
-    Serial.printf("[Rule] Initialized with %d rule(s)\n", _ruleCount);
+    SERIAL_PRINTF("[Rule] Initialized with %d rule(s)\n", _ruleCount);
 }
 
-void RuleManager::loop(float temp, float hum, bool dhtFault, int gasRaw, bool gasWarming,
-                       float lux, float probeTemp, bool probeFault, int tankLevel, RelayManager& relayMgr) {
+void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
     unsigned long now = millis();
     if (now - _lastCheck < 1000) return; // Evaluate every 1 second
     _lastCheck = now;
@@ -28,15 +28,10 @@ void RuleManager::loop(float temp, float hum, bool dhtFault, int gasRaw, bool ga
         AutomationRule& r = _rules[i];
         if (!r.enabled) continue;
 
-        // Skip rules if sensor is currently in fault, unconfigured, or warming up
-        if ((r.sensor == RULE_SENSOR_TEMP || r.sensor == RULE_SENSOR_HUM) && dhtFault) continue;
-        if (r.sensor == RULE_SENSOR_GAS && gasWarming) continue;
-        if (r.sensor == RULE_SENSOR_PROBE_TEMP && (probeFault || probeTemp < -55.0f)) continue;
-        if (r.sensor == RULE_SENSOR_LUX && lux < 0.0f) continue;
-        if (r.sensor == RULE_SENSOR_TANK_LEVEL && tankLevel < 0) continue;
-
-        float val = getSensorValue(r.sensor, temp, hum, gasRaw, lux, probeTemp, tankLevel);
-        if (isnan(val)) continue;
+        float val = 0.0f;
+        if (!readSensorValue(sensorMgr, r.sensor, r.sensorIndex, val) || isnan(val)) {
+            continue;
+        }
 
         if (r.condition == RULE_COND_ABOVE) {
             if (!r.triggered) {
@@ -48,15 +43,15 @@ void RuleManager::loop(float temp, float hum, bool dhtFault, int gasRaw, bool ga
                     } else if (r.targetRelay < MAX_RELAYS) {
                         relayMgr.setState(r.targetRelay, state);
                     }
-                    Serial.printf("[Rule] Fired rule %d ('%s'): val=%.1f >= th=%.1f -> Relay %d %s\n",
-                                  r.id, r.name, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
+                    SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f >= th=%.1f -> Relay %d %s\n",
+                                  r.id, r.name, (int)r.sensorIndex + 1, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
                 }
             } else {
                 // Anti-flapping hysteresis to reset latch
                 float resetTh = r.threshold - r.hysteresis;
                 if (val < resetTh) {
                     r.triggered = false;
-                    Serial.printf("[Rule] Rearmed rule %d ('%s'): val=%.1f < reset=%.1f\n",
+                    SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f < reset=%.1f\n",
                                   r.id, r.name, val, resetTh);
                 }
             }
@@ -70,15 +65,15 @@ void RuleManager::loop(float temp, float hum, bool dhtFault, int gasRaw, bool ga
                     } else if (r.targetRelay < MAX_RELAYS) {
                         relayMgr.setState(r.targetRelay, state);
                     }
-                    Serial.printf("[Rule] Fired rule %d ('%s'): val=%.1f <= th=%.1f -> Relay %d %s\n",
-                                  r.id, r.name, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
+                    SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f <= th=%.1f -> Relay %d %s\n",
+                                  r.id, r.name, (int)r.sensorIndex + 1, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
                 }
             } else {
                 // Anti-flapping hysteresis to reset latch
                 float resetTh = r.threshold + r.hysteresis;
                 if (val > resetTh) {
                     r.triggered = false;
-                    Serial.printf("[Rule] Rearmed rule %d ('%s'): val=%.1f > reset=%.1f\n",
+                    SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f > reset=%.1f\n",
                                   r.id, r.name, val, resetTh);
                 }
             }
@@ -86,16 +81,41 @@ void RuleManager::loop(float temp, float hum, bool dhtFault, int gasRaw, bool ga
     }
 }
 
-float RuleManager::getSensorValue(RuleSensorType sensor, float temp, float hum, int gasRaw,
-                                  float lux, float probeTemp, int tankLevel) {
+bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType sensor, uint8_t idx, float& outVal) {
     switch (sensor) {
-        case RULE_SENSOR_TEMP:       return temp;
-        case RULE_SENSOR_HUM:        return hum;
-        case RULE_SENSOR_GAS:        return (float)gasRaw;
-        case RULE_SENSOR_LUX:        return lux;
-        case RULE_SENSOR_PROBE_TEMP: return probeTemp;
-        case RULE_SENSOR_TANK_LEVEL: return (float)tankLevel;
-        default:                     return 0.0f;
+        case RULE_SENSOR_TEMP:
+            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx)) return false;
+            outVal = sensorMgr.getTemperatureAt(idx);
+            return true;
+        case RULE_SENSOR_HUM:
+            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx)) return false;
+            outVal = sensorMgr.getHumidityAt(idx);
+            return true;
+        case RULE_SENSOR_GAS:
+            if (!sensorMgr.isMq2ActiveAt(idx) || sensorMgr.isMQ2Warming()) return false;
+            outVal = (float)sensorMgr.getMQ2RawAt(idx);
+            return true;
+        case RULE_SENSOR_LUX:
+            if (!sensorMgr.isLightActiveAt(idx)) return false;
+            outVal = sensorMgr.getLuxAt(idx);
+            return true;
+        case RULE_SENSOR_PROBE_TEMP: {
+            if (!sensorMgr.isProbeActiveAt(idx) || sensorMgr.isProbeFaultAt(idx)) return false;
+            float p = sensorMgr.getProbeTemperatureAt(idx);
+            if (p < -55.0f) return false;
+            outVal = p;
+            return true;
+        }
+        case RULE_SENSOR_TANK_LEVEL:
+            if (!sensorMgr.isUltrasonicActiveAt(idx)) return false;
+            outVal = (float)sensorMgr.getTankLevelPercentAt(idx);
+            return true;
+        case RULE_SENSOR_MOTION:
+            if (!sensorMgr.isMotionActiveAt(idx)) return false;
+            outVal = sensorMgr.isMotionDetectedAt(idx) ? 1.0f : 0.0f;
+            return true;
+        default:
+            return false;
     }
 }
 
@@ -191,6 +211,7 @@ void RuleManager::toJson(JsonArray& arr) {
         obj["en"]     = r.enabled;
         obj["name"]   = r.name;
         obj["sensor"] = (uint8_t)r.sensor;
+        obj["s_idx"]  = r.sensorIndex;
         obj["cond"]   = (uint8_t)r.condition;
         obj["th"]     = r.threshold;
         obj["hyst"]   = r.hysteresis;
@@ -207,6 +228,8 @@ bool RuleManager::fromJson(const JsonObject& obj, AutomationRule& rule) {
     strncpy(rule.name, nm, sizeof(rule.name) - 1);
     rule.name[sizeof(rule.name) - 1] = '\0';
     rule.sensor      = (RuleSensorType)(uint8_t)(obj["sensor"] | 0);
+    uint8_t sIdx     = obj.containsKey("s_idx") ? (uint8_t)(obj["s_idx"] | 0) : (uint8_t)(obj["sensor_index"] | 0);
+    rule.sensorIndex = sIdx;
     rule.condition   = (RuleCondition)(uint8_t)(obj["cond"] | 0);
     rule.threshold   = obj["th"] | 0.0f;
     float defaultHyst = 0.5f;
@@ -214,13 +237,26 @@ bool RuleManager::fromJson(const JsonObject& obj, AutomationRule& rule) {
     else if (rule.sensor == RULE_SENSOR_GAS) defaultHyst = 30.0f;
     else if (rule.sensor == RULE_SENSOR_LUX) defaultHyst = 15.0f;
     else if (rule.sensor == RULE_SENSOR_TANK_LEVEL) defaultHyst = 3.0f;
+    else if (rule.sensor == RULE_SENSOR_MOTION) defaultHyst = 0.5f;
     rule.hysteresis  = obj["hyst"] | defaultHyst;
     rule.targetRelay = obj["relay"] | 0;
     rule.action      = (RuleActionType)(uint8_t)(obj["act"] | 0);
     rule.triggered   = false;
 
     // Validate
-    if (rule.sensor > RULE_SENSOR_TANK_LEVEL) return false;
+    if (rule.sensor > RULE_SENSOR_MOTION) return false;
+    uint8_t maxIdx = 1;
+    switch (rule.sensor) {
+        case RULE_SENSOR_TEMP:
+        case RULE_SENSOR_HUM:        maxIdx = MAX_CLIMATE_SENSORS; break;
+        case RULE_SENSOR_GAS:        maxIdx = MAX_MQ2_SENSORS; break;
+        case RULE_SENSOR_LUX:        maxIdx = MAX_LIGHT_SENSORS; break;
+        case RULE_SENSOR_PROBE_TEMP: maxIdx = MAX_PROBE_SENSORS; break;
+        case RULE_SENSOR_TANK_LEVEL: maxIdx = MAX_ULTRASONIC_SENSORS; break;
+        case RULE_SENSOR_MOTION:     maxIdx = MAX_MOTION_SENSORS; break;
+        default: break;
+    }
+    if (rule.sensorIndex >= maxIdx) return false;
     if (rule.condition > RULE_COND_BELOW) return false;
     if (rule.action > RULE_ACT_RELAY_OFF) return false;
     if (rule.targetRelay >= MAX_RELAYS && rule.targetRelay != 0xFF) return false;

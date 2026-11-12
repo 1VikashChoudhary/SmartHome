@@ -19,300 +19,517 @@
 #include "HardwareManager.h"
 #include <Wire.h>
 
-// Static DS18B20 state machine
-static uint8_t s_ds18State = 0; // 0 = idle/due for convert, 1 = waiting for conversion
-static unsigned long s_ds18ConvertStart = 0;
-
 SensorManager::SensorManager()
-    : _storage(nullptr), _dht(PIN_DHT22, DHT_TYPE),
-      _dhtEnabled(true), _mq2AnalogPin(PIN_MQ2_ANALOG), _mq2DigitalPin(PIN_MQ2_DIGITAL),
-      _temperature(0), _humidity(0), _rawTemperature(0), _rawHumidity(0),
-      _tempOffset(DHT_TEMP_OFFSET_DEFAULT), _humOffset(DHT_HUM_OFFSET_DEFAULT),
+    : _storage(nullptr),
+      _bootTime(0),
       _tempAlarmThreshold(DHT_TEMP_ALARM_DEFAULT),
-      _dhtFault(false), _dhtFailCount(0), _tempAlarmActive(false),
-      _mq2Raw(0), _mq2Baseline(MQ2_BASELINE_DEFAULT),
-      _mq2Threshold(MQ2_DEFAULT_THRESHOLD),
-      _mq2AlarmActive(false), _mq2DigitalState(false), _mq2Enabled(true),
-      _bootTime(0), _lastDHTRead(0), _lastMQ2Read(0),
-      _lastEnvRead(0), _lastLuxRead(0),
-      _climateType(CLIMATE_NONE),
-      _bmeDetected(false), _bmpDetected(false), _ahtDetected(false), _shtDetected(false), _bh1750Detected(false),
-      _bmeAddr(0x76), _shtAddr(0x44),
-      _pressure(0.0f), _rawPressure(0.0f), _lux(0.0f),
-      _motionEnabled(false), _motionPin(PIN_UNUSED), _motionDetected(false), _lastMotionTime(0),
-      _probeEnabled(false), _probePin(PIN_UNUSED), _probeTemperature(-127.0f), _probeFault(false), _lastProbeRead(0),
-      _ultrasonicEnabled(false), _trigPin(PIN_UNUSED), _echoPin(PIN_UNUSED),
-      _tankDepthCm(150), _tankAirGapCm(15), _distanceCm(0.0f), _tankLevelPct(0), _lastUltrasonicRead(0),
-      _t_fine(0),
+      _climateCount(0),
+      _lightCount(0),
+      _motionCount(0),
+      _probeCount(0),
+      _ultrasonicCount(0),
+      _mq2Count(0),
+      _lastDHTRead(0),
+      _dhtPollCursor(0),
+      _lastEnvRead(0),
+      _envPollCursor(0),
+      _lastLuxRead(0),
+      _lastMQ2Read(0),
+      _lastUltrasonicRead(0),
+      _ultrasonicCursor(0),
+      _ds18State(0),
+      _ds18Cursor(0),
+      _ds18ConvertStart(0),
+      _lastProbeCycle(0),
       _alarmCallback(nullptr),
-      _prevTempAlarm(false), _prevMQ2Alarm(false), _prevSensorFault(false) {
-    memset(&_bmeCalib, 0, sizeof(_bmeCalib));
+      _prevTempAlarm(false),
+      _prevMQ2Alarm(false),
+      _prevSensorFault(false) {
+    memset(_climates, 0, sizeof(_climates));
+    memset(_lights, 0, sizeof(_lights));
+    memset(_motions, 0, sizeof(_motions));
+    memset(_probes, 0, sizeof(_probes));
+    memset(_ultrasonics, 0, sizeof(_ultrasonics));
+    memset(_mq2s, 0, sizeof(_mq2s));
+    for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
+        _climates[i].pin = PIN_UNUSED;
+        snprintf(_climates[i].label, sizeof(_climates[i].label), "Climate %u", (unsigned)(i + 1));
+    }
+    for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+        _mq2s[i].analogPin = PIN_UNUSED;
+        _mq2s[i].digitalPin = PIN_UNUSED;
+        _mq2s[i].baseline = MQ2_BASELINE_DEFAULT;
+        _mq2s[i].threshold = MQ2_DEFAULT_THRESHOLD;
+        snprintf(_mq2s[i].label, sizeof(_mq2s[i].label), "Gas %u", (unsigned)(i + 1));
+    }
+}
+
+SensorManager::~SensorManager() {
+    cleanup();
+}
+
+void SensorManager::cleanup() {
+    for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
+        if (_climates[i].dht) {
+            delete _climates[i].dht;
+            _climates[i].dht = nullptr;
+        }
+        if (_climates[i].bmeCalib) {
+            delete _climates[i].bmeCalib;
+            _climates[i].bmeCalib = nullptr;
+        }
+        _climates[i].enabled = false;
+        _climates[i].type = CLIMATE_NONE;
+        _climates[i].pin = PIN_UNUSED;
+        _climates[i].i2cAddr = 0;
+        _climates[i].i2cDetected = false;
+        _climates[i].bmpDetected = false;
+        _climates[i].temperature = 0;
+        _climates[i].humidity = 0;
+        _climates[i].rawTemperature = 0;
+        _climates[i].rawHumidity = 0;
+        _climates[i].pressure = 0;
+        _climates[i].rawPressure = 0;
+        _climates[i].tempOffset = DHT_TEMP_OFFSET_DEFAULT;
+        _climates[i].humOffset = DHT_HUM_OFFSET_DEFAULT;
+        _climates[i].fault = false;
+        _climates[i].failCount = 0;
+        _climates[i].tFine = 0;
+    }
+    memset(_lights, 0, sizeof(_lights));
+    memset(_motions, 0, sizeof(_motions));
+    memset(_probes, 0, sizeof(_probes));
+    memset(_ultrasonics, 0, sizeof(_ultrasonics));
+    for (uint8_t i = 0; i < MAX_MOTION_SENSORS; i++) _motions[i].pin = PIN_UNUSED;
+    for (uint8_t i = 0; i < MAX_PROBE_SENSORS; i++) {
+        _probes[i].pin = PIN_UNUSED;
+        _probes[i].temperature = -127.0f;
+    }
+    for (uint8_t i = 0; i < MAX_ULTRASONIC_SENSORS; i++) {
+        _ultrasonics[i].trigPin = PIN_UNUSED;
+        _ultrasonics[i].echoPin = PIN_UNUSED;
+        _ultrasonics[i].tankDepthCm = 150;
+        _ultrasonics[i].tankAirGapCm = 15;
+    }
+    for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+        _mq2s[i].hwAllowed = false;
+        _mq2s[i].enabled = false;
+        _mq2s[i].analogPin = PIN_UNUSED;
+        _mq2s[i].digitalPin = PIN_UNUSED;
+        _mq2s[i].raw = 0;
+        _mq2s[i].baseline = MQ2_BASELINE_DEFAULT;
+        _mq2s[i].threshold = MQ2_DEFAULT_THRESHOLD;
+        _mq2s[i].digitalState = false;
+        _mq2s[i].alarmActive = false;
+    }
+    _climateCount = 0;
+    _lightCount = 0;
+    _motionCount = 0;
+    _probeCount = 0;
+    _ultrasonicCount = 0;
+    _mq2Count = 0;
+    _ds18State = 0;
+    _ds18Cursor = 0;
+    _dhtPollCursor = 0;
+    _envPollCursor = 0;
+    _ultrasonicCursor = 0;
 }
 
 void SensorManager::begin(StorageManager& storage) {
+    cleanup();
     _storage = &storage;
     _bootTime = millis();
-    _dhtEnabled = true;
-    _mq2AnalogPin = PIN_MQ2_ANALOG;
-    _mq2DigitalPin = PIN_MQ2_DIGITAL;
 
-    _dht.begin();
-    pinMode(_mq2DigitalPin, INPUT);
+    if (PIN_DHT22 != PIN_UNUSED) {
+        _climateCount = 1;
+        _climates[0].enabled = true;
+        _climates[0].type = (DHT_TYPE == DHT11) ? CLIMATE_DHT11 : CLIMATE_DHT22;
+        _climates[0].pin = PIN_DHT22;
+        snprintf(_climates[0].label, sizeof(_climates[0].label), "Climate 1");
+        _climates[0].dht = new DHT(PIN_DHT22, DHT_TYPE);
+        _climates[0].dht->begin();
+    }
+
+    _mq2Count = 1;
+    _mq2s[0].analogPin = PIN_MQ2_ANALOG;
+    _mq2s[0].digitalPin = PIN_MQ2_DIGITAL;
+    _mq2s[0].hwAllowed = (_mq2s[0].analogPin != PIN_UNUSED || _mq2s[0].digitalPin != PIN_UNUSED);
+    _mq2s[0].enabled = _mq2s[0].hwAllowed;
+    if (_mq2s[0].digitalPin != PIN_UNUSED) pinMode(_mq2s[0].digitalPin, INPUT);
+
     loadCalibration();
+    if (!_mq2s[0].hwAllowed) _mq2s[0].enabled = false;
 
     Serial.println(F("[Sensor] Initialized (legacy defaults)"));
 }
 
 void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
+    cleanup();
     _storage = &storage;
     _bootTime = millis();
 
-    // 1. Climate Sensor Selection
-    _climateType = (uint8_t)hw.getDhtType();
-    // Ensure I2C bus is initialized if any I2C sensor is configured
-    // (guarantees operation even if LCD display is disabled in hardware profile)
-    if (_climateType >= CLIMATE_BME280 || hw.getLightType() == LIGHT_BH1750) {
-        if (hw.getI2cSdaPin() != PIN_UNUSED && hw.getI2cSclPin() != PIN_UNUSED) {
-            Wire.begin(hw.getI2cSdaPin(), hw.getI2cSclPin());
+    // Ensure I2C bus is initialized if any I2C sensor or LCD is configured
+    if ((hw.hasAnyI2cSensor() || hw.isLcdEnabled()) &&
+        hw.getI2cSdaPin() != PIN_UNUSED && hw.getI2cSclPin() != PIN_UNUSED) {
+        Wire.begin(hw.getI2cSdaPin(), hw.getI2cSclPin());
+    }
+
+    // 1. Climate Sensors (DHT11/22 + BME280/AHT20/SHT3X)
+    _climateCount = hw.getClimateCount();
+    if (_climateCount > MAX_CLIMATE_SENSORS) _climateCount = MAX_CLIMATE_SENSORS;
+
+    auto climateAddrClaimedByOther = [&](uint8_t selfIdx, uint8_t type, uint8_t addr) -> bool {
+        for (uint8_t j = 0; j < _climateCount; j++) {
+            if (j == selfIdx) continue;
+            const ClimateSensorConfig* oc = hw.getClimate(j);
+            if (!oc || oc->type != type) continue;
+            uint8_t oAddr = oc->i2cAddr ? oc->i2cAddr : HardwareManager::defaultI2cAddrForClimate(oc->type);
+            if (oAddr == addr || _climates[j].i2cAddr == addr) return true;
+        }
+        return false;
+    };
+
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        const ClimateSensorConfig* cfg = hw.getClimate(i);
+        if (!cfg) continue;
+        ClimateSlotState& s = _climates[i];
+        s.type = (uint8_t)cfg->type;
+        s.pin = cfg->pin;
+        s.i2cAddr = cfg->i2cAddr ? cfg->i2cAddr : HardwareManager::defaultI2cAddrForClimate(cfg->type);
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Climate", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+
+        if (cfg->type == CLIMATE_DHT11 || cfg->type == CLIMATE_DHT22) {
+            if (cfg->pin != PIN_UNUSED) {
+                uint8_t model = (cfg->type == CLIMATE_DHT11) ? DHT11 : DHT22;
+                s.dht = new DHT(cfg->pin, model);
+                s.dht->begin();
+                s.enabled = true;
+            }
+        } else if (cfg->type == CLIMATE_BME280) {
+            s.enabled = true;
+            if (!initBME280(s, s.i2cAddr)) {
+                uint8_t altAddr = (s.i2cAddr == 0x76) ? 0x77 : 0x76;
+                if (!climateAddrClaimedByOther(i, CLIMATE_BME280, altAddr) && initBME280(s, altAddr)) {
+                    // fallback succeeded
+                } else {
+                    s.fault = true;
+                    SERIAL_PRINTF("[Sensor] Climate %u BME280/BMP280 not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+                }
+            }
+        } else if (cfg->type == CLIMATE_AHT20) {
+            s.enabled = true;
+            if (!initAHT20(s, s.i2cAddr ? s.i2cAddr : 0x38)) {
+                s.fault = true;
+                SERIAL_PRINTF("[Sensor] Climate %u AHT20 not responding at 0x38\n", (unsigned)(i + 1));
+            }
+        } else if (cfg->type == CLIMATE_SHT3X) {
+            s.enabled = true;
+            if (!initSHT3x(s, s.i2cAddr)) {
+                uint8_t altAddr = (s.i2cAddr == 0x44) ? 0x45 : 0x44;
+                if (!climateAddrClaimedByOther(i, CLIMATE_SHT3X, altAddr) && initSHT3x(s, altAddr)) {
+                    // fallback succeeded
+                } else {
+                    s.fault = true;
+                    SERIAL_PRINTF("[Sensor] Climate %u SHT3x not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+                }
+            }
         }
     }
 
-    if (_climateType == CLIMATE_DHT11 || _climateType == CLIMATE_DHT22) {
-        if (hw.getDhtPin() != PIN_UNUSED) {
-            uint8_t dhtModel = (_climateType == CLIMATE_DHT11) ? DHT11 : DHT22;
-            _dht = DHT(hw.getDhtPin(), dhtModel);
-            _dht.begin();
-            _dhtEnabled = true;
-            _dhtFault = false;
-        }
-    } else if (_climateType == CLIMATE_BME280) {
-        _dhtEnabled = true;
-        _dhtFault = false;
-        if (!initBME280(0x76)) {
-            if (!initBME280(0x77)) {
-                _dhtFault = true;
-                Serial.println(F("[Sensor] BME280/BMP280 not responding at 0x76 or 0x77"));
-            }
-        }
-    } else if (_climateType == CLIMATE_AHT20) {
-        _dhtEnabled = true;
-        _dhtFault = false;
-        if (!initAHT20()) {
-            _dhtFault = true;
-            Serial.println(F("[Sensor] AHT20 not responding at 0x38"));
-        }
-    } else if (_climateType == CLIMATE_SHT3X) {
-        _dhtEnabled = true;
-        _dhtFault = false;
-        if (!initSHT3x(0x44)) {
-            if (!initSHT3x(0x45)) {
-                _dhtFault = true;
-                Serial.println(F("[Sensor] SHT3x not responding at 0x44 or 0x45"));
-            }
-        }
-    } else {
-        _dhtEnabled = false;
-        _dhtFault = false;
-        _temperature = 0;
-        _humidity = 0;
-        _rawTemperature = 0;
-        _rawHumidity = 0;
-    }
+    // 2. BH1750 Ambient Light Sensors
+    _lightCount = hw.getLightCount();
+    if (_lightCount > MAX_LIGHT_SENSORS) _lightCount = MAX_LIGHT_SENSORS;
 
-    // 2. BH1750 Ambient Light Sensor (Shared I2C bus)
-    if (hw.getLightType() == LIGHT_BH1750) {
-        if (initBH1750()) {
-            _bh1750Detected = true;
-            Serial.println(F("[Sensor] BH1750 Ambient Light sensor detected"));
+    auto lightAddrClaimedByOther = [&](uint8_t selfIdx, uint8_t addr) -> bool {
+        for (uint8_t j = 0; j < _lightCount; j++) {
+            if (j == selfIdx) continue;
+            const LightSensorConfig* ol = hw.getLight(j);
+            if (!ol || ol->type != LIGHT_BH1750) continue;
+            uint8_t oAddr = ol->i2cAddr ? ol->i2cAddr : 0x23;
+            if (oAddr == addr || _lights[j].i2cAddr == addr) return true;
+        }
+        return false;
+    };
+
+    for (uint8_t i = 0; i < _lightCount; i++) {
+        const LightSensorConfig* cfg = hw.getLight(i);
+        if (!cfg || cfg->type != LIGHT_BH1750) continue;
+        LightSlotState& s = _lights[i];
+        s.enabled = true;
+        s.i2cAddr = cfg->i2cAddr ? cfg->i2cAddr : 0x23;
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Light", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+        if (initBH1750(s, s.i2cAddr)) {
+            s.detected = true;
+            SERIAL_PRINTF("[Sensor] BH1750 #%u detected at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
         } else {
-            _bh1750Detected = false;
-            Serial.println(F("[Sensor] BH1750 not responding at 0x23 or 0x5C"));
+            uint8_t alt = (s.i2cAddr == 0x23) ? 0x5C : 0x23;
+            if (!lightAddrClaimedByOther(i, alt) && initBH1750(s, alt)) {
+                s.detected = true;
+                SERIAL_PRINTF("[Sensor] BH1750 #%u detected at fallback 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+            } else {
+                s.detected = false;
+                SERIAL_PRINTF("[Sensor] BH1750 #%u not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+            }
         }
-    } else {
-        _bh1750Detected = false;
-        _lux = 0.0f;
     }
 
-    // 3. Motion / Occupancy Sensor (PIR / Radar)
-    if (hw.getMotionType() != MOTION_NONE && hw.getMotionPin() != PIN_UNUSED) {
-        _motionEnabled = true;
-        _motionPin = hw.getMotionPin();
-        pinMode(_motionPin, INPUT);
-        _motionDetected = (digitalRead(_motionPin) == HIGH);
-        _lastMotionTime = _motionDetected ? millis() : 0;
-        Serial.printf("[Sensor] Motion Sensor configured on GPIO %d\n", _motionPin);
-    } else {
-        _motionEnabled = false;
-        _motionPin = PIN_UNUSED;
-        _motionDetected = false;
+    // 3. Motion / Occupancy Sensors
+    _motionCount = hw.getMotionCount();
+    if (_motionCount > MAX_MOTION_SENSORS) _motionCount = MAX_MOTION_SENSORS;
+    for (uint8_t i = 0; i < _motionCount; i++) {
+        const MotionSensorConfig* cfg = hw.getMotion(i);
+        if (!cfg || cfg->type == MOTION_NONE || cfg->pin == PIN_UNUSED) continue;
+        MotionSlotState& s = _motions[i];
+        s.enabled = true;
+        s.type = (uint8_t)cfg->type;
+        s.pin = cfg->pin;
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Motion", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+        pinMode(s.pin, INPUT);
+        s.detected = (digitalRead(s.pin) == HIGH);
+        s.lastMotionTime = s.detected ? _bootTime : 0;
+        SERIAL_PRINTF("[Sensor] Motion #%u on GPIO %d\n", (unsigned)(i + 1), s.pin);
     }
 
-    // 4. Submersible Water Temp Probe (DS18B20 1-Wire)
-    if (hw.getProbeType() == PROBE_DS18B20 && hw.getProbePin() != PIN_UNUSED) {
-        _probeEnabled = true;
-        _probePin = hw.getProbePin();
-        pinMode(_probePin, INPUT_PULLUP);
-        _probeTemperature = -127.0f;
-        _probeFault = false;
-        Serial.printf("[Sensor] DS18B20 Probe configured on GPIO %d\n", _probePin);
-    } else {
-        _probeEnabled = false;
-        _probePin = PIN_UNUSED;
+    // 4. Submersible Water Temp Probes (DS18B20)
+    _probeCount = hw.getProbeCount();
+    if (_probeCount > MAX_PROBE_SENSORS) _probeCount = MAX_PROBE_SENSORS;
+    for (uint8_t i = 0; i < _probeCount; i++) {
+        const ProbeSensorConfig* cfg = hw.getProbe(i);
+        if (!cfg || cfg->type != PROBE_DS18B20 || cfg->pin == PIN_UNUSED) continue;
+        ProbeSlotState& s = _probes[i];
+        s.enabled = true;
+        s.pin = cfg->pin;
+        s.temperature = -127.0f;
+        s.fault = false;
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Probe", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+        pinMode(s.pin, INPUT_PULLUP);
+        SERIAL_PRINTF("[Sensor] DS18B20 Probe #%u on GPIO %d\n", (unsigned)(i + 1), s.pin);
     }
 
-    // 5. Ultrasonic Distance & Water Tank Monitor
-    if (hw.getUltrasonicType() != ULTRASONIC_NONE) {
-        _ultrasonicEnabled = true;
-        _trigPin = hw.getTrigPin();
-        _echoPin = hw.getEchoPin();
-        _tankDepthCm = hw.getTankDepthCm();
-        _tankAirGapCm = hw.getTankAirGapCm();
-        if (_trigPin != PIN_UNUSED) {
-            pinMode(_trigPin, OUTPUT);
-            digitalWrite(_trigPin, LOW);
+    // 5. Ultrasonic Tank Level Sensors
+    _ultrasonicCount = hw.getUltrasonicCount();
+    if (_ultrasonicCount > MAX_ULTRASONIC_SENSORS) _ultrasonicCount = MAX_ULTRASONIC_SENSORS;
+    for (uint8_t i = 0; i < _ultrasonicCount; i++) {
+        const UltrasonicSensorConfig* cfg = hw.getUltrasonic(i);
+        if (!cfg || cfg->type == ULTRASONIC_NONE || cfg->trigPin == PIN_UNUSED || cfg->echoPin == PIN_UNUSED) continue;
+        UltrasonicSlotState& s = _ultrasonics[i];
+        s.enabled = true;
+        s.type = (uint8_t)cfg->type;
+        s.trigPin = cfg->trigPin;
+        s.echoPin = cfg->echoPin;
+        s.tankDepthCm = cfg->tankDepthCm;
+        s.tankAirGapCm = cfg->tankAirGapCm;
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Tank", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+        pinMode(s.trigPin, OUTPUT);
+        digitalWrite(s.trigPin, LOW);
+        pinMode(s.echoPin, INPUT);
+        SERIAL_PRINTF("[Sensor] Ultrasonic Tank #%u: Trig %d, Echo %d\n", (unsigned)(i + 1), s.trigPin, s.echoPin);
+    }
+
+    // 6. MQ-2 Gas Sensors
+    _mq2Count = hw.getMq2Count();
+    if (_mq2Count > MAX_MQ2_SENSORS) _mq2Count = MAX_MQ2_SENSORS;
+    for (uint8_t i = 0; i < _mq2Count; i++) {
+        const Mq2SensorConfig* cfg = hw.getMq2(i);
+        if (!cfg) continue;
+        Mq2SlotState& s = _mq2s[i];
+        s.analogPin = cfg->enabled ? cfg->analogPin : PIN_UNUSED;
+        s.digitalPin = cfg->enabled ? cfg->digitalPin : PIN_UNUSED;
+        s.hwAllowed = cfg->enabled && (s.analogPin != PIN_UNUSED || s.digitalPin != PIN_UNUSED);
+        s.enabled = s.hwAllowed;
+        strncpy(s.label, cfg->label[0] ? cfg->label : "Gas", sizeof(s.label) - 1);
+        s.label[sizeof(s.label) - 1] = '\0';
+        if (s.digitalPin != PIN_UNUSED) {
+            pinMode(s.digitalPin, INPUT);
         }
-        if (_echoPin != PIN_UNUSED) {
-            pinMode(_echoPin, INPUT);
-        }
-        Serial.printf("[Sensor] Ultrasonic Tank Sensor: Trig GPIO %d, Echo GPIO %d, Depth %d cm, Air Gap %d cm\n",
-                      _trigPin, _echoPin, _tankDepthCm, _tankAirGapCm);
-    } else {
-        _ultrasonicEnabled = false;
-    }
-
-    // 6. MQ-2 Gas & Smoke Sensor
-    _mq2Enabled = hw.isMq2Enabled();
-    _mq2AnalogPin = hw.getMq2AnalogPin();
-    _mq2DigitalPin = hw.getMq2DigitalPin();
-
-    if (_mq2DigitalPin != PIN_UNUSED) {
-        pinMode(_mq2DigitalPin, INPUT);
     }
 
     loadCalibration();
+    for (uint8_t i = 0; i < _mq2Count; i++) {
+        if (!_mq2s[i].hwAllowed) _mq2s[i].enabled = false;
+    }
 
-    Serial.println(F("[Sensor] Initialized with Hardware Profile"));
-    Serial.printf("  Climate: %d, MQ2: %s (A0: GPIO %d, D0: GPIO %d)\n",
-                  _climateType, _mq2Enabled ? "Enabled" : "Disabled", _mq2AnalogPin, _mq2DigitalPin);
+    SERIAL_PRINTF("[Sensor] Multi-sensor init: C=%d L=%d M=%d P=%d U=%d G=%d\n",
+                  _climateCount, _lightCount, _motionCount, _probeCount, _ultrasonicCount, _mq2Count);
 }
 
 void SensorManager::loop() {
     unsigned long now = millis();
 
-    // --- 1. DHT11 / DHT22 Climate Read (every 2.5 seconds) ---
-    if (_dhtEnabled && (_climateType == CLIMATE_DHT11 || _climateType == CLIMATE_DHT22)) {
-        if (now - _lastDHTRead >= DHT_READ_INTERVAL) {
+    // --- 1. DHT11 / DHT22 staggered round-robin ---
+    uint8_t dhtSlots = 0;
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        if (_climates[i].enabled && _climates[i].dht != nullptr) dhtSlots++;
+    }
+    if (dhtSlots > 0) {
+        unsigned long interval = DHT_READ_INTERVAL / dhtSlots;
+        if (interval < 600) interval = 600;
+        if (now - _lastDHTRead >= interval) {
             _lastDHTRead = now;
+            for (uint8_t step = 0; step < _climateCount; step++) {
+                uint8_t idx = (_dhtPollCursor + step) % _climateCount;
+                ClimateSlotState& s = _climates[idx];
+                if (!s.enabled || s.dht == nullptr) continue;
+                _dhtPollCursor = (idx + 1) % _climateCount;
 
-            float t = _dht.readTemperature();
-            float h = _dht.readHumidity();
-
-            if (isnan(t) || isnan(h)) {
-                _dhtFailCount++;
-                if (_dhtFailCount >= DHT_FAIL_THRESHOLD && !_dhtFault) {
-                    _dhtFault = true;
-                    Serial.println(F("[Sensor] DHT FAULT — consecutive read failures"));
+                float t = s.dht->readTemperature();
+                float h = s.dht->readHumidity();
+                if (isnan(t) || isnan(h)) {
+                    s.failCount++;
+                    if (s.failCount >= DHT_FAIL_THRESHOLD && !s.fault) {
+                        s.fault = true;
+                        SERIAL_PRINTF("[Sensor] Climate #%u DHT FAULT\n", (unsigned)(idx + 1));
+                    }
+                } else {
+                    s.failCount = 0;
+                    if (s.fault) {
+                        s.fault = false;
+                        SERIAL_PRINTF("[Sensor] Climate #%u DHT recovered\n", (unsigned)(idx + 1));
+                    }
+                    s.rawTemperature = t;
+                    s.rawHumidity = h;
+                    s.temperature = t + s.tempOffset;
+                    s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
                 }
-            } else {
-                _dhtFailCount = 0;
-                if (_dhtFault) {
-                    _dhtFault = false;
-                    Serial.println(F("[Sensor] DHT recovered"));
-                }
-                _rawTemperature = t;
-                _rawHumidity = h;
-                _temperature = t + _tempOffset;
-                _humidity = constrain(h + _humOffset, 0.0f, 100.0f);
+                break;
             }
         }
     }
-    // --- 2. I2C Climate Read: BME280 / AHT20 / SHT3x (every 2.5 seconds) ---
-    else if (_dhtEnabled && (_climateType == CLIMATE_BME280 || _climateType == CLIMATE_AHT20 || _climateType == CLIMATE_SHT3X)) {
-        if (now - _lastEnvRead >= DHT_READ_INTERVAL) {
+
+    // --- 2. I2C Climate (BME280 / AHT20 / SHT3x) staggered round-robin ---
+    uint8_t i2cClimateSlots = 0;
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        if (_climates[i].enabled && _climates[i].type >= CLIMATE_BME280 && _climates[i].i2cDetected) {
+            i2cClimateSlots++;
+        }
+    }
+    if (i2cClimateSlots > 0) {
+        unsigned long interval = DHT_READ_INTERVAL / i2cClimateSlots;
+        if (interval < 650) interval = 650;
+        if (now - _lastEnvRead >= interval) {
             _lastEnvRead = now;
-            if (_bmeDetected) {
-                readBME280();
-            } else if (_ahtDetected) {
-                readAHT20();
-            } else if (_shtDetected) {
-                readSHT3x();
+            for (uint8_t step = 0; step < _climateCount; step++) {
+                uint8_t idx = (_envPollCursor + step) % _climateCount;
+                ClimateSlotState& s = _climates[idx];
+                if (!s.enabled || s.type < CLIMATE_BME280 || !s.i2cDetected) continue;
+                _envPollCursor = (idx + 1) % _climateCount;
+                if (s.type == CLIMATE_BME280)      readBME280(s);
+                else if (s.type == CLIMATE_AHT20)  readAHT20(s);
+                else if (s.type == CLIMATE_SHT3X)  readSHT3x(s);
+                break;
             }
         }
-    } else if (!_dhtEnabled) {
-        _dhtFault = false;
     }
 
     // --- 3. BH1750 Ambient Light (every 1.0 second) ---
-    if (_bh1750Detected && (now - _lastLuxRead >= 1000)) {
+    if (_lightCount > 0 && (now - _lastLuxRead >= 1000)) {
         _lastLuxRead = now;
-        readBH1750();
-    }
-
-    // --- 4. Motion / Occupancy (Sample every 100ms) ---
-    if (_motionEnabled && _motionPin != PIN_UNUSED) {
-        bool reading = (digitalRead(_motionPin) == HIGH);
-        if (reading) {
-            _motionDetected = true;
-            _lastMotionTime = now;
-        } else {
-            // Latch motion active for 3 seconds after pin drops low
-            if (now - _lastMotionTime > 3000) {
-                _motionDetected = false;
+        for (uint8_t i = 0; i < _lightCount; i++) {
+            if (_lights[i].enabled && _lights[i].detected) {
+                readBH1750(_lights[i]);
             }
         }
     }
 
-    // --- 5. DS18B20 1-Wire Probe (Non-blocking conversion every 2.0 seconds) ---
-    if (_probeEnabled && _probePin != PIN_UNUSED) {
-        if (s_ds18State == 0 && (now - _lastProbeRead >= 2000)) {
-            // Trigger 12-bit temperature conversion
-            if (ds18b20Reset()) {
-                ds18b20WriteByte(0xCC); // SKIP ROM
-                ds18b20WriteByte(0x44); // CONVERT T
-                s_ds18ConvertStart = now;
-                s_ds18State = 1;
-            } else {
-                _probeFault = true;
-                _lastProbeRead = now;
-            }
-        } else if (s_ds18State == 1 && (now - s_ds18ConvertStart >= 750)) {
-            // Read scratchpad
-            readDS18B20();
-            s_ds18State = 0;
-            _lastProbeRead = now;
+    // --- 4. Motion / Occupancy (every loop pass, 3s hold latch) ---
+    for (uint8_t i = 0; i < _motionCount; i++) {
+        MotionSlotState& s = _motions[i];
+        if (!s.enabled || s.pin == PIN_UNUSED) continue;
+        if (digitalRead(s.pin) == HIGH) {
+            s.detected = true;
+            s.lastMotionTime = now;
+        } else if (now - s.lastMotionTime > 3000) {
+            s.detected = false;
         }
     }
 
-    // --- 6. Ultrasonic Distance & Water Tank Monitor (every 2.0 seconds) ---
-    if (_ultrasonicEnabled && (now - _lastUltrasonicRead >= 2000)) {
-        _lastUltrasonicRead = now;
-        readUltrasonic();
+    // --- 5. DS18B20 1-Wire Probes (non-blocking staggered round-robin) ---
+    uint8_t activeProbes = 0;
+    for (uint8_t i = 0; i < _probeCount; i++) {
+        if (_probes[i].enabled && _probes[i].pin != PIN_UNUSED) activeProbes++;
+    }
+    if (activeProbes > 0) {
+        unsigned long waitMs = (activeProbes == 1) ? 2000UL : 250UL;
+        if (_ds18State == 0 && (now - _lastProbeCycle >= waitMs)) {
+            for (uint8_t step = 0; step < _probeCount; step++) {
+                uint8_t idx = (_ds18Cursor + step) % _probeCount;
+                ProbeSlotState& p = _probes[idx];
+                if (!p.enabled || p.pin == PIN_UNUSED) continue;
+                _ds18Cursor = idx;
+                if (ds18b20Reset(p.pin)) {
+                    ds18b20WriteByte(p.pin, 0xCC); // SKIP ROM
+                    ds18b20WriteByte(p.pin, 0x44); // CONVERT T
+                    _ds18ConvertStart = now;
+                    _ds18State = 1;
+                } else {
+                    p.fault = true;
+                    _ds18Cursor = (idx + 1) % _probeCount;
+                    _lastProbeCycle = now;
+                }
+                break;
+            }
+        } else if (_ds18State == 1 && (now - _ds18ConvertStart >= 750)) {
+            if (_ds18Cursor < _probeCount && _probes[_ds18Cursor].enabled) {
+                readDS18B20(_probes[_ds18Cursor]);
+            }
+            _ds18State = 0;
+            _ds18Cursor = (_ds18Cursor + 1) % _probeCount;
+            _lastProbeCycle = now;
+        }
     }
 
-    // --- 7. MQ2 Read (every 1 second) ---
+    // --- 6. Ultrasonic Distance & Water Tank Monitors (staggered to avoid echo cross-talk) ---
+    uint8_t activeTanks = 0;
+    for (uint8_t i = 0; i < _ultrasonicCount; i++) {
+        if (_ultrasonics[i].enabled) activeTanks++;
+    }
+    if (activeTanks > 0) {
+        unsigned long interval = (activeTanks == 1) ? 2000UL : 800UL;
+        if (now - _lastUltrasonicRead >= interval) {
+            _lastUltrasonicRead = now;
+            for (uint8_t step = 0; step < _ultrasonicCount; step++) {
+                uint8_t idx = (_ultrasonicCursor + step) % _ultrasonicCount;
+                if (!_ultrasonics[idx].enabled) continue;
+                _ultrasonicCursor = (idx + 1) % _ultrasonicCount;
+                readUltrasonic(_ultrasonics[idx]);
+                break;
+            }
+        }
+    }
+
+    // --- 7. MQ2 Gas Sensors (every 1 second) ---
     if (now - _lastMQ2Read >= MQ2_READ_INTERVAL) {
         _lastMQ2Read = now;
+        bool warming = (now - _bootTime) < MQ2_WARMUP_TIME;
 
-        if (_mq2Enabled && _mq2AnalogPin != PIN_UNUSED) {
-            _mq2Raw = analogRead(_mq2AnalogPin);
-            if (_mq2DigitalPin != PIN_UNUSED) {
-                _mq2DigitalState = !digitalRead(_mq2DigitalPin);
-            } else {
-                _mq2DigitalState = false;
-            }
-
-            // Alarm logic with hysteresis (only after warmup)
-            if (!isMQ2Warming()) {
-                if (!_mq2AlarmActive && _mq2Raw >= _mq2Threshold) {
-                    _mq2AlarmActive = true;
-                } else if (_mq2AlarmActive && _mq2Raw < (_mq2Threshold - MQ2_HYSTERESIS)) {
-                    _mq2AlarmActive = false;
+        for (uint8_t i = 0; i < _mq2Count; i++) {
+            Mq2SlotState& g = _mq2s[i];
+            if (g.enabled && g.analogPin != PIN_UNUSED) {
+                g.raw = analogRead(g.analogPin);
+                g.digitalState = (g.digitalPin != PIN_UNUSED) ? (!digitalRead(g.digitalPin)) : false;
+                if (!warming) {
+                    if (!g.alarmActive && g.raw >= g.threshold) {
+                        g.alarmActive = true;
+                    } else if (g.alarmActive && g.raw < (g.threshold - MQ2_HYSTERESIS)) {
+                        g.alarmActive = false;
+                    }
                 }
+            } else if (g.enabled && g.digitalPin != PIN_UNUSED) {
+                g.digitalState = !digitalRead(g.digitalPin);
+                g.raw = g.digitalState ? MQ2_ADC_MAX : 0;
+                if (!warming) {
+                    g.alarmActive = g.digitalState;
+                }
+            } else {
+                g.raw = 0;
+                g.digitalState = false;
+                g.alarmActive = false;
             }
-        } else {
-            _mq2Raw = 0;
-            _mq2DigitalState = false;
-            _mq2AlarmActive = false;
         }
     }
 
@@ -323,8 +540,7 @@ void SensorManager::loop() {
 // Native I2C Drivers
 // ============================================================================
 
-bool SensorManager::initBME280(uint8_t addr) {
-    _bmeAddr = addr;
+bool SensorManager::initBME280(ClimateSlotState& s, uint8_t addr) {
     Wire.beginTransmission(addr);
     Wire.write(0xD0);
     if (Wire.endTransmission() != 0) return false;
@@ -333,17 +549,21 @@ bool SensorManager::initBME280(uint8_t addr) {
     if (!Wire.available()) return false;
     uint8_t chipId = Wire.read();
 
+    s.i2cDetected = false;
     if (chipId == 0x60) {
-        _bmeDetected = true;
-        _bmpDetected = false;
-        Serial.printf("[Sensor] BME280 detected at 0x%02X (ID 0x60)\n", addr);
+        s.bmpDetected = false;
+        s.i2cAddr = addr;
+        SERIAL_PRINTF("[Sensor] BME280 detected at 0x%02X (ID 0x60)\n", addr);
     } else if (chipId == 0x58) {
-        _bmeDetected = true;
-        _bmpDetected = true;
-        Serial.printf("[Sensor] BMP280 detected at 0x%02X (ID 0x58 - No Humidity)\n", addr);
+        s.bmpDetected = true;
+        s.i2cAddr = addr;
+        SERIAL_PRINTF("[Sensor] BMP280 detected at 0x%02X (ID 0x58 - No Humidity)\n", addr);
     } else {
         return false;
     }
+
+    if (!s.bmeCalib) s.bmeCalib = new BME280_Calib();
+    memset(s.bmeCalib, 0, sizeof(BME280_Calib));
 
     // Read calibration coefficients (0x88..0xA1: 24 bytes)
     Wire.beginTransmission(addr);
@@ -355,29 +575,27 @@ bool SensorManager::initBME280(uint8_t addr) {
     uint8_t b[24];
     for (int i = 0; i < 24; i++) b[i] = Wire.read();
 
-    _bmeCalib.dig_T1 = (uint16_t)(b[0] | (b[1] << 8));
-    _bmeCalib.dig_T2 = (int16_t)(b[2] | (b[3] << 8));
-    _bmeCalib.dig_T3 = (int16_t)(b[4] | (b[5] << 8));
+    s.bmeCalib->dig_T1 = (uint16_t)(b[0] | (b[1] << 8));
+    s.bmeCalib->dig_T2 = (int16_t)(b[2] | (b[3] << 8));
+    s.bmeCalib->dig_T3 = (int16_t)(b[4] | (b[5] << 8));
 
-    _bmeCalib.dig_P1 = (uint16_t)(b[6] | (b[7] << 8));
-    _bmeCalib.dig_P2 = (int16_t)(b[8] | (b[9] << 8));
-    _bmeCalib.dig_P3 = (int16_t)(b[10] | (b[11] << 8));
-    _bmeCalib.dig_P4 = (int16_t)(b[12] | (b[13] << 8));
-    _bmeCalib.dig_P5 = (int16_t)(b[14] | (b[15] << 8));
-    _bmeCalib.dig_P6 = (int16_t)(b[16] | (b[17] << 8));
-    _bmeCalib.dig_P7 = (int16_t)(b[18] | (b[19] << 8));
-    _bmeCalib.dig_P8 = (int16_t)(b[20] | (b[21] << 8));
-    _bmeCalib.dig_P9 = (int16_t)(b[22] | (b[23] << 8));
+    s.bmeCalib->dig_P1 = (uint16_t)(b[6] | (b[7] << 8));
+    s.bmeCalib->dig_P2 = (int16_t)(b[8] | (b[9] << 8));
+    s.bmeCalib->dig_P3 = (int16_t)(b[10] | (b[11] << 8));
+    s.bmeCalib->dig_P4 = (int16_t)(b[12] | (b[13] << 8));
+    s.bmeCalib->dig_P5 = (int16_t)(b[14] | (b[15] << 8));
+    s.bmeCalib->dig_P6 = (int16_t)(b[16] | (b[17] << 8));
+    s.bmeCalib->dig_P7 = (int16_t)(b[18] | (b[19] << 8));
+    s.bmeCalib->dig_P8 = (int16_t)(b[20] | (b[21] << 8));
+    s.bmeCalib->dig_P9 = (int16_t)(b[22] | (b[23] << 8));
 
-    if (_bmeDetected && !_bmpDetected) {
-        // Read H1 (0xA1)
+    if (!s.bmpDetected) {
         Wire.beginTransmission(addr);
         Wire.write(0xA1);
         Wire.endTransmission();
         Wire.requestFrom((int)addr, 1);
-        if (Wire.available()) _bmeCalib.dig_H1 = Wire.read();
+        if (Wire.available()) s.bmeCalib->dig_H1 = Wire.read();
 
-        // Read H2..H6 (0xE1..0xE7: 7 bytes)
         Wire.beginTransmission(addr);
         Wire.write(0xE1);
         Wire.endTransmission();
@@ -385,11 +603,11 @@ bool SensorManager::initBME280(uint8_t addr) {
         if (Wire.available() >= 7) {
             uint8_t h[7];
             for (int i = 0; i < 7; i++) h[i] = Wire.read();
-            _bmeCalib.dig_H2 = (int16_t)(h[0] | (h[1] << 8));
-            _bmeCalib.dig_H3 = h[2];
-            _bmeCalib.dig_H4 = (int16_t)((h[3] << 4) | (h[4] & 0x0F));
-            _bmeCalib.dig_H5 = (int16_t)((h[5] << 4) | (h[4] >> 4));
-            _bmeCalib.dig_H6 = (int8_t)h[6];
+            s.bmeCalib->dig_H2 = (int16_t)(h[0] | (h[1] << 8));
+            s.bmeCalib->dig_H3 = h[2];
+            s.bmeCalib->dig_H4 = (int16_t)(((int8_t)h[3] << 4) | (h[4] & 0x0F));
+            s.bmeCalib->dig_H5 = (int16_t)(((int8_t)h[5] << 4) | (h[4] >> 4));
+            s.bmeCalib->dig_H6 = (int8_t)h[6];
         }
 
         // Configure ctrl_hum (0xF2) = 0x01 (1x oversampling)
@@ -411,112 +629,117 @@ bool SensorManager::initBME280(uint8_t addr) {
     Wire.write(0xA0);
     Wire.endTransmission();
 
+    s.i2cDetected = true;
     return true;
 }
 
-void SensorManager::readBME280() {
-    Wire.beginTransmission(_bmeAddr);
+void SensorManager::readBME280(ClimateSlotState& s) {
+    if (!s.bmeCalib) { s.fault = true; return; }
+    Wire.beginTransmission(s.i2cAddr);
     Wire.write(0xF7);
     if (Wire.endTransmission() != 0) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
-    uint8_t len = (_bmeDetected && !_bmpDetected) ? 8 : 6;
-    Wire.requestFrom((int)_bmeAddr, (int)len);
+    uint8_t len = !s.bmpDetected ? 8 : 6;
+    Wire.requestFrom((int)s.i2cAddr, (int)len);
     if (Wire.available() < len) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
     uint8_t buf[8];
     for (int i = 0; i < len; i++) buf[i] = Wire.read();
 
+    const BME280_Calib* c = s.bmeCalib;
+
     // Temperature Compensation
     int32_t adc_T = ((int32_t)buf[3] << 12) | ((int32_t)buf[4] << 4) | ((int32_t)buf[5] >> 4);
-    int32_t var1 = ((((adc_T >> 3) - ((int32_t)_bmeCalib.dig_T1 << 1))) * ((int32_t)_bmeCalib.dig_T2)) >> 11;
-    int32_t var2 = (((((adc_T >> 4) - ((int32_t)_bmeCalib.dig_T1)) * ((adc_T >> 4) - ((int32_t)_bmeCalib.dig_T1))) >> 12) * ((int32_t)_bmeCalib.dig_T3)) >> 14;
-    _t_fine = var1 + var2;
-    float t = ((_t_fine * 5 + 128) >> 8) / 100.0f;
+    int32_t var1 = ((((adc_T >> 3) - ((int32_t)c->dig_T1 << 1))) * ((int32_t)c->dig_T2)) >> 11;
+    int32_t var2 = (((((adc_T >> 4) - ((int32_t)c->dig_T1)) * ((adc_T >> 4) - ((int32_t)c->dig_T1))) >> 12) * ((int32_t)c->dig_T3)) >> 14;
+    s.tFine = var1 + var2;
+    float t = ((s.tFine * 5 + 128) >> 8) / 100.0f;
 
     // Pressure Compensation
     int32_t adc_P = ((int32_t)buf[0] << 12) | ((int32_t)buf[1] << 4) | ((int32_t)buf[2] >> 4);
-    int64_t p_var1 = ((int64_t)_t_fine) - 128000;
-    int64_t p_var2 = p_var1 * p_var1 * (int64_t)_bmeCalib.dig_P6;
-    p_var2 = p_var2 + ((p_var1 * (int64_t)_bmeCalib.dig_P5) << 17);
-    p_var2 = p_var2 + (((int64_t)_bmeCalib.dig_P4) << 35);
-    p_var1 = ((p_var1 * p_var1 * (int64_t)_bmeCalib.dig_P3) >> 8) + ((p_var1 * (int64_t)_bmeCalib.dig_P2) << 12);
-    p_var1 = (((((int64_t)1) << 47) + p_var1)) * ((int64_t)_bmeCalib.dig_P1) >> 33;
+    int64_t p_var1 = ((int64_t)s.tFine) - 128000;
+    int64_t p_var2 = p_var1 * p_var1 * (int64_t)c->dig_P6;
+    p_var2 = p_var2 + ((p_var1 * (int64_t)c->dig_P5) << 17);
+    p_var2 = p_var2 + (((int64_t)c->dig_P4) << 35);
+    p_var1 = ((p_var1 * p_var1 * (int64_t)c->dig_P3) >> 8) + ((p_var1 * (int64_t)c->dig_P2) << 12);
+    p_var1 = (((((int64_t)1) << 47) + p_var1)) * ((int64_t)c->dig_P1) >> 33;
     float p = 1013.25f;
     if (p_var1 != 0) {
         int64_t p_calc = 1048576 - adc_P;
         p_calc = (((p_calc << 31) - p_var2) * 3125) / p_var1;
-        p_var1 = (((int64_t)_bmeCalib.dig_P9) * (p_calc >> 13) * (p_calc >> 13)) >> 25;
-        p_var2 = (((int64_t)_bmeCalib.dig_P8) * p_calc) >> 19;
-        p_calc = ((p_calc + p_var1 + p_var2) >> 8) + (((int64_t)_bmeCalib.dig_P7) << 4);
+        p_var1 = (((int64_t)c->dig_P9) * (p_calc >> 13) * (p_calc >> 13)) >> 25;
+        p_var2 = (((int64_t)c->dig_P8) * p_calc) >> 19;
+        p_calc = ((p_calc + p_var1 + p_var2) >> 8) + (((int64_t)c->dig_P7) << 4);
         p = (float)p_calc / 256.0f / 100.0f; // hPa
     }
 
     // Humidity Compensation (BME280 only)
     float h = 0.0f;
-    if (_bmeDetected && !_bmpDetected) {
+    if (!s.bmpDetected) {
         int32_t adc_H = ((int32_t)buf[6] << 8) | ((int32_t)buf[7]);
-        int32_t v_x1_u32r = (_t_fine - ((int32_t)76800));
-        v_x1_u32r = (((((adc_H << 14) - (((int32_t)_bmeCalib.dig_H4) << 20) - (((int32_t)_bmeCalib.dig_H5) * v_x1_u32r)) + ((int32_t)16384)) >> 15) *
-                     (((((((v_x1_u32r * ((int32_t)_bmeCalib.dig_H6)) >> 10) * (((v_x1_u32r * ((int32_t)_bmeCalib.dig_H3)) >> 11) + ((int32_t)32768))) >> 10) + ((int32_t)2097152)) *
-                       ((int32_t)_bmeCalib.dig_H2) + 8192) >> 14));
-        v_x1_u32r = (v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * ((int32_t)_bmeCalib.dig_H1)) >> 4));
+        int32_t v_x1_u32r = (s.tFine - ((int32_t)76800));
+        v_x1_u32r = (((((adc_H << 14) - (((int32_t)c->dig_H4) << 20) - (((int32_t)c->dig_H5) * v_x1_u32r)) + ((int32_t)16384)) >> 15) *
+                     (((((((v_x1_u32r * ((int32_t)c->dig_H6)) >> 10) * (((v_x1_u32r * ((int32_t)c->dig_H3)) >> 11) + ((int32_t)32768))) >> 10) + ((int32_t)2097152)) *
+                       ((int32_t)c->dig_H2) + 8192) >> 14));
+        v_x1_u32r = (v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * ((int32_t)c->dig_H1)) >> 4));
         v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
         v_x1_u32r = (v_x1_u32r > 419430400 ? 419430400 : v_x1_u32r);
         h = (float)(v_x1_u32r >> 12) / 1024.0f;
     }
 
-    _rawTemperature = t;
-    _rawHumidity = h;
-    _rawPressure = p;
-    _temperature = t + _tempOffset;
-    _humidity = constrain(h + _humOffset, 0.0f, 100.0f);
-    _pressure = p;
-    _dhtFault = false;
+    s.rawTemperature = t;
+    s.rawHumidity = h;
+    s.rawPressure = p;
+    s.temperature = t + s.tempOffset;
+    s.humidity = s.bmpDetected ? 0.0f : constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.pressure = p;
+    s.fault = false;
 }
 
-bool SensorManager::initAHT20() {
-    Wire.beginTransmission(0x38);
+bool SensorManager::initAHT20(ClimateSlotState& s, uint8_t addr) {
+    Wire.beginTransmission(addr);
     Wire.write(0x71);
     if (Wire.endTransmission() != 0) return false;
 
-    Wire.requestFrom(0x38, 1);
+    Wire.requestFrom((int)addr, 1);
     if (!Wire.available()) return false;
     uint8_t status = Wire.read();
 
     if ((status & 0x18) != 0x18) {
-        Wire.beginTransmission(0x38);
+        Wire.beginTransmission(addr);
         Wire.write(0xBE);
         Wire.write(0x08);
         Wire.write(0x00);
         Wire.endTransmission();
         delay(10);
     }
-    _ahtDetected = true;
-    Serial.println(F("[Sensor] AHT20 detected at 0x38"));
+    s.i2cDetected = true;
+    s.i2cAddr = addr;
+    SERIAL_PRINTF("[Sensor] AHT20 detected at 0x%02X\n", addr);
     return true;
 }
 
-void SensorManager::readAHT20() {
-    Wire.beginTransmission(0x38);
+void SensorManager::readAHT20(ClimateSlotState& s) {
+    Wire.beginTransmission(s.i2cAddr);
     Wire.write(0xAC);
     Wire.write(0x33);
     Wire.write(0x00);
     if (Wire.endTransmission() != 0) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
     delay(80); // Wait for conversion
 
-    Wire.requestFrom(0x38, 6);
+    Wire.requestFrom((int)s.i2cAddr, 6);
     if (Wire.available() < 6) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
@@ -531,40 +754,40 @@ void SensorManager::readAHT20() {
     float h = ((float)humRaw * 100.0f) / 1048576.0f;
     float t = (((float)tempRaw * 200.0f) / 1048576.0f) - 50.0f;
 
-    _rawTemperature = t;
-    _rawHumidity = h;
-    _temperature = t + _tempOffset;
-    _humidity = constrain(h + _humOffset, 0.0f, 100.0f);
-    _dhtFault = false;
+    s.rawTemperature = t;
+    s.rawHumidity = h;
+    s.temperature = t + s.tempOffset;
+    s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.fault = false;
 }
 
-bool SensorManager::initSHT3x(uint8_t addr) {
-    _shtAddr = addr;
+bool SensorManager::initSHT3x(ClimateSlotState& s, uint8_t addr) {
     Wire.beginTransmission(addr);
     Wire.write(0x30);
     Wire.write(0xA2); // Soft Reset
     if (Wire.endTransmission() != 0) return false;
 
     delay(10);
-    _shtDetected = true;
-    Serial.printf("[Sensor] SHT3x detected at 0x%02X\n", addr);
+    s.i2cDetected = true;
+    s.i2cAddr = addr;
+    SERIAL_PRINTF("[Sensor] SHT3x detected at 0x%02X\n", addr);
     return true;
 }
 
-void SensorManager::readSHT3x() {
-    Wire.beginTransmission(_shtAddr);
+void SensorManager::readSHT3x(ClimateSlotState& s) {
+    Wire.beginTransmission(s.i2cAddr);
     Wire.write(0x24);
     Wire.write(0x00); // High repeatability, clock stretching disabled
     if (Wire.endTransmission() != 0) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
     delay(16); // High repeatability measurement max 15ms
 
-    Wire.requestFrom((int)_shtAddr, 6);
+    Wire.requestFrom((int)s.i2cAddr, 6);
     if (Wire.available() < 6) {
-        _dhtFault = true;
+        s.fault = true;
         return;
     }
 
@@ -577,39 +800,31 @@ void SensorManager::readSHT3x() {
     float t = -45.0f + (175.0f * (float)tRaw / 65535.0f);
     float h = 100.0f * ((float)hRaw / 65535.0f);
 
-    _rawTemperature = t;
-    _rawHumidity = h;
-    _temperature = t + _tempOffset;
-    _humidity = constrain(h + _humOffset, 0.0f, 100.0f);
-    _dhtFault = false;
+    s.rawTemperature = t;
+    s.rawHumidity = h;
+    s.temperature = t + s.tempOffset;
+    s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.fault = false;
 }
 
-bool SensorManager::initBH1750() {
-    uint8_t addrs[2] = {0x23, 0x5C};
-    for (int i = 0; i < 2; i++) {
-        uint8_t a = addrs[i];
-        Wire.beginTransmission(a);
-        Wire.write(0x01); // Power On
-        if (Wire.endTransmission() == 0) {
-            Wire.beginTransmission(a);
-            Wire.write(0x10); // Continuous High Resolution Mode
-            Wire.endTransmission();
-            return true;
-        }
+bool SensorManager::initBH1750(LightSlotState& s, uint8_t addr) {
+    Wire.beginTransmission(addr);
+    Wire.write(0x01); // Power On
+    if (Wire.endTransmission() == 0) {
+        Wire.beginTransmission(addr);
+        Wire.write(0x10); // Continuous High Resolution Mode
+        Wire.endTransmission();
+        s.i2cAddr = addr;
+        return true;
     }
     return false;
 }
 
-void SensorManager::readBH1750() {
-    uint8_t a = 0x23;
-    Wire.requestFrom((int)a, 2);
-    if (Wire.available() < 2) {
-        a = 0x5C;
-        Wire.requestFrom((int)a, 2);
-    }
+void SensorManager::readBH1750(LightSlotState& s) {
+    Wire.requestFrom((int)s.i2cAddr, 2);
     if (Wire.available() >= 2) {
         uint16_t raw = ((uint16_t)Wire.read() << 8) | Wire.read();
-        _lux = (float)raw / 1.2f;
+        s.lux = (float)raw / 1.2f;
     }
 }
 
@@ -617,45 +832,45 @@ void SensorManager::readBH1750() {
 // 1-Wire DS18B20 Driver
 // ============================================================================
 
-bool SensorManager::ds18b20Reset() {
-    if (_probePin == PIN_UNUSED) return false;
-    pinMode(_probePin, OUTPUT);
-    digitalWrite(_probePin, LOW);
+bool SensorManager::ds18b20Reset(uint8_t pin) {
+    if (pin == PIN_UNUSED) return false;
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
     delayMicroseconds(480);
 
-    pinMode(_probePin, INPUT_PULLUP);
+    pinMode(pin, INPUT_PULLUP);
     delayMicroseconds(70);
-    bool presence = (digitalRead(_probePin) == LOW);
+    bool presence = (digitalRead(pin) == LOW);
     delayMicroseconds(410);
     return presence;
 }
 
-void SensorManager::ds18b20WriteByte(uint8_t b) {
+void SensorManager::ds18b20WriteByte(uint8_t pin, uint8_t b) {
     for (uint8_t i = 0; i < 8; i++) {
-        pinMode(_probePin, OUTPUT);
-        digitalWrite(_probePin, LOW);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
         if (b & 1) {
             delayMicroseconds(5);
-            pinMode(_probePin, INPUT_PULLUP);
+            pinMode(pin, INPUT_PULLUP);
             delayMicroseconds(55);
         } else {
             delayMicroseconds(60);
-            pinMode(_probePin, INPUT_PULLUP);
+            pinMode(pin, INPUT_PULLUP);
             delayMicroseconds(5);
         }
         b >>= 1;
     }
 }
 
-uint8_t SensorManager::ds18b20ReadByte() {
+uint8_t SensorManager::ds18b20ReadByte(uint8_t pin) {
     uint8_t res = 0;
     for (uint8_t i = 0; i < 8; i++) {
-        pinMode(_probePin, OUTPUT);
-        digitalWrite(_probePin, LOW);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, LOW);
         delayMicroseconds(2);
-        pinMode(_probePin, INPUT_PULLUP);
+        pinMode(pin, INPUT_PULLUP);
         delayMicroseconds(8);
-        if (digitalRead(_probePin) != 0) {
+        if (digitalRead(pin) != 0) {
             res |= (1 << i);
         }
         delayMicroseconds(50);
@@ -663,28 +878,28 @@ uint8_t SensorManager::ds18b20ReadByte() {
     return res;
 }
 
-void SensorManager::readDS18B20() {
-    if (!ds18b20Reset()) {
-        _probeFault = true;
+void SensorManager::readDS18B20(ProbeSlotState& s) {
+    if (!ds18b20Reset(s.pin)) {
+        s.fault = true;
         return;
     }
-    ds18b20WriteByte(0xCC); // SKIP ROM
-    ds18b20WriteByte(0xBE); // READ SCRATCHPAD
+    ds18b20WriteByte(s.pin, 0xCC); // SKIP ROM
+    ds18b20WriteByte(s.pin, 0xBE); // READ SCRATCHPAD
 
-    uint8_t lsb = ds18b20ReadByte();
-    uint8_t msb = ds18b20ReadByte();
-    ds18b20Reset(); // Release 1-Wire bus from remaining scratchpad bytes
+    uint8_t lsb = ds18b20ReadByte(s.pin);
+    uint8_t msb = ds18b20ReadByte(s.pin);
+    ds18b20Reset(s.pin); // Release 1-Wire bus from remaining scratchpad bytes
 
     int16_t raw = (int16_t)((msb << 8) | lsb);
     if (raw == -1 || (lsb == 0xFF && msb == 0xFF)) {
-        _probeFault = true;
+        s.fault = true;
     } else {
         float c = (float)raw / 16.0f;
         if (c >= -55.0f && c <= 125.0f) {
-            _probeTemperature = c;
-            _probeFault = false;
+            s.temperature = c;
+            s.fault = false;
         } else {
-            _probeFault = true;
+            s.fault = true;
         }
     }
 }
@@ -693,102 +908,346 @@ void SensorManager::readDS18B20() {
 // Ultrasonic Distance & Tank Level Driver
 // ============================================================================
 
-void SensorManager::readUltrasonic() {
-    if (_trigPin == PIN_UNUSED || _echoPin == PIN_UNUSED) return;
+void SensorManager::readUltrasonic(UltrasonicSlotState& s) {
+    if (s.trigPin == PIN_UNUSED || s.echoPin == PIN_UNUSED) return;
 
-    digitalWrite(_trigPin, LOW);
+    digitalWrite(s.trigPin, LOW);
     delayMicroseconds(2);
-    digitalWrite(_trigPin, HIGH);
+    digitalWrite(s.trigPin, HIGH);
     delayMicroseconds(10);
-    digitalWrite(_trigPin, LOW);
+    digitalWrite(s.trigPin, LOW);
 
     // 25ms timeout cap = ~4.3m max distance (prevents task watchdog reset)
-    unsigned long duration = pulseIn(_echoPin, HIGH, 25000);
+    unsigned long duration = pulseIn(s.echoPin, HIGH, 25000);
     if (duration > 0) {
         float dist = (float)duration * 0.0343f / 2.0f;
-        _distanceCm = dist;
+        s.distanceCm = dist;
 
-        float usableDepth = (float)(_tankDepthCm - _tankAirGapCm);
+        float usableDepth = (float)(s.tankDepthCm - s.tankAirGapCm);
         if (usableDepth > 0) {
-            float waterHeight = (float)_tankDepthCm - dist;
+            float waterHeight = (float)s.tankDepthCm - dist;
             float pct = (waterHeight / usableDepth) * 100.0f;
-            _tankLevelPct = (int)constrain(pct, 0.0f, 100.0f);
+            s.tankLevelPct = (int)constrain(pct, 0.0f, 100.0f);
         }
     }
 }
 
 // ============================================================================
-// Getters & Status
+// Primary / Indexed Helpers & Getters
 // ============================================================================
 
-float SensorManager::getTemperature()        { return _temperature; }
-float SensorManager::getHumidity()           { return _humidity; }
-float SensorManager::getRawTemperature()     { return _rawTemperature; }
-float SensorManager::getRawHumidity()        { return _rawHumidity; }
-float SensorManager::getPressure()           { return _bmeDetected ? _pressure : 0.0f; }
-bool  SensorManager::isDHTFault()            { return _dhtEnabled ? _dhtFault : false; }
-float SensorManager::getTempOffset()         { return _tempOffset; }
-float SensorManager::getHumOffset()          { return _humOffset; }
-void  SensorManager::setTempOffset(float o)  { _tempOffset = o; }
-void  SensorManager::setHumOffset(float o)   { _humOffset = o; }
+static const char* climateTypeLabel(uint8_t t, bool isBmp) {
+    switch (t) {
+        case CLIMATE_DHT11:  return "DHT11";
+        case CLIMATE_DHT22:  return "DHT22";
+        case CLIMATE_BME280: return isBmp ? "BMP280" : "BME280";
+        case CLIMATE_AHT20:  return "AHT20";
+        case CLIMATE_SHT3X:  return "SHT3x";
+        default:             return "None";
+    }
+}
+
+uint8_t SensorManager::primaryClimateIdx() const {
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        if (_climates[i].enabled) return i;
+    }
+    return 0;
+}
+uint8_t SensorManager::primaryLightIdx() const {
+    for (uint8_t i = 0; i < _lightCount; i++) {
+        if (_lights[i].enabled && _lights[i].detected) return i;
+    }
+    return 0;
+}
+uint8_t SensorManager::primaryMotionIdx() const {
+    for (uint8_t i = 0; i < _motionCount; i++) {
+        if (_motions[i].enabled) return i;
+    }
+    return 0;
+}
+uint8_t SensorManager::primaryProbeIdx() const {
+    for (uint8_t i = 0; i < _probeCount; i++) {
+        if (_probes[i].enabled) return i;
+    }
+    return 0;
+}
+uint8_t SensorManager::primaryUltrasonicIdx() const {
+    for (uint8_t i = 0; i < _ultrasonicCount; i++) {
+        if (_ultrasonics[i].enabled) return i;
+    }
+    return 0;
+}
+uint8_t SensorManager::primaryMq2Idx() const {
+    uint8_t firstEnabled = 0;
+    bool foundEnabled = false;
+    int maxAlarmRaw = -1;
+    uint8_t alarmIdx = 0;
+    for (uint8_t i = 0; i < _mq2Count; i++) {
+        if (!_mq2s[i].enabled) continue;
+        if (!foundEnabled) { firstEnabled = i; foundEnabled = true; }
+        if (_mq2s[i].alarmActive && _mq2s[i].raw > maxAlarmRaw) {
+            maxAlarmRaw = _mq2s[i].raw;
+            alarmIdx = i;
+        }
+    }
+    return (maxAlarmRaw >= 0) ? alarmIdx : firstEnabled;
+}
+
+// --- Indexed getters ---
+bool SensorManager::isClimateActiveAt(uint8_t idx) const {
+    return idx < _climateCount && _climates[idx].enabled;
+}
+float SensorManager::getTemperatureAt(uint8_t idx) const {
+    return (idx < _climateCount) ? _climates[idx].temperature : 0.0f;
+}
+float SensorManager::getHumidityAt(uint8_t idx) const {
+    return (idx < _climateCount) ? _climates[idx].humidity : 0.0f;
+}
+float SensorManager::getPressureAt(uint8_t idx) const {
+    return (idx < _climateCount && _climates[idx].type == CLIMATE_BME280 && _climates[idx].i2cDetected)
+           ? _climates[idx].pressure : 0.0f;
+}
+bool SensorManager::hasBarometerAt(uint8_t idx) const {
+    return idx < _climateCount && _climates[idx].enabled &&
+           _climates[idx].type == CLIMATE_BME280 && _climates[idx].i2cDetected;
+}
+bool SensorManager::isClimateFaultAt(uint8_t idx) const {
+    return idx < _climateCount && _climates[idx].enabled && _climates[idx].fault;
+}
+float SensorManager::getTempOffsetAt(uint8_t idx) const {
+    return (idx < MAX_CLIMATE_SENSORS) ? _climates[idx].tempOffset : 0.0f;
+}
+float SensorManager::getHumOffsetAt(uint8_t idx) const {
+    return (idx < MAX_CLIMATE_SENSORS) ? _climates[idx].humOffset : 0.0f;
+}
+void SensorManager::setTempOffsetAt(uint8_t idx, float offset) {
+    if (idx < MAX_CLIMATE_SENSORS) _climates[idx].tempOffset = offset;
+}
+void SensorManager::setHumOffsetAt(uint8_t idx, float offset) {
+    if (idx < MAX_CLIMATE_SENSORS) _climates[idx].humOffset = offset;
+}
+
+bool SensorManager::isLightActiveAt(uint8_t idx) const {
+    return idx < _lightCount && _lights[idx].enabled && _lights[idx].detected;
+}
+float SensorManager::getLuxAt(uint8_t idx) const {
+    return (idx < _lightCount) ? _lights[idx].lux : 0.0f;
+}
+
+bool SensorManager::isMotionActiveAt(uint8_t idx) const {
+    return idx < _motionCount && _motions[idx].enabled;
+}
+bool SensorManager::isMotionDetectedAt(uint8_t idx) const {
+    return isMotionActiveAt(idx) && _motions[idx].detected;
+}
+uint32_t SensorManager::getMotionAgeSecondsAt(uint8_t idx) const {
+    if (!isMotionActiveAt(idx) || _motions[idx].lastMotionTime == 0) return 99999;
+    return (uint32_t)((millis() - _motions[idx].lastMotionTime) / 1000);
+}
+
+bool SensorManager::isProbeActiveAt(uint8_t idx) const {
+    return idx < _probeCount && _probes[idx].enabled;
+}
+float SensorManager::getProbeTemperatureAt(uint8_t idx) const {
+    return (idx < _probeCount) ? _probes[idx].temperature : -127.0f;
+}
+bool SensorManager::isProbeFaultAt(uint8_t idx) const {
+    return isProbeActiveAt(idx) && _probes[idx].fault;
+}
+
+bool SensorManager::isUltrasonicActiveAt(uint8_t idx) const {
+    return idx < _ultrasonicCount && _ultrasonics[idx].enabled;
+}
+float SensorManager::getDistanceCmAt(uint8_t idx) const {
+    return (idx < _ultrasonicCount) ? _ultrasonics[idx].distanceCm : 0.0f;
+}
+int SensorManager::getTankLevelPercentAt(uint8_t idx) const {
+    return (idx < _ultrasonicCount) ? _ultrasonics[idx].tankLevelPct : 0;
+}
+
+bool SensorManager::isMq2ActiveAt(uint8_t idx) const {
+    return idx < _mq2Count && _mq2s[idx].enabled;
+}
+bool SensorManager::isMq2HwAllowedAt(uint8_t idx) const {
+    return idx < _mq2Count && _mq2s[idx].hwAllowed;
+}
+int SensorManager::getMQ2RawAt(uint8_t idx) const {
+    return (idx < _mq2Count) ? _mq2s[idx].raw : 0;
+}
+int SensorManager::getMQ2PercentAt(uint8_t idx) const {
+    if (idx >= _mq2Count) return 0;
+    const Mq2SlotState& g = _mq2s[idx];
+    if (g.raw <= g.baseline) return 0;
+    int range = MQ2_ADC_MAX - g.baseline;
+    if (range <= 0) return 0;
+    return constrain(((g.raw - g.baseline) * 100) / range, 0, 100);
+}
+int SensorManager::getMQ2BaselineAt(uint8_t idx) const {
+    return (idx < MAX_MQ2_SENSORS) ? _mq2s[idx].baseline : MQ2_BASELINE_DEFAULT;
+}
+int SensorManager::getMQ2ThresholdAt(uint8_t idx) const {
+    return (idx < MAX_MQ2_SENSORS) ? _mq2s[idx].threshold : MQ2_DEFAULT_THRESHOLD;
+}
+bool SensorManager::isMQ2AlarmAt(uint8_t idx) const {
+    return idx < _mq2Count && _mq2s[idx].enabled && _mq2s[idx].alarmActive;
+}
+bool SensorManager::isMQ2DigitalTriggerAt(uint8_t idx) const {
+    return idx < _mq2Count && _mq2s[idx].digitalState;
+}
+void SensorManager::setMQ2ThresholdAt(int idx, int threshold) {
+    int c = constrain(threshold, 10, MQ2_ADC_MAX);
+    if (idx < 0) {
+        for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) _mq2s[i].threshold = c;
+    } else if (idx < MAX_MQ2_SENSORS) {
+        _mq2s[idx].threshold = c;
+    }
+}
+void SensorManager::setMQ2EnabledAt(int idx, bool enabled) {
+    if (idx < 0) {
+        for (uint8_t i = 0; i < _mq2Count; i++) {
+            _mq2s[i].enabled = _mq2s[i].hwAllowed ? enabled : false;
+        }
+    } else if (idx < _mq2Count) {
+        _mq2s[idx].enabled = _mq2s[idx].hwAllowed ? enabled : false;
+    }
+}
+void SensorManager::calibrateMQ2At(int idx) {
+    if (idx < 0) {
+        for (uint8_t i = 0; i < _mq2Count; i++) {
+            if (_mq2s[i].enabled) {
+                _mq2s[i].baseline = _mq2s[i].raw;
+                SERIAL_PRINTF("[Sensor] MQ2 #%u baseline calibrated to %d\n", (unsigned)(i + 1), _mq2s[i].baseline);
+            }
+        }
+        saveCalibration();
+    } else if (idx < _mq2Count && _mq2s[idx].enabled) {
+        _mq2s[idx].baseline = _mq2s[idx].raw;
+        saveCalibration();
+        SERIAL_PRINTF("[Sensor] MQ2 #%d baseline calibrated to %d\n", idx + 1, _mq2s[idx].baseline);
+    }
+}
+
+// --- Legacy / Primary / Aggregate Getters ---
+bool SensorManager::isDhtEnabled() const {
+    for (uint8_t i = 0; i < _climateCount; i++) if (_climates[i].enabled) return true;
+    return false;
+}
+float SensorManager::getTemperature()        { return isDhtEnabled() ? _climates[primaryClimateIdx()].temperature : 0.0f; }
+float SensorManager::getHumidity()           { return isDhtEnabled() ? _climates[primaryClimateIdx()].humidity : 0.0f; }
+float SensorManager::getRawTemperature()     { return isDhtEnabled() ? _climates[primaryClimateIdx()].rawTemperature : 0.0f; }
+float SensorManager::getRawHumidity()        { return isDhtEnabled() ? _climates[primaryClimateIdx()].rawHumidity : 0.0f; }
+float SensorManager::getPressure()           {
+    for (uint8_t i = 0; i < _climateCount; i++) if (hasBarometerAt(i)) return _climates[i].pressure;
+    return 0.0f;
+}
+bool SensorManager::hasBarometer() const {
+    for (uint8_t i = 0; i < _climateCount; i++) if (hasBarometerAt(i)) return true;
+    return false;
+}
+bool SensorManager::isDHTFault() {
+    for (uint8_t i = 0; i < _climateCount; i++) if (isClimateFaultAt(i)) return true;
+    return false;
+}
+float SensorManager::getTempOffset()         { return _climates[primaryClimateIdx()].tempOffset; }
+float SensorManager::getHumOffset()          { return _climates[primaryClimateIdx()].humOffset; }
+void  SensorManager::setTempOffset(float o)  { setTempOffsetAt(primaryClimateIdx(), o); }
+void  SensorManager::setHumOffset(float o)   { setHumOffsetAt(primaryClimateIdx(), o); }
 float SensorManager::getTempAlarmThreshold() { return _tempAlarmThreshold; }
 void  SensorManager::setTempAlarmThreshold(float t) { _tempAlarmThreshold = t; }
 
 bool SensorManager::isTempAlarm() {
-    if (!_dhtEnabled || _dhtFault) return false;
-    return _temperature >= _tempAlarmThreshold;
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        if (_climates[i].enabled && !_climates[i].fault && _climates[i].temperature >= _tempAlarmThreshold) {
+            return true;
+        }
+    }
+    return false;
 }
 
-float    SensorManager::getLux()             { return _lux; }
-bool     SensorManager::isMotionDetected()   { return _motionEnabled ? _motionDetected : false; }
+float SensorManager::getLux() {
+    return isLuxEnabled() ? _lights[primaryLightIdx()].lux : 0.0f;
+}
+bool SensorManager::isLuxEnabled() const {
+    for (uint8_t i = 0; i < _lightCount; i++) if (isLightActiveAt(i)) return true;
+    return false;
+}
+
+bool SensorManager::isMotionEnabled() const {
+    for (uint8_t i = 0; i < _motionCount; i++) if (_motions[i].enabled) return true;
+    return false;
+}
+bool SensorManager::isMotionDetected() {
+    for (uint8_t i = 0; i < _motionCount; i++) if (isMotionDetectedAt(i)) return true;
+    return false;
+}
 uint32_t SensorManager::getMotionAgeSeconds() {
-    if (!_motionEnabled || _lastMotionTime == 0) return 99999;
-    return (uint32_t)((millis() - _lastMotionTime) / 1000);
+    uint32_t minAge = 99999;
+    for (uint8_t i = 0; i < _motionCount; i++) {
+        if (_motions[i].enabled) {
+            uint32_t a = getMotionAgeSecondsAt(i);
+            if (a < minAge) minAge = a;
+        }
+    }
+    return minAge;
 }
 
-float SensorManager::getProbeTemperature()   { return _probeTemperature; }
-bool  SensorManager::isProbeFault()          { return _probeEnabled ? _probeFault : false; }
-float SensorManager::getDistanceCm()         { return _distanceCm; }
-int   SensorManager::getTankLevelPercent()   { return _tankLevelPct; }
-
-int  SensorManager::getMQ2Raw()              { return _mq2Raw; }
-bool SensorManager::isMQ2Alarm()            { return _mq2AlarmActive; }
-bool SensorManager::isMQ2DigitalTrigger()   { return _mq2DigitalState; }
-int  SensorManager::getMQ2Threshold()       { return _mq2Threshold; }
-void SensorManager::setMQ2Threshold(int t)  { _mq2Threshold = t; }
-int  SensorManager::getMQ2Baseline()        { return _mq2Baseline; }
-bool SensorManager::isMQ2Enabled()          { return _mq2Enabled; }
-void SensorManager::setMQ2Enabled(bool e)   { _mq2Enabled = e; }
-
-int SensorManager::getMQ2Percent() {
-    if (_mq2Raw <= _mq2Baseline) return 0;
-    int range = MQ2_ADC_MAX - _mq2Baseline;
-    if (range <= 0) return 0;
-    int percent = ((_mq2Raw - _mq2Baseline) * 100) / range;
-    return constrain(percent, 0, 100);
+bool SensorManager::isProbeEnabled() const {
+    for (uint8_t i = 0; i < _probeCount; i++) if (_probes[i].enabled) return true;
+    return false;
+}
+float SensorManager::getProbeTemperature() {
+    return isProbeEnabled() ? _probes[primaryProbeIdx()].temperature : -127.0f;
+}
+bool SensorManager::isProbeFault() {
+    for (uint8_t i = 0; i < _probeCount; i++) if (isProbeFaultAt(i)) return true;
+    return false;
 }
 
+bool SensorManager::isUltrasonicEnabled() const {
+    for (uint8_t i = 0; i < _ultrasonicCount; i++) if (_ultrasonics[i].enabled) return true;
+    return false;
+}
+float SensorManager::getDistanceCm() {
+    return isUltrasonicEnabled() ? _ultrasonics[primaryUltrasonicIdx()].distanceCm : 0.0f;
+}
+int SensorManager::getTankLevelPercent() {
+    return isUltrasonicEnabled() ? _ultrasonics[primaryUltrasonicIdx()].tankLevelPct : 0;
+}
+
+bool SensorManager::isMQ2Enabled() {
+    for (uint8_t i = 0; i < _mq2Count; i++) if (_mq2s[i].enabled) return true;
+    return false;
+}
+bool SensorManager::isMQ2HardwareAllowed() const {
+    for (uint8_t i = 0; i < _mq2Count; i++) if (_mq2s[i].hwAllowed) return true;
+    return false;
+}
+int  SensorManager::getMQ2Raw()            { return isMQ2Enabled() ? _mq2s[primaryMq2Idx()].raw : 0; }
+bool SensorManager::isMQ2Alarm() {
+    for (uint8_t i = 0; i < _mq2Count; i++) if (isMQ2AlarmAt(i)) return true;
+    return false;
+}
+bool SensorManager::isMQ2DigitalTrigger()  {
+    for (uint8_t i = 0; i < _mq2Count; i++) if (_mq2s[i].enabled && _mq2s[i].digitalState) return true;
+    return false;
+}
+int  SensorManager::getMQ2Threshold()      { return _mq2s[primaryMq2Idx()].threshold; }
+void SensorManager::setMQ2Threshold(int t) { setMQ2ThresholdAt(-1, t); }
+int  SensorManager::getMQ2Baseline()       { return _mq2s[primaryMq2Idx()].baseline; }
+void SensorManager::setMQ2Enabled(bool e)  { setMQ2EnabledAt(-1, e); }
+int  SensorManager::getMQ2Percent()        { return isMQ2Enabled() ? getMQ2PercentAt(primaryMq2Idx()) : 0; }
 bool SensorManager::isMQ2Warming() {
-    if (!_mq2Enabled) return false;
+    if (!isMQ2Enabled()) return false;
     return (millis() - _bootTime) < MQ2_WARMUP_TIME;
 }
-
-void SensorManager::calibrateMQ2() {
-    if (_mq2Enabled) {
-        _mq2Baseline = _mq2Raw;
-        saveCalibration();
-        Serial.printf("[Sensor] MQ2 baseline calibrated to %d\n", _mq2Baseline);
-    }
-}
+void SensorManager::calibrateMQ2() { calibrateMQ2At(-1); }
 
 bool SensorManager::hasAnySensorFault() {
-    return (_dhtEnabled && _dhtFault) || (_probeEnabled && _probeFault);
+    return isDHTFault() || isProbeFault();
 }
-
 bool SensorManager::hasAnyAlarm() {
-    return isTempAlarm() || (_mq2Enabled && isMQ2Alarm());
+    return isTempAlarm() || isMQ2Alarm();
 }
-
 void SensorManager::setAlarmCallback(void (*cb)(uint8_t, bool)) {
     _alarmCallback = cb;
 }
@@ -797,56 +1256,162 @@ void SensorManager::saveCalibration() {
     if (!_storage) return;
 
     JsonDocument doc;
-    doc["temp_offset"]    = _tempOffset;
-    doc["hum_offset"]     = _humOffset;
+    doc["temp_offset"]    = _climates[0].tempOffset;
+    doc["hum_offset"]     = _climates[0].humOffset;
     doc["temp_alarm"]     = _tempAlarmThreshold;
-    doc["mq2_threshold"]  = _mq2Threshold;
-    doc["mq2_baseline"]   = _mq2Baseline;
-    doc["mq2_enabled"]    = _mq2Enabled;
-    _storage->saveJson(PATH_SENSORS, doc);
+    doc["mq2_threshold"]  = _mq2s[0].threshold;
+    doc["mq2_baseline"]   = _mq2s[0].baseline;
+    doc["mq2_enabled"]    = _mq2s[0].enabled;
 
+    JsonArray tOff = doc["temp_offsets"].to<JsonArray>();
+    JsonArray hOff = doc["hum_offsets"].to<JsonArray>();
+    for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
+        tOff.add(_climates[i].tempOffset);
+        hOff.add(_climates[i].humOffset);
+    }
+
+    JsonArray gTh = doc["mq2_thresholds"].to<JsonArray>();
+    JsonArray gBs = doc["mq2_baselines"].to<JsonArray>();
+    JsonArray gEn = doc["mq2_enables"].to<JsonArray>();
+    for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+        gTh.add(_mq2s[i].threshold);
+        gBs.add(_mq2s[i].baseline);
+        gEn.add(_mq2s[i].enabled);
+    }
+
+    _storage->saveJson(PATH_SENSORS, doc);
     Serial.println(F("[Sensor] Calibration saved"));
 }
 
+void SensorManager::appendStatusJson(JsonObject& obj) {
+    // Primary / Aggregate Scalar Compatibility Keys
+    obj["temperature"]      = serialized(String(getTemperature(), 1));
+    obj["humidity"]         = serialized(String(getHumidity(), 1));
+    obj["pressure"]         = serialized(String(getPressure(), 1));
+    obj["pressure_enabled"] = hasBarometer();
+    obj["dht_enabled"]      = isDhtEnabled();
+    obj["dht_fault"]        = isDHTFault();
+    obj["temp_threshold"]   = _tempAlarmThreshold;
+
+    obj["lux"]              = serialized(String(getLux(), 1));
+    obj["lux_enabled"]      = isLuxEnabled();
+
+    obj["motion"]           = isMotionDetected();
+    obj["motion_age_s"]     = getMotionAgeSeconds();
+    obj["motion_enabled"]   = isMotionEnabled();
+
+    obj["probe_temp"]       = serialized(String(getProbeTemperature(), 1));
+    obj["probe_fault"]      = isProbeFault();
+    obj["probe_enabled"]    = isProbeEnabled();
+
+    obj["distance_cm"]      = serialized(String(getDistanceCm(), 1));
+    obj["tank_level_pct"]   = getTankLevelPercent();
+    obj["tank_enabled"]     = isUltrasonicEnabled();
+
+    obj["gas_raw"]          = getMQ2Raw();
+    obj["gas_percent"]      = getMQ2Percent();
+    obj["gas_max"]          = MQ2_ADC_MAX;
+    obj["gas_alarm"]        = isMQ2Alarm();
+    obj["gas_enabled"]      = isMQ2Enabled();
+    obj["gas_threshold"]    = getMQ2Threshold();
+    obj["gas_warming"]      = isMQ2Warming();
+
+    // Multi-Instance Sensor Telemetry Arrays
+    JsonArray climatesArr = obj["climates"].to<JsonArray>();
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        const ClimateSlotState& c = _climates[i];
+        JsonObject it = climatesArr.add<JsonObject>();
+        it["index"]       = i;
+        it["enabled"]     = c.enabled;
+        it["type"]        = c.type;
+        it["type_name"]   = climateTypeLabel(c.type, c.bmpDetected);
+        it["label"]       = c.label;
+        it["temperature"] = serialized(String(c.temperature, 1));
+        it["humidity"]    = serialized(String(c.humidity, 1));
+        it["pressure"]    = serialized(String(hasBarometerAt(i) ? c.pressure : 0.0f, 1));
+        it["barometer"]   = hasBarometerAt(i);
+        it["fault"]       = c.fault;
+        it["temp_alarm"]  = c.enabled && !c.fault && (c.temperature >= _tempAlarmThreshold);
+        it["temp_offset"] = c.tempOffset;
+        it["hum_offset"]  = c.humOffset;
+    }
+
+    JsonArray lightsArr = obj["lights"].to<JsonArray>();
+    for (uint8_t i = 0; i < _lightCount; i++) {
+        const LightSlotState& l = _lights[i];
+        JsonObject it = lightsArr.add<JsonObject>();
+        it["index"]    = i;
+        it["enabled"]  = l.enabled && l.detected;
+        it["i2c_addr"] = l.i2cAddr;
+        it["label"]    = l.label;
+        it["lux"]      = serialized(String(l.lux, 1));
+    }
+
+    JsonArray motionsArr = obj["motions"].to<JsonArray>();
+    for (uint8_t i = 0; i < _motionCount; i++) {
+        const MotionSlotState& m = _motions[i];
+        JsonObject it = motionsArr.add<JsonObject>();
+        it["index"]    = i;
+        it["enabled"]  = m.enabled;
+        it["type"]     = m.type;
+        it["label"]    = m.label;
+        it["detected"] = isMotionDetectedAt(i);
+        it["age_s"]    = getMotionAgeSecondsAt(i);
+    }
+
+    JsonArray probesArr = obj["probes"].to<JsonArray>();
+    for (uint8_t i = 0; i < _probeCount; i++) {
+        const ProbeSlotState& p = _probes[i];
+        JsonObject it = probesArr.add<JsonObject>();
+        it["index"]       = i;
+        it["enabled"]     = p.enabled;
+        it["label"]       = p.label;
+        it["temperature"] = serialized(String(p.temperature, 1));
+        it["fault"]       = p.fault;
+    }
+
+    JsonArray tanksArr = obj["tanks"].to<JsonArray>();
+    for (uint8_t i = 0; i < _ultrasonicCount; i++) {
+        const UltrasonicSlotState& u = _ultrasonics[i];
+        JsonObject it = tanksArr.add<JsonObject>();
+        it["index"]       = i;
+        it["enabled"]     = u.enabled;
+        it["type"]        = u.type;
+        it["label"]       = u.label;
+        it["distance_cm"] = serialized(String(u.distanceCm, 1));
+        it["level_pct"]   = u.tankLevelPct;
+    }
+
+    JsonArray mq2Arr = obj["mq2s"].to<JsonArray>();
+    bool warming = isMQ2Warming();
+    for (uint8_t i = 0; i < _mq2Count; i++) {
+        const Mq2SlotState& g = _mq2s[i];
+        JsonObject it = mq2Arr.add<JsonObject>();
+        it["index"]      = i;
+        it["enabled"]    = g.enabled;
+        it["hw_allowed"] = g.hwAllowed;
+        it["label"]      = g.label;
+        it["raw"]        = g.raw;
+        it["percent"]    = getMQ2PercentAt(i);
+        it["threshold"]  = g.threshold;
+        it["baseline"]   = g.baseline;
+        it["alarm"]      = g.alarmActive;
+        it["digital"]    = g.digitalState;
+        it["warming"]    = warming && g.enabled;
+    }
+}
+
 void SensorManager::toJson(JsonObject& obj) {
-    obj["temperature"]     = serialized(String(_temperature, 1));
-    obj["humidity"]        = serialized(String(_humidity, 1));
-    obj["temp_raw"]        = serialized(String(_rawTemperature, 1));
-    obj["hum_raw"]         = serialized(String(_rawHumidity, 1));
-    obj["pressure"]        = serialized(String(_bmeDetected ? _pressure : 0.0f, 1));
-    obj["pressure_raw"]    = serialized(String(_bmeDetected ? _rawPressure : 0.0f, 1));
-    obj["pressure_enabled"] = _bmeDetected;
-    obj["dht_fault"]       = isDHTFault();
-    obj["dht_enabled"]     = _dhtEnabled;
-    obj["temp_alarm"]      = isTempAlarm();
-    obj["temp_threshold"]  = _tempAlarmThreshold;
-    obj["temp_offset"]     = _tempOffset;
-    obj["hum_offset"]      = _humOffset;
-
-    obj["lux"]             = serialized(String(_lux, 1));
-    obj["lux_enabled"]     = _bh1750Detected;
-
-    obj["motion"]          = isMotionDetected();
-    obj["motion_age_s"]    = getMotionAgeSeconds();
-    obj["motion_enabled"]  = _motionEnabled;
-
-    obj["probe_temp"]      = serialized(String(_probeTemperature, 1));
-    obj["probe_fault"]     = _probeFault;
-    obj["probe_enabled"]   = _probeEnabled;
-
-    obj["distance_cm"]     = serialized(String(_distanceCm, 1));
-    obj["tank_level_pct"]  = _tankLevelPct;
-    obj["tank_enabled"]    = _ultrasonicEnabled;
-
-    obj["gas_raw"]         = _mq2Raw;
-    obj["gas_percent"]     = getMQ2Percent();
-    obj["gas_max"]         = MQ2_ADC_MAX;
-    obj["gas_alarm"]       = _mq2AlarmActive;
-    obj["gas_enabled"]     = _mq2Enabled;
-    obj["gas_threshold"]   = _mq2Threshold;
-    obj["gas_baseline"]    = _mq2Baseline;
-    obj["gas_warming"]     = isMQ2Warming();
-    obj["gas_digital"]     = _mq2DigitalState;
+    appendStatusJson(obj);
+    obj["temp_raw"]     = serialized(String(getRawTemperature(), 1));
+    obj["hum_raw"]      = serialized(String(getRawHumidity(), 1));
+    uint8_t pCli = primaryClimateIdx();
+    obj["pressure_raw"] = serialized(String(hasBarometerAt(pCli) ? _climates[pCli].rawPressure : 0.0f, 1));
+    obj["temp_alarm"]   = isTempAlarm();
+    obj["temp_offset"]  = getTempOffset();
+    obj["hum_offset"]   = getHumOffset();
+    obj["gas_baseline"] = getMQ2Baseline();
+    obj["gas_digital"]  = isMQ2DigitalTrigger();
 }
 
 void SensorManager::loadCalibration() {
@@ -854,19 +1419,35 @@ void SensorManager::loadCalibration() {
 
     JsonDocument doc;
     if (_storage->loadJson(PATH_SENSORS, doc)) {
-        _tempOffset         = doc["temp_offset"]   | DHT_TEMP_OFFSET_DEFAULT;
-        _humOffset          = doc["hum_offset"]    | DHT_HUM_OFFSET_DEFAULT;
-        _tempAlarmThreshold = doc["temp_alarm"]    | DHT_TEMP_ALARM_DEFAULT;
-        _mq2Threshold       = doc["mq2_threshold"] | MQ2_DEFAULT_THRESHOLD;
-        _mq2Baseline        = doc["mq2_baseline"]  | MQ2_BASELINE_DEFAULT;
-        _mq2Enabled         = doc["mq2_enabled"]   | true;
+        _tempAlarmThreshold = doc["temp_alarm"] | DHT_TEMP_ALARM_DEFAULT;
+        float defTempOff = doc["temp_offset"] | DHT_TEMP_OFFSET_DEFAULT;
+        float defHumOff  = doc["hum_offset"]  | DHT_HUM_OFFSET_DEFAULT;
+        int defMq2Th     = constrain(doc["mq2_threshold"] | MQ2_DEFAULT_THRESHOLD, 10, MQ2_ADC_MAX);
+        int defMq2Base   = constrain(doc["mq2_baseline"]  | MQ2_BASELINE_DEFAULT, 0, MQ2_ADC_MAX);
+        bool defMq2En    = doc["mq2_enabled"] | true;
+
+        JsonArrayConst tOff = doc["temp_offsets"].as<JsonArrayConst>();
+        JsonArrayConst hOff = doc["hum_offsets"].as<JsonArrayConst>();
+        for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
+            _climates[i].tempOffset = (!tOff.isNull() && i < tOff.size()) ? (float)tOff[i] : defTempOff;
+            _climates[i].humOffset  = (!hOff.isNull() && i < hOff.size()) ? (float)hOff[i] : defHumOff;
+        }
+
+        JsonArrayConst gTh = doc["mq2_thresholds"].as<JsonArrayConst>();
+        JsonArrayConst gBs = doc["mq2_baselines"].as<JsonArrayConst>();
+        JsonArrayConst gEn = doc["mq2_enables"].as<JsonArrayConst>();
+        for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+            _mq2s[i].threshold = constrain((!gTh.isNull() && i < gTh.size()) ? (int)gTh[i] : defMq2Th, 10, MQ2_ADC_MAX);
+            _mq2s[i].baseline  = constrain((!gBs.isNull() && i < gBs.size()) ? (int)gBs[i] : defMq2Base, 0, MQ2_ADC_MAX);
+            _mq2s[i].enabled   = (!gEn.isNull() && i < gEn.size()) ? (bool)gEn[i] : defMq2En;
+        }
     }
 }
 
 void SensorManager::checkAlarms() {
     if (!_alarmCallback) return;
 
-    bool gasAlarm = _mq2Enabled && _mq2AlarmActive;
+    bool gasAlarm = isMQ2Alarm();
     if (gasAlarm != _prevMQ2Alarm) {
         _prevMQ2Alarm = gasAlarm;
         _alarmCallback(ALARM_TYPE_GAS, gasAlarm);

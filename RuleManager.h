@@ -17,13 +17,16 @@
 #include "StorageManager.h"
 #include "RelayManager.h"
 
+class SensorManager;
+
 enum RuleSensorType : uint8_t {
     RULE_SENSOR_TEMP        = 0,    // Temperature (°C)
     RULE_SENSOR_HUM         = 1,    // Humidity (%)
     RULE_SENSOR_GAS         = 2,    // Gas MQ2 (Raw ADC)
     RULE_SENSOR_LUX         = 3,    // Ambient Light (Lux)
     RULE_SENSOR_PROBE_TEMP  = 4,    // Water Temp Probe (°C)
-    RULE_SENSOR_TANK_LEVEL  = 5     // Tank Level (%)
+    RULE_SENSOR_TANK_LEVEL  = 5,    // Tank Level (%)
+    RULE_SENSOR_MOTION      = 6     // Motion Detected (1 = Active, 0 = Clear)
 };
 
 enum RuleCondition : uint8_t {
@@ -41,10 +44,11 @@ struct AutomationRule {
     bool enabled;
     char name[24];
     RuleSensorType sensor;
+    uint8_t sensorIndex;     // 0-based instance index within sensor group
     RuleCondition condition;
     float threshold;
     float hysteresis;
-    uint8_t targetRelay;     // 0-4 for single relay, 0xFF for all
+    uint8_t targetRelay;     // 0-(MAX_RELAYS-1) for single relay, 0xFF for all
     RuleActionType action;
     bool triggered;          // True if rule has fired (latched to prevent re-firing)
 };
@@ -54,8 +58,7 @@ public:
     RuleManager();
 
     void begin(StorageManager& storage);
-    void loop(float temp, float hum, bool dhtFault, int gasRaw, bool gasWarming,
-              float lux, float probeTemp, bool probeFault, int tankLevel, RelayManager& relayMgr);
+    void loop(SensorManager& sensorMgr, RelayManager& relayMgr);
 
     bool addRule(const AutomationRule& rule);
     bool updateRule(uint8_t id, const AutomationRule& rule);
@@ -78,8 +81,7 @@ private:
 
     void loadRules();
     int findRuleIndex(uint8_t id);
-    float getSensorValue(RuleSensorType sensor, float temp, float hum, int gasRaw,
-                         float lux, float probeTemp, int tankLevel);
+    static bool readSensorValue(SensorManager& sensorMgr, RuleSensorType sensor, uint8_t idx, float& outVal);
 };
 
 #endif // RULE_MANAGER_H

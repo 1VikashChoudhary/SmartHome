@@ -79,6 +79,17 @@ static const char PAGE_INDEX[] PROGMEM = R"rawliteral(
 --glass:rgba(255,255,255,0.88);
 --glass-border:rgba(0,0,0,0.06);
 }
+.light .ver{background:rgba(15,23,42,0.05);color:var(--text2);}
+.light .badge-guest{color:#a16207!important;}
+.light .theme-btn,.light .btn-outline{background:rgba(15,23,42,0.04);}
+.light .theme-btn:hover,.light .btn-outline:hover{color:var(--accent);background:rgba(99,102,241,0.1);}
+.light .card:hover{box-shadow:0 16px 36px -8px rgba(15,23,42,0.12),inset 0 1px 0 0 #ffffff;}
+.light .gauge,.light .relay-card,.light .log-list{background:#f1f5f9;box-shadow:inset 0 1px 2px rgba(15,23,42,0.06);}
+.light .gauge-value{color:var(--text);}
+.light .gas-bar-wrap{background:#e2e8f0;box-shadow:inset 0 1px 2px rgba(15,23,42,0.1);}
+.light .toggle{background:#cbd5e1;}
+.light .tab:hover:not(.active){background:rgba(15,23,42,0.05);}
+.light input[type=range]{background:rgba(15,23,42,0.12);}
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Inter','Segoe UI',Roboto,sans-serif;background:var(--bg);background-image:var(--bg-mesh);background-attachment:fixed;color:var(--text);min-height:100vh;transition:background .3s,color .3s;-webkit-font-smoothing:antialiased;}
 .container{max-width:1420px;margin:0 auto;padding:22px 26px;}
@@ -274,10 +285,10 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="card">
 <div class="card-title"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15 13V5a3 3 0 00-6 0v8a5 5 0 106 0zm-3-9a1 1 0 011 1v3h-2V5a1 1 0 011-1z"/></svg> Environment &amp; Sensors</div>
 <div class="gauge-row">
-<div class="gauge"><div class="gauge-value" id="temp">--<span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
-<div class="gauge"><div class="gauge-value" id="hum">--<span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
-<div class="gauge" id="cardPressure" style="display:none;"><div class="gauge-value" id="pressure">--<span class="gauge-unit">hPa</span></div><div class="gauge-label">Barometer</div></div>
-<div class="gauge" id="cardLux" style="display:none;"><div class="gauge-value" id="lux">--<span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Lux</div></div>
+<div class="gauge"><div class="gauge-value"><span id="temp">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
+<div class="gauge"><div class="gauge-value"><span id="hum">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
+<div class="gauge" id="cardPressure" style="display:none;"><div class="gauge-value"><span id="pressure">--</span><span class="gauge-unit">hPa</span></div><div class="gauge-label">Barometer</div></div>
+<div class="gauge" id="cardLux" style="display:none;"><div class="gauge-value"><span id="lux">--</span><span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Lux</div></div>
 </div>
 
 <div class="status-row" id="rowMotion" style="display:none;margin-top:8px;"><span class="status-label">Motion Occupancy</span><span class="badge" id="motionBadge">--</span></div>
@@ -304,6 +315,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 </div>
 <div class="gas-info"><span>Raw: <span id="gasRaw">0</span></span><span>Threshold: <span id="gasTh">400</span></span></div>
 </div>
+<div id="multiSensorsWrap" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border);"></div>
 </div>
 
 <!-- Quick Relay Status -->
@@ -334,13 +346,15 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="tab-content" id="tab-sensors">
 <div class="grid">
 <div class="card">
-<div class="card-title">DHT22 &mdash; Temperature & Humidity</div>
+<div class="card-title">Climate &mdash; Temperature &amp; Humidity</div>
 <div class="gauge-row">
-<div class="gauge"><div class="gauge-value" id="temp2">--<span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
-<div class="gauge"><div class="gauge-value" id="hum2">--<span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
+<div class="gauge"><div class="gauge-value"><span id="temp2">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
+<div class="gauge"><div class="gauge-value"><span id="hum2">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
 </div>
 <div class="status-row"><span class="status-label">Sensor Status</span><span id="dhtStatus" class="badge badge-ok">OK</span></div>
 <div class="status-row"><span class="status-label">Temp Alarm Threshold</span><span class="status-value"><span id="tempTh">45</span>&deg;C</span></div>
+<div class="admin-only">
+<div id="climateCalSlotRow" style="display:none;margin-top:10px" class="form-group"><label>Climate Sensor Slot</label><select id="climateCalIdx" onchange="onClimateCalSlotChange()"></select></div>
 <div class="form-row" style="margin-top:12px">
 <div class="form-group"><label>Temp Offset (&deg;C)</label><input type="number" step="0.1" id="tempOffset" value="0"></div>
 <div class="form-group"><label>Humidity Offset (%)</label><input type="number" step="0.1" id="humOffset" value="0"></div>
@@ -348,9 +362,10 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="form-group"><label>Temp Alarm Threshold (&deg;C)</label><input type="number" step="0.5" id="tempAlarmTh" value="45"></div>
 <button class="btn btn-primary btn-sm" onclick="saveSensorCal()">Save Calibration</button>
 </div>
+</div>
 <div class="card">
 <div class="card-title">MQ2 &mdash; Gas Sensor</div>
-<div class="gauge"><div class="gauge-value" id="gasVal">--<span class="gauge-unit" id="gasMaxUnit"> /4095</span></div><div class="gauge-label">Raw ADC Value</div></div>
+<div class="gauge"><div class="gauge-value"><span id="gasVal">--</span><span class="gauge-unit" id="gasMaxUnit"> /4095</span></div><div class="gauge-label">Raw ADC Value</div></div>
 <div style="margin-top:12px">
 <div class="gas-bar-wrap" style="height:32px">
 <div class="gas-bar" id="gasBar2" style="width:0%"></div>
@@ -359,18 +374,23 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="gas-info"><span>Percentage: <span id="gasPct">0</span>%</span><span>Status: <span id="gasStat">Safe</span></span></div>
 </div>
 <div class="status-row" style="margin-top:8px"><span class="status-label">Warming Up</span><span id="gasWarm" class="badge badge-warn">--</span></div>
+<div class="admin-only" id="sensorMq2Controls">
+<div id="mq2HwNote" style="display:none;font-size:0.74rem;color:var(--orange);margin-top:8px;">MQ-2 Gas sensor is disabled or pins unassigned in Hardware Profile.</div>
+<div id="mq2CalSlotRow" style="display:none;margin-top:10px" class="form-group"><label>Gas Sensor Slot</label><select id="mq2CalIdx" onchange="onMq2CalSlotChange()"></select></div>
 <div class="form-group" style="margin-top:12px"><label>Gas Sensor</label>
 <div style="display:flex;gap:8px;align-items:center">
 <select id="gasEn" style="flex:1"><option value="1">Enabled</option><option value="0">Disabled</option></select>
-<button class="btn btn-primary btn-sm" onclick="saveGasEnable()">Save</button>
+<button class="btn btn-primary btn-sm" id="btnGasSave" onclick="saveGasEnable()">Save</button>
 </div></div>
 <div class="form-group" style="margin-top:12px"><label id="gasThLabel">Alarm Threshold (0-4095)</label>
-<input type="range" min="50" max="4000" id="gasThSlider" value="400" oninput="document.getElementById('gasThVal').textContent=this.value">
+<input type="range" min="10" max="4095" id="gasThSlider" value="400" oninput="document.getElementById('gasThVal').textContent=this.value">
 <span id="gasThVal">400</span></div>
-<button class="btn btn-primary btn-sm" onclick="saveGasTh()">Save Threshold</button>
-<button class="btn btn-outline btn-sm" onclick="calibrateMQ2()">Calibrate Baseline</button>
+<button class="btn btn-primary btn-sm" id="btnGasThSave" onclick="saveGasTh()">Save Threshold</button>
+<button class="btn btn-outline btn-sm" id="btnGasCal" onclick="calibrateMQ2()">Calibrate Baseline</button>
 </div>
 </div>
+</div>
+<div id="multiSensorCardsWrap" style="display:none;margin-top:14px;"></div>
 </div>
 
 <!-- Alarms Tab -->
@@ -379,7 +399,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="card-title">Timer Tasks</div>
 <div style="color:var(--text2);font-size:.78rem;margin-bottom:12px">Create fixed-time schedules or one-shot delay timers for relay and buzzer actions.</div>
 <div id="alarmList"></div>
-<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+<div class="admin-only" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
 <button class="btn btn-primary" onclick="showAlarmModal('clock')">+ Fixed Time</button>
 <button class="btn btn-outline" onclick="showAlarmModal('delay')">+ Delay Timer</button>
 </div>
@@ -392,7 +412,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="card-title"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg> Sensor Automation Rules</div>
 <div style="color:var(--text2);font-size:.78rem;margin-bottom:12px">Automatically control relays when temperature, humidity, or gas levels cross your defined thresholds.</div>
 <div id="ruleList"></div>
-<div style="margin-top:16px">
+<div class="admin-only" style="margin-top:16px">
 <button class="btn btn-primary" onclick="showRuleModal()">+ Add New Rule</button>
 </div>
 </div>
@@ -528,8 +548,9 @@ Family and Guests can toggle switches, view sensors, and set quick timers withou
 </div>
 </div>
 <div style="margin-top:16px;">
-<button class="btn btn-primary btn-sm" onclick="saveLCD()">Save LCD</button>
+<button class="btn btn-primary btn-sm" id="btnLcdSave" onclick="saveLCD()">Save LCD</button>
 </div>
+<div id="lcdHwNote" style="display:none;font-size:0.74rem;color:var(--orange);margin-top:6px;">LCD display is disabled in Hardware Profile.</div>
 </div>
 
 <!-- Card 6: Buzzer & Acoustic Alerts -->
@@ -540,10 +561,11 @@ Family and Guests can toggle switches, view sensors, and set quick timers withou
 <div class="form-group"><label>Volume</label><input type="range" min="0" max="255" id="buzVol" value="128"></div>
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;">
-<button class="btn btn-primary btn-sm" onclick="saveBuzzer()">Save Buzzer</button>
-<button class="btn btn-outline btn-sm" onclick="testBuzzer()">Test Beep</button>
+<button class="btn btn-primary btn-sm" id="btnBuzSave" onclick="saveBuzzer()">Save Buzzer</button>
+<button class="btn btn-outline btn-sm" id="btnBuzTest" onclick="testBuzzer()">Test Beep</button>
 <button class="btn btn-red btn-sm" onclick="muteBuzzer()">Mute 5 min</button>
 </div>
+<div id="buzHwNote" style="display:none;font-size:0.74rem;color:var(--orange);margin-top:6px;">Buzzer is disabled or pin unassigned in Hardware Profile.</div>
 </div>
 </div>
 </div>
@@ -604,7 +626,7 @@ R"rawliteral("></div>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwRelayChannel()">− Remove</button>
 </div>
 </div>
-<select id="hwNumRelays" onchange="renderHwChannelsFromUI()"><option value="0">0 (Sensor Only)</option><option value="1">1 Relay</option><option value="2")rawliteral"
+<select id="hwNumRelays" onchange="setHwMode('custom');renderHwChannelsFromUI()"><option value="0">0 (Sensor Only)</option><option value="1">1 Relay</option><option value="2")rawliteral"
 #if defined(ESP8266)
 " selected"
 #endif
@@ -619,76 +641,90 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 <div class="card-title" style="margin-top:10px;font-size:0.95rem;">Relay Channels &amp; Wall Switches</div>
 <div id="hwChannelsContainer" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;"></div>
 
-<div class="card-title" style="margin-top:14px;font-size:0.95rem;">Sensors &amp; Peripherals</div>
+<div class="card-title" style="margin-top:14px;font-size:0.95rem;">Sensors (Dynamic Multi-Instance) &amp; Peripherals</div>
+<div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px;">
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x) <span id="hwClimatesCount" class="badge badge-info">0 / 4</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('climates')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('climates')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwClimatesContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Ambient Light Sensors (BH1750 I2C: 0x23 / 0x5C) <span id="hwLightsCount" class="badge badge-info">0 / 2</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('lights')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('lights')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwLightsContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Motion &amp; Occupancy Sensors (PIR / mmWave Radar) <span id="hwMotionsCount" class="badge badge-info">0 / 6</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('motions')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('motions')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwMotionsContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Water Temperature Probes (DS18B20 1-Wire) <span id="hwProbesCount" class="badge badge-info">0 / 4</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('probes')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('probes')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwProbesContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Ultrasonic Distance &amp; Water Tank Monitors <span id="hwUltrasonicsCount" class="badge badge-info">0 / 4</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('ultrasonics')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('ultrasonics')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwUltrasonicsContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+<div style="font-weight:600;color:var(--accent2)">Gas &amp; Smoke Sensors (MQ-2) <span id="hwMq2sCount" class="badge badge-info">0 / 4</span></div>
+<div style="display:flex;gap:4px;">
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('mq2s')">+ Add</button>
+<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('mq2s')">&minus; Remove</button>
+</div>
+</div>
+<div id="hwMq2sContainer" style="display:flex;flex-direction:column;gap:8px;"></div>
+</div>
+
+</div>
+
 <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));gap:12px;margin-bottom:16px;">
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Climate Sensor</div>
-<div class="form-group"><label>Model</label><select id="hwDhtType" onchange="onClimateTypeChange();checkHwConflicts()"><option value="0">Disabled (None)</option><option value="1">DHT11</option><option value="2" selected>DHT22 / AM2302</option><option value="3">BME280 (I2C Temp+Hum+Baro)</option><option value="4">AHT20 (I2C Temp+Hum)</option><option value="5">SHT31 / SHT3x (I2C High Accuracy)</option></select></div>
-<div class="form-group" id="hwDhtPinGroup"><label>Data GPIO Pin</label><select id="hwDhtPin" onchange="checkHwConflicts()"></select></div>
-<div id="hwI2cClimateNote" style="display:none;font-size:0.75rem;color:var(--text2);margin-top:4px;">Uses shared I2C bus (SDA: GPIO 21, SCL: GPIO 22).</div>
-</div>
-
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Ambient Light Sensor (Optics)</div>
-<div class="form-group"><label>Model</label><select id="hwLightType"><option value="0">Disabled</option><option value="1">BH1750 (I2C 0x23 / Lux)</option></select></div>
-<div style="font-size:0.75rem;color:var(--text2);margin-top:4px;">Uses shared I2C bus (SDA: GPIO 21, SCL: GPIO 22).</div>
-</div>
-
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Motion &amp; Occupancy Sensor</div>
-<div class="form-group"><label>Sensor Type</label><select id="hwMotionType" onchange="checkHwConflicts()"><option value="0">Disabled</option><option value="1">PIR Motion Sensor</option><option value="2">mmWave Radar (LD2410)</option></select></div>
-<div class="form-group"><label>Digital Signal GPIO Pin</label><select id="hwMotionPin" onchange="checkHwConflicts()"></select></div>
-</div>
-
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Water Temperature Probe (DS18B20)</div>
-<div class="form-group"><label>Probe Status</label><select id="hwProbeType" onchange="checkHwConflicts()"><option value="0">Disabled</option><option value="1">DS18B20 (1-Wire Waterproof)</option></select></div>
-<div class="form-group"><label>1-Wire GPIO Pin (Needs 4.7k&Omega; Pull-up)</label><select id="hwProbePin" onchange="checkHwConflicts()"></select></div>
-</div>
-
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border);grid-column: 1 / -1;">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Ultrasonic Distance &amp; Overhead Water Tank Monitor</div>
-<div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));gap:10px;">
-<div class="form-group"><label>Module Model</label><select id="hwUltrasonicType" onchange="onUltrasonicTypeChange();checkHwConflicts()"><option value="0">Disabled</option><option value="1" selected>HC-SR04P (3.3V Native - Recommended)</option><option value="2">HC-SR04 (5V Legacy - Needs Divider)</option><option value="3">JSN-SR04T (Waterproof Transceiver)</option></select></div>
-<div class="form-group"><label>Trigger (Trig) Pin</label><select id="hwTrigPin" onchange="checkHwConflicts()"></select></div>
-<div class="form-group"><label>Echo Pin</label><select id="hwEchoPin" onchange="checkHwConflicts()"></select></div>
-<div class="form-group"><label>Tank Total Depth (cm)</label><input type="number" id="hwTankDepth" value="150" min="20" max="500"></div>
-<div class="form-group"><label>Sensor Air Gap (cm)</label><input type="number" id="hwTankAirGap" value="15" min="5" max="100"></div>
-</div>
-<!-- Dynamic Amber Warning for 5V HC-SR04 -->
-<div id="hwUltrasonicWarn" style="display:none;background:rgba(245,158,11,0.12);border-left:4px solid #f59e0b;padding:12px 14px;border-radius:6px;margin-top:10px;font-size:0.83rem;color:var(--text1);line-height:1.5;">
-<div style="font-weight:700;color:#f59e0b;margin-bottom:6px;font-size:0.88rem;">WARNING: Electrical Safety Precaution (5V to 3.3V):</div>
-<ul style="margin:0;padding-left:18px;">
-<li>The standard blue HC-SR04 is powered by 5V, so its <code>ECHO</code> pin sends a 5V signal.</li>
-<li>The controller GPIO pins are rated for 3.3V.</li>
-<li><strong>Best Practice:</strong> Place a simple two-resistor voltage divider (e.g. 1k&Omega; and 2k&Omega;) on the <code>ECHO</code> line before connecting it to an input GPIO to safely step the voltage down from 5V to ~3.3V.</li>
-<li><em>Alternative:</em> If you use the newer <strong>HC-SR04P</strong> or the waterproof <strong>JSN-SR04T</strong> module, it runs directly at 3.3V with no resistors needed.</li>
-</ul>
-</div>
-<!-- 3.3V Safe Info Banner for HC-SR04P -->
-<div id="hwUltrasonicInfo" style="display:none;background:rgba(16,185,129,0.12);border-left:4px solid #10b981;padding:10px 14px;border-radius:6px;margin-top:10px;font-size:0.83rem;color:var(--text1);">
-<span style="font-weight:600;color:#10b981;">&#10003; 3.3V Safe:</span> HC-SR04P operates directly at 3.3V logic. Plug-and-play connection to controller pins with no voltage divider required.
-</div>
-</div>
-
-<div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Gas &amp; Smoke Sensor (MQ-2)</div>
-<div class="form-group"><label>Sensor Status</label><select id="hwMq2En" onchange="checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
-<div class="form-group"><label>Analog Pin (ADC1 only)</label><select id="hwMq2AnalogPin" onchange="checkHwConflicts()"></select></div>
-<div class="form-group"><label>Digital DO Pin</label><select id="hwMq2DigitalPin" onchange="checkHwConflicts()"></select></div>
-</div>
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Alarm Buzzer</div>
-<div class="form-group"><label>Buzzer</label><select id="hwBuzEn" onchange="checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
+<div class="form-group"><label>Buzzer</label><select id="hwBuzEn" onchange="onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
 <div class="form-group"><label>LEDC PWM GPIO Pin</label><select id="hwBuzPin" onchange="checkHwConflicts()"></select></div>
 </div>
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">I2C LCD Display (1602/2004)</div>
-<div class="form-group"><label>LCD Status</label><select id="hwLcdEn" onchange="checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
+<div class="form-group"><label>LCD Status</label><select id="hwLcdEn" onchange="onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
 <div class="form-row">
-<div class="form-group"><label>I2C Address</label><select id="hwLcdAddr"><option value="39">0x27 (Standard)</option><option value="63">0x3F</option></select></div>
+<div class="form-group"><label>I2C Address</label><select id="hwLcdAddr" onchange="checkHwConflicts()"><option value="39">0x27 (Standard)</option><option value="63">0x3F</option></select></div>
 <div class="form-group"><label>Size</label><select id="hwLcdSize"><option value="16x2" selected>16 &times; 2</option><option value="20x4">20 &times; 4</option></select></div>
 </div>
 <div class="form-row">
@@ -719,7 +755,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 <div style="margin-top:12px;display:flex;gap:8px;">
 <button class="btn btn-outline btn-sm" onclick="refreshLogs()">Refresh</button>
 <button class="btn btn-outline btn-sm" onclick="downloadLogs()">Download CSV</button>
-<button class="btn btn-red btn-sm" onclick="clearLogs()">Clear All</button>
+<button class="btn btn-red btn-sm admin-only" onclick="clearLogs()">Clear All</button>
 </div>
 </div>
 </div>
@@ -803,8 +839,8 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 </div>
 </div>
 <div class="form-group"><label>Action</label>
-<select id="alarmAction"><option value="0">Relay ON</option><option value="1">Relay OFF</option><option value="2">Relay Toggle</option><option value="3">Buzzer</option><option value="4">All Relays ON</option><option value="5">All Relays OFF</option></select></div>
-<div class="form-group"><label>Target Relay</label>
+<select id="alarmAction" onchange="updateAlarmActionFields()"><option value="0">Relay ON</option><option value="1">Relay OFF</option><option value="2">Relay Toggle</option><option value="3">Buzzer</option><option value="4">All Relays ON</option><option value="5">All Relays OFF</option></select></div>
+<div class="form-group" id="alarmRelayGroup"><label>Target Relay</label>
 <select id="alarmRelay"><option value="0">Relay 1</option><option value="1">Relay 2</option><option value="2">Relay 3</option><option value="3">Relay 4</option><option value="4">Relay 5</option><option value="255">All</option></select></div>
 <div style="display:flex;gap:8px;margin-top:16px">
 <button class="btn btn-primary" onclick="saveAlarm()">Save</button>
@@ -896,13 +932,16 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 <option value="3">Ambient Light (Lux)</option>
 <option value="4">Water Probe Temp (&deg;C)</option>
 <option value="5">Water Tank Level (%)</option>
+<option value="6">Motion / Occupancy (1/0)</option>
 </select></div>
 <div class="form-group"><label>Condition</label>
-<select id="ruleCondition">
+<select id="ruleCondition" onchange="onRuleConditionChange()">
 <option value="0">Rises Above (&gt;=)</option>
 <option value="1">Falls Below (&lt;=)</option>
 </select></div>
 </div>
+<div class="form-group" id="ruleSensorIdxGroup"><label>Sensor Instance</label>
+<select id="ruleSensorIdx"></select></div>
 <div class="form-row">
 <div class="form-group"><label>Threshold Value</label>
 <input type="number" step="0.5" id="ruleThreshold" value="30.0"></div>
@@ -929,7 +968,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 
 <script>
 function escapeHtml(s){if(s===null||s===undefined)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-let ws,wsData={},alarmCache=[],theme=localStorage.getItem('theme')||'dark',webPassSet=false,wsToken='';
+let ws,wsData={},alarmCache=[],theme=localStorage.getItem('theme')||'dark',webPassSet=false,wsToken='',gAuthRole='admin';
 if(theme==='light')document.body.classList.add('light');
 
 // Theme
@@ -994,7 +1033,7 @@ try{
 const d=JSON.parse(e.data);
 if(d.type==='auth_error'){
 fetch('/api/config').then(r=>r.ok?r.json():null).then(cfg=>{
-if(cfg&&cfg.ws_token){wsToken=cfg.ws_token;sendWsSubscribe();}
+if(cfg){if(cfg.auth_role){gAuthRole=cfg.auth_role;applyRoleUI();}if(cfg.ws_token){wsToken=cfg.ws_token;sendWsSubscribe();}}
 }).catch(()=>{});
 return;
 }
@@ -1015,21 +1054,26 @@ wsData=d;updateDashboard(d);
 };
 }
 
+function applyRoleUI(){
+const isGuest=(gAuthRole==='guest');
+document.querySelectorAll('.admin-only').forEach(el=>{el.style.display=isGuest?'none':'';});
+const rb=document.getElementById('roleBadge');if(rb)rb.style.display=isGuest?'inline-block':'none';
+const lo=document.getElementById('linkOtaUpdate');if(lo)lo.style.display=isGuest?'none':'inline-flex';
+const ts=document.getElementById('tabNavSettings');if(ts)ts.style.display=isGuest?'none':'inline-flex';
+const th=document.getElementById('tabNavHardware');if(th)th.style.display=isGuest?'none':'inline-flex';
+const ty=document.getElementById('tabNavSystem');if(ty)ty.style.display=isGuest?'none':'inline-flex';
+}
+
 // Update dashboard from WS data
 function updateDashboard(d){
 if(d.auth_required){
 const blo=document.getElementById('btnLogOut');if(blo)blo.style.display='inline-flex';
 }
-if(d.auth_role==='guest'){
-const rb=document.getElementById('roleBadge');if(rb)rb.style.display='inline-block';
-const lo=document.getElementById('linkOtaUpdate');if(lo)lo.style.display='none';
-const ts=document.getElementById('tabNavSettings');if(ts)ts.style.display='none';
-const th=document.getElementById('tabNavHardware');if(th)th.style.display='none';
-const ty=document.getElementById('tabNavSystem');if(ty)ty.style.display='none';
-}
+if(d.auth_role)gAuthRole=d.auth_role;
+applyRoleUI();
 setText('wifiStatus',d.wifi_state||'--');
-setText('rssi',d.rssi||'--');
-setText('signal',d.signal||'--');
+setText('rssi',(d.rssi!==undefined&&d.rssi!==null)?d.rssi:'--');
+setText('signal',(d.signal!==undefined&&d.signal!==null)?d.signal:'--');
 setText('ipAddr',d.ip||'--');
 setText('hostname',d.hostname||'--');
 setText('mqttStatus',d.mqtt_state||'--');
@@ -1042,16 +1086,27 @@ document.title=(d.device_name||'SmartHome')+' Dashboard';
 
 // WiFi badge
 const wb=document.getElementById('wifiBadge');
-if(d.wifi_state==='Connected'){wb.className='badge badge-ok';wb.innerHTML='<span class="pulse">&#9679;</span> Connected';}
-else{wb.className='badge badge-err';wb.innerHTML='&#9679; '+d.wifi_state;}
+const wifiStateStr=d.wifi_state||'Disconnected';
+if(wifiStateStr==='Connected'){wb.className='badge badge-ok';wb.innerHTML='<span class="pulse">&#9679;</span> Connected';}
+else{wb.className='badge badge-err';wb.innerHTML='&#9679; '+escapeHtml(wifiStateStr);}
 
 // Temperature & humidity
+if(d.dht_enabled===false){
+setText('temp','--');setText('temp2','--');
+setText('hum','--');setText('hum2','--');
+const ds=document.getElementById('dhtStatus');
+if(ds){ds.className='badge badge-info';setText('dhtStatus','Disabled');}
+}else{
 if(d.temperature!==undefined){
 setText('temp',parseFloat(d.temperature).toFixed(1));setText('temp2',parseFloat(d.temperature).toFixed(1));
 setText('hum',parseFloat(d.humidity).toFixed(1));setText('hum2',parseFloat(d.humidity).toFixed(1));
 }
-if(d.dht_fault){document.getElementById('dhtStatus').className='badge badge-err';setText('dhtStatus','FAULT');}
-else{document.getElementById('dhtStatus').className='badge badge-ok';setText('dhtStatus','OK');}
+const ds=document.getElementById('dhtStatus');
+if(ds){
+if(d.dht_fault){ds.className='badge badge-err';setText('dhtStatus','FAULT');}
+else{ds.className='badge badge-ok';setText('dhtStatus','OK');}
+}
+}
 setText('tempTh',d.temp_threshold||'45');
 
 // Additional Telemetry
@@ -1091,7 +1146,7 @@ if(d.gas_raw!==undefined){
 const gasMax=d.gas_max||(d.platform==='ESP8266'?1023:4095);
 const gUnit=document.getElementById('gasMaxUnit');if(gUnit)gUnit.textContent=' /'+gasMax;
 const gLbl=document.getElementById('gasThLabel');if(gLbl)gLbl.textContent='Alarm Threshold (0-'+gasMax+')';
-const gSlider=document.getElementById('gasThSlider');if(gSlider&&gSlider.max!==String(gasMax)){gSlider.max=gasMax;}
+const gSlider=document.getElementById('gasThSlider');if(gSlider){gSlider.min=10;if(gSlider.max!==String(gasMax)){gSlider.max=gasMax;}}
 setText('gasRaw',d.gas_raw);setText('gasVal',d.gas_raw);
 setText('gasPct',d.gas_percent||0);
 const pct=Math.min(100,Math.round(d.gas_raw/gasMax*100));
@@ -1103,7 +1158,7 @@ else{if(bar)bar.className='gas-bar';if(bar2)bar2.className='gas-bar';}
 const thPct=(d.gas_threshold||400)/gasMax*100;
 const thLine1=document.getElementById('gasThLine');if(thLine1)thLine1.style.left=thPct+'%';
 const thLine2=document.getElementById('gasThLine2');if(thLine2)thLine2.style.left=thPct+'%';
-setText('gasTh',d.gas_threshold||400);
+setText('gasTh',d.gas_threshold!==undefined?d.gas_threshold:(gIsEsp8266?100:400));
 const gb=document.getElementById('gasBadge');
 if(d.gas_enabled===false){gb.className='badge badge-info';gb.textContent='Disabled';}
 else if(d.gas_warming){gb.className='badge badge-warn';gb.textContent='Warming';}
@@ -1114,12 +1169,83 @@ setText('gasWarm',d.gas_enabled===false?'Off':(d.gas_warming?'Yes':'No'));
 document.getElementById('gasWarm').className='badge '+(d.gas_enabled===false?'badge-info':(d.gas_warming?'badge-warn':'badge-ok'));
 }
 
+renderMultiSensors(d);
+
 // Relays
 if(d.relays){renderRelays(d.relays);}
 }
 
+function renderMultiSensors(d){
+const wrap=document.getElementById('multiSensorsWrap');
+const grid=document.getElementById('multiSensorCardsWrap');
+const chips=[];
+const cards=[];
+const climates=(d.climates||[]).filter(c=>c&&c.enabled);
+if(climates.length>1){
+climates.forEach(c=>{
+const nm=escapeHtml(c.label||('Climate #'+(c.index+1)));
+const val=c.fault?'FAULT':(parseFloat(c.temperature||0).toFixed(1)+'°C / '+parseFloat(c.humidity||0).toFixed(1)+'%'+(c.barometer?(' / '+parseFloat(c.pressure||0).toFixed(0)+' hPa'):''));
+const baroGauge=c.barometer?`<div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.pressure||0).toFixed(0)}<span class="gauge-unit">hPa</span></div><div class="gauge-label">Pressure</div></div>`:'';
+chips.push(`<span><b>${nm}:</b> ${val}</span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${c.fault?'badge-err':'badge-ok'}">${escapeHtml(c.type_name||'Climate')}</span></div><div class="gauge-row"><div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.temperature||0).toFixed(1)}<span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div><div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.humidity||0).toFixed(1)}<span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>${baroGauge}</div></div>`);
+});
+}
+const lights=(d.lights||[]).filter(l=>l&&l.enabled);
+if(lights.length>0){
+lights.forEach(l=>{
+const nm=escapeHtml(l.label||('Light #'+(l.index+1)));
+if(lights.length>1)chips.push(`<span><b>${nm}:</b> ${parseFloat(l.lux||0).toFixed(1)} lx</span>`);
+if(lights.length>1)cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge badge-ok">0x${(l.i2c_addr||35).toString(16).toUpperCase()}</span></div><div class="gauge"><div class="gauge-value">${parseFloat(l.lux||0).toFixed(1)}<span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Illuminance</div></div></div>`);
+});
+}
+const motions=(d.motions||[]).filter(m=>m&&m.enabled);
+if(motions.length>1){
+motions.forEach(m=>{
+const nm=escapeHtml(m.label||('Motion #'+(m.index+1)));
+const st=m.detected?'DETECTED':(m.age_s<3600?(m.age_s+'s ago'):'Clear');
+chips.push(`<span><b>${nm}:</b> <span class="badge ${m.detected?'badge-err':'badge-ok'}">${st}</span></span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${m.detected?'badge-err':'badge-ok'}">${st}</span></div></div>`);
+});
+}
+const probes=(d.probes||[]).filter(p=>p&&p.enabled);
+if(probes.length>1){
+probes.forEach(p=>{
+const nm=escapeHtml(p.label||('Probe #'+(p.index+1)));
+const val=p.fault?'FAULT':(parseFloat(p.temperature||0).toFixed(1)+'°C');
+chips.push(`<span><b>${nm}:</b> ${val}</span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${p.fault?'badge-err':'badge-ok'}">${val}</span></div></div>`);
+});
+}
+const tanks=(d.tanks||[]).filter(t=>t&&t.enabled);
+if(tanks.length>1){
+tanks.forEach(t=>{
+const nm=escapeHtml(t.label||('Tank #'+(t.index+1)));
+chips.push(`<span><b>${nm}:</b> ${t.level_pct||0}% (${t.distance_cm||0} cm)</span>`);
+cards.push(`<div class="card"><div class="card-title">${nm}</div><div class="gauge"><div class="gauge-value">${t.level_pct||0}<span class="gauge-unit">%</span></div><div class="gauge-label">${t.distance_cm||0} cm</div></div></div>`);
+});
+}
+const mq2s=(d.mq2s||[]).filter(g=>g&&g.hw_allowed);
+if(mq2s.length>1){
+mq2s.forEach(g=>{
+const nm=escapeHtml(g.label||('Gas #'+(g.index+1)));
+const st=!g.enabled?'Disabled':(g.warming?'Warming':(g.alarm?'DANGER':'Safe'));
+chips.push(`<span><b>${nm}:</b> ${g.raw||0} <span class="badge ${g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok')}">${st}</span></span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok')}">${st}</span></div><div class="gauge"><div class="gauge-value">${g.raw||0}<span class="gauge-unit"> (${g.percent||0}%)</span></div><div class="gauge-label">Threshold: ${g.threshold||0}</div></div></div>`);
+});
+}
+if(wrap){
+wrap.style.display=chips.length?'block':'none';
+wrap.innerHTML=chips.length?('<div style="font-size:0.74rem;color:var(--text2);margin-bottom:6px;font-weight:600;">All Active Sensor Slots</div><div style="display:flex;flex-wrap:wrap;gap:10px;font-size:0.78rem;">'+chips.join('')+'</div>'):'';
+}
+if(grid){
+grid.style.display=cards.length?'block':'none';
+grid.innerHTML=cards.length?('<div class="grid">'+cards.join('')+'</div>'):'';
+}
+}
+
 // Render relay grid
 function renderRelays(relays){
+const isGuest=(gAuthRole==='guest');
 let html='',detailHtml='';
 relays.forEach((r,i)=>{
 const isEn=(r.enabled!==false);
@@ -1146,7 +1272,7 @@ ${hasTimer?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px">
 <div style="display:flex;gap:6px">
 <button class="btn btn-sm ${on?'btn-red':'btn-green'}" onclick="toggleRelay(${i})">${on?'Turn OFF':'Turn ON'}</button>
 <button class="btn btn-sm btn-outline" onclick="openQuickTimer(${i})">⏱️ Timer</button>
-<button class="btn btn-sm btn-outline" onclick="configRelay(${i})">Config</button>
+${isGuest?'':`<button class="btn btn-sm btn-outline" onclick="configRelay(${i})">Config</button>`}
 </div></div>`;
 }else{
 detailHtml+=`<div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg);border-radius:12px;margin-bottom:8px;border:1px dashed var(--card-border);opacity:0.65">
@@ -1155,7 +1281,7 @@ detailHtml+=`<div style="display:flex;align-items:center;gap:12px;padding:12px;b
 <div style="font-size:.72rem;color:var(--text2)">Channel ${i+1} is disabled in Hardware Profile &mdash; GPIO pins are released</div>
 </div>
 <div style="display:flex;gap:6px">
-<button class="btn btn-sm btn-outline" onclick="document.querySelector('[onclick*=\'hardware\']').click()">Enable in Hardware</button>
+${isGuest?'':`<button class="btn btn-sm btn-outline" onclick="document.getElementById('tabNavHardware')?.click()">Enable in Hardware</button>`}
 </div></div>`;
 }
 });
@@ -1212,6 +1338,10 @@ const trigger = parseInt(document.getElementById('relayConfigTrigger').value);
 const boot = parseInt(document.getElementById('relayConfigBoot').value);
 const autoOff = parseInt(document.getElementById('relayConfigAutoOff').value || 0);
 const autoOn = parseInt(document.getElementById('relayConfigAutoOn').value || 0);
+if (isNaN(autoOff) || autoOff < 0 || autoOff > 1440 || isNaN(autoOn) || autoOn < 0 || autoOn > 1440) {
+    toast('Auto-OFF and Auto-ON must be 0 to 1440 minutes', 'err');
+    return;
+}
 const failsafe = document.getElementById('relayConfigFailsafe').value === '1';
 
 api('POST','/api/relay/config',{
@@ -1231,6 +1361,8 @@ wsData.relays[id].trigger = trigger;
 wsData.relays[id].boot = boot;
 wsData.relays[id].autoOff = autoOff;
 wsData.relays[id].autoOn = autoOn;
+wsData.relays[id].auto_off = autoOff;
+wsData.relays[id].auto_on = autoOn;
 wsData.relays[id].failsafe = failsafe;
 }
 renderRelays(wsData.relays);
@@ -1238,24 +1370,85 @@ loadAlarms();
 });
 }
 
+let gSensorCalData = null;
+function getSelectedCalIdx(id){const el=document.getElementById(id);return el?(parseInt(el.value)||0):0;}
+function onClimateCalSlotChange(){
+if(!gSensorCalData||!Array.isArray(gSensorCalData.climates))return;
+const idx=getSelectedCalIdx('climateCalIdx');
+const c=gSensorCalData.climates.find(x=>x.index===idx)||gSensorCalData.climates[0];
+if(c){
+document.getElementById('tempOffset').value=c.temp_offset||0;
+document.getElementById('humOffset').value=c.hum_offset||0;
+}
+}
+function onMq2CalSlotChange(){
+if(!gSensorCalData||!Array.isArray(gSensorCalData.mq2_sensors))return;
+const idx=getSelectedCalIdx('mq2CalIdx');
+const m=gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[0];
+if(m){
+const allowed=(m.hw_allowed!==false);
+document.getElementById('gasEn').value=(allowed&&m.enabled!==false)?'1':'0';
+document.getElementById('gasEn').disabled=!allowed;
+const sGasMax=gIsEsp8266?1023:4095;
+const gThSlider=document.getElementById('gasThSlider');
+if(gThSlider){
+gThSlider.min=10;gThSlider.max=sGasMax;gThSlider.disabled=!allowed;
+gThSlider.value=Math.min(sGasMax,Math.max(10,m.threshold||(gIsEsp8266?100:1500)));
+}
+document.getElementById('gasThVal').textContent=(gThSlider?gThSlider.value:400);
+const mq2Note=document.getElementById('mq2HwNote');if(mq2Note)mq2Note.style.display=allowed?'none':'block';
+['btnGasSave','btnGasThSave','btnGasCal'].forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=!allowed;});
+}
+}
 function saveSensorCal(){
+const idx=getSelectedCalIdx('climateCalIdx');
+const to=parseFloat(document.getElementById('tempOffset').value);
+const ho=parseFloat(document.getElementById('humOffset').value);
 api('POST','/api/config/sensor',{
-temp_offset:parseFloat(document.getElementById('tempOffset').value),
-hum_offset:parseFloat(document.getElementById('humOffset').value),
+sensor_index:idx,
+temp_offset:to,
+hum_offset:ho,
 temp_alarm:parseFloat(document.getElementById('tempAlarmTh').value)
-}).then(()=>toast('Calibration saved','ok'));
+}).then(()=>{
+if(gSensorCalData&&Array.isArray(gSensorCalData.climates)){
+const c=gSensorCalData.climates.find(x=>x.index===idx)||gSensorCalData.climates[idx];
+if(c){c.temp_offset=to;c.hum_offset=ho;}
+}
+toast('Calibration saved','ok');
+});
 }
 function saveGasEnable(){
+const idx=getSelectedCalIdx('mq2CalIdx');
+const en=document.getElementById('gasEn').value==='1';
 api('POST','/api/config/sensor',{
-mq2_enabled:document.getElementById('gasEn').value==='1'
-}).then(()=>toast('Gas sensor '+(document.getElementById('gasEn').value==='1'?'enabled':'disabled'),'ok'));
+sensor_index:idx,
+mq2_enabled:en
+}).then(()=>{
+if(gSensorCalData&&Array.isArray(gSensorCalData.mq2_sensors)){
+const m=gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[idx];
+if(m)m.enabled=en;
+}
+toast('Gas sensor '+(en?'enabled':'disabled'),'ok');
+});
 }
 function saveGasTh(){
+const idx=getSelectedCalIdx('mq2CalIdx');
+const th=parseInt(document.getElementById('gasThSlider').value);
 api('POST','/api/config/sensor',{
-mq2_threshold:parseInt(document.getElementById('gasThSlider').value)
-}).then(()=>toast('Threshold saved','ok'));
+sensor_index:idx,
+mq2_threshold:th
+}).then(()=>{
+if(gSensorCalData&&Array.isArray(gSensorCalData.mq2_sensors)){
+const m=gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[idx];
+if(m)m.threshold=th;
 }
-function calibrateMQ2(){api('POST','/api/config/sensor',{calibrate_mq2:true}).then(()=>toast('MQ2 calibrated','ok'));}
+toast('Threshold saved','ok');
+});
+}
+function calibrateMQ2(){
+const idx=getSelectedCalIdx('mq2CalIdx');
+api('POST','/api/config/sensor',{sensor_index:idx,calibrate_mq2:true}).then(()=>toast('MQ2 calibrated','ok'));
+}
 function saveWiFi(){
 api('POST','/api/config/wifi',{ssid:document.getElementById('wifiSSID').value,pass:document.getElementById('wifiPass').value})
 .then(()=>toast('WiFi saved, reconnecting...','info'));
@@ -1410,6 +1603,7 @@ setText('dOta',d.ota_status||'Idle');
 // Settings
 function loadSettings(){
 return fetch('/api/config').then(r=>r.json()).then(d=>{
+if(d.auth_role){gAuthRole=d.auth_role;applyRoleUI();}
 if(d.ws_token){wsToken=d.ws_token;sendWsSubscribe();}
 if(d.device_name)document.getElementById('cfgDevName').value=d.device_name;
 if(d.hostname){
@@ -1440,32 +1634,84 @@ document.getElementById('mqttClientId').value=d.mqtt.client_id||'';
 document.getElementById('mqttUser').value=d.mqtt.user||'';
 }
 if(d.lcd){
-document.getElementById('lcdEn').value=d.lcd.enabled?'1':'0';
+const lcdAllowed=(d.lcd.hw_allowed!==false);
+document.getElementById('lcdEn').value=(lcdAllowed&&d.lcd.enabled)?'1':'0';
+document.getElementById('lcdEn').disabled=!lcdAllowed;
+const btnLcd=document.getElementById('btnLcdSave');if(btnLcd)btnLcd.disabled=!lcdAllowed;
+const lcdNote=document.getElementById('lcdHwNote');if(lcdNote)lcdNote.style.display=lcdAllowed?'none':'block';
 document.getElementById('lcdBl').value=d.lcd.backlight?'1':'0';
 document.getElementById('lcdMode').value=(d.lcd.display_mode==='dht_relay')?'dht_relay':'rotate';
 document.getElementById('lcdRot').value=d.lcd.rotation||5;
 document.getElementById('lcdBright').value=d.lcd.brightness!==undefined?d.lcd.brightness:100;
-document.getElementById('lcdBrightVal').textContent=document.getElementById('lcdBright').value;
+document.getElementById('lcdBrightVal').textContent=document.getElementById('lcdBright').value+'%';
 document.getElementById('lcdAutoDim').value=d.lcd.auto_dim?'1':'0';
 document.getElementById('lcdDimStart').value=d.lcd.dim_start||'22:00';
 document.getElementById('lcdDimEnd').value=d.lcd.dim_end||'06:00';
 document.getElementById('lcdDimBright').value=d.lcd.dim_brightness!==undefined?d.lcd.dim_brightness:0;
-document.getElementById('lcdDimBrightVal').textContent=document.getElementById('lcdDimBright').value;
+document.getElementById('lcdDimBrightVal').textContent=document.getElementById('lcdDimBright').value+'%';
 toggleLcdDimFields();
 }
 if(d.buzzer){
-document.getElementById('buzEn').value=d.buzzer.enabled?'1':'0';
+const buzAllowed=(d.buzzer.hw_allowed!==false);
+document.getElementById('buzEn').value=(buzAllowed&&d.buzzer.enabled)?'1':'0';
+document.getElementById('buzEn').disabled=!buzAllowed;
+const btnBuz=document.getElementById('btnBuzSave');if(btnBuz)btnBuz.disabled=!buzAllowed;
+const btnBuzT=document.getElementById('btnBuzTest');if(btnBuzT)btnBuzT.disabled=!buzAllowed;
+const buzNote=document.getElementById('buzHwNote');if(buzNote)buzNote.style.display=buzAllowed?'none':'block';
 document.getElementById('buzVol').value=d.buzzer.volume||128;
 }
 if(d.sensor){
+gSensorCalData=d.sensor;
+const cRow=document.getElementById('climateCalSlotRow');
+const cSel=document.getElementById('climateCalIdx');
+const cArr=Array.isArray(d.sensor.climates)?d.sensor.climates:[];
+if(cSel){
+cSel.innerHTML='';
+const cnt=Math.max(1,cArr.length);
+for(let i=0;i<cnt;i++){
+const opt=document.createElement('option');opt.value=i;
+const wsLabel=(wsData&&Array.isArray(wsData.climates)&&wsData.climates[i]&&wsData.climates[i].label)?wsData.climates[i].label:'';
+opt.textContent='Climate #'+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
+cSel.appendChild(opt);
+}
+}
+if(cRow)cRow.style.display=(cArr.length>1)?'block':'none';
 document.getElementById('tempOffset').value=d.sensor.temp_offset||0;
 document.getElementById('humOffset').value=d.sensor.hum_offset||0;
 document.getElementById('tempAlarmTh').value=d.sensor.temp_alarm||45;
-document.getElementById('gasEn').value=d.sensor.mq2_enabled===false?'0':'1';
+if(cArr.length>0)onClimateCalSlotChange();
+
+const mRow=document.getElementById('mq2CalSlotRow');
+const mSel=document.getElementById('mq2CalIdx');
+const mArr=Array.isArray(d.sensor.mq2_sensors)?d.sensor.mq2_sensors:[];
+if(mSel){
+mSel.innerHTML='';
+const cnt=Math.max(1,mArr.length);
+for(let i=0;i<cnt;i++){
+const opt=document.createElement('option');opt.value=i;
+const wsLabel=(wsData&&Array.isArray(wsData.mq2s)&&wsData.mq2s[i]&&wsData.mq2s[i].label)?wsData.mq2s[i].label:'';
+opt.textContent='Gas MQ-2 #'+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
+mSel.appendChild(opt);
+}
+}
+if(mRow)mRow.style.display=(mArr.length>1)?'block':'none';
+
+const mq2Allowed=(d.sensor.mq2_hw_allowed!==false);
+document.getElementById('gasEn').value=(mq2Allowed&&d.sensor.mq2_enabled!==false)?'1':'0';
+document.getElementById('gasEn').disabled=!mq2Allowed;
 const sGasMax = gIsEsp8266 ? 1023 : 4095;
 const gThSlider = document.getElementById('gasThSlider');
-if (gThSlider) { gThSlider.max = sGasMax; gThSlider.value = d.sensor.mq2_threshold || (gIsEsp8266 ? 400 : 1500); }
+if (gThSlider) {
+gThSlider.min = 10;
+gThSlider.max = sGasMax;
+gThSlider.disabled = !mq2Allowed;
+const rawTh = d.sensor.mq2_threshold || (gIsEsp8266 ? 100 : 1500);
+gThSlider.value = Math.min(sGasMax, Math.max(10, rawTh));
+}
 document.getElementById('gasThVal').textContent = (gThSlider ? gThSlider.value : 400);
+const mq2Note = document.getElementById('mq2HwNote'); if (mq2Note) mq2Note.style.display = mq2Allowed ? 'none' : 'block';
+['btnGasSave','btnGasThSave','btnGasCal'].forEach(id => { const b = document.getElementById(id); if (b) b.disabled = !mq2Allowed; });
+if(mArr.length>0)onMq2CalSlotChange();
 }
 });
 }
@@ -1508,19 +1754,29 @@ function getRelayName(i) {
     return 'Relay ' + (i + 1);
 }
 
-function populateAlarmRelayOptions() {
+function populateAlarmRelayOptions(preferredVal) {
     const select = document.getElementById('alarmRelay');
     if (!select) return;
-    const val = select.value;
-    const count = (wsData && wsData.relays) ? wsData.relays.length : (wsData.num_relays !== undefined ? wsData.num_relays : 5);
+    const val = (preferredVal !== undefined && preferredVal !== null) ? String(preferredVal) : select.value;
+    const count = (wsData && wsData.relays) ? wsData.relays.length : (wsData.num_relays !== undefined ? wsData.num_relays : (gIsEsp8266 ? 2 : 5));
     let html = '';
+    let hasVal = false;
     for (let i = 0; i < count; i++) {
         if (wsData && wsData.relays && wsData.relays[i] && wsData.relays[i].enabled === false) continue;
-        html += `<option value="${i}">${getRelayName(i)}</option>`;
+        if (String(i) === val) hasVal = true;
+        html += `<option value="${i}">${escapeHtml(getRelayName(i))}</option>`;
     }
     html += `<option value="255">All Active Relays</option>`;
+    if (val === '255') hasVal = true;
     select.innerHTML = html;
-    if (val !== "") select.value = val;
+    if (hasVal && val !== '') select.value = val;
+    else if (select.options.length > 0) select.selectedIndex = 0;
+}
+
+function updateAlarmActionFields() {
+    const act = parseInt(document.getElementById('alarmAction').value || '0');
+    const grp = document.getElementById('alarmRelayGroup');
+    if (grp) grp.style.display = (act >= 3) ? 'none' : 'block';
 }
 
 // Timers
@@ -1532,18 +1788,20 @@ if(!alarmCache.length){list.innerHTML='<div style="color:var(--text2);padding:16
 const types=['Once','Daily','Weekly','Weekdays','Weekends'];
 const actions=['Relay ON','Relay OFF','Toggle','Buzzer','All ON','All OFF'];
 const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const isGuest=(gAuthRole==='guest');
 let html='';
 alarmCache.forEach(a=>{
 const isDelay=parseInt(a.mode||0)===1;
 const time=isDelay?formatDelay(a.delay||0):formatFixedTime(a.hour||0,a.min||0);
-const info=isDelay?'Delay timer':(types[a.type]||'Once')+(a.type===2?' ('+days[a.dow]+')':'');
-const act=actions[a.action]+(a.relay<8?' - '+getRelayName(a.relay):'');
+const info=isDelay?'Delay timer':(types[a.type]||'Once')+(a.type===2?' ('+(days[a.dow]||'Sun')+')':'');
+const baseAct=actions[a.action]||'Action';
+const act=(a.action<=2)?(baseAct+' - '+(a.relay===255?'All Active Relays':getRelayName(a.relay))):baseAct;
 html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--bg);border-radius:10px;margin-bottom:6px;border:1px solid var(--card-border);opacity:${a.en?1:0.5}">
 <div style="font-size:1.2rem;font-weight:700;min-width:56px">${time}</div>
 <div style="flex:1"><div style="font-size:.82rem;font-weight:500">${escapeHtml(info)}</div><div style="font-size:.72rem;color:var(--text2)">${escapeHtml(act)}</div></div>
-<button class="btn btn-sm btn-outline" onclick="editAlarm(${a.id})">Edit</button>
+${isGuest?'':`<button class="btn btn-sm btn-outline" onclick="editAlarm(${a.id})">Edit</button>
 <button class="btn btn-sm btn-outline" onclick="toggleAlarmEn(${a.id},${!a.en})">${a.en?'Disable':'Enable'}</button>
-<button class="btn btn-sm btn-red" onclick="deleteAlarm(${a.id})">&#10005;</button>
+<button class="btn btn-sm btn-red" onclick="deleteAlarm(${a.id})">&#10005;</button>`}
 </div>`;
 });
 list.innerHTML=html;
@@ -1568,7 +1826,7 @@ document.getElementById('clockFields').style.display=delay?'none':'block';
 document.getElementById('delayFields').style.display=delay?'block':'none';
 }
 function showAlarmModal(mode='clock'){
-populateAlarmRelayOptions();
+populateAlarmRelayOptions(0);
 document.getElementById('alarmModal').classList.add('active');
 document.getElementById('alarmModalTitle').textContent=mode==='delay'?'Add Delay Timer':'Add Fixed-Time Task';
 document.getElementById('alarmEditId').value='0';
@@ -1579,8 +1837,8 @@ document.getElementById('alarmDow').value='0';
 document.getElementById('alarmDelayHours').value='0';
 document.getElementById('alarmDelayMinutes').value='30';
 document.getElementById('alarmAction').value='0';
-document.getElementById('alarmRelay').value='0';
 updateAlarmMode();
+updateAlarmActionFields();
 document.getElementById('dowGroup').style.display='none';
 }
 function closeAlarmModal(){document.getElementById('alarmModal').classList.remove('active');}
@@ -1589,7 +1847,8 @@ document.getElementById('alarmMode').onchange=updateAlarmMode;
 function editAlarm(id){
 const a=alarmCache.find(x=>x.id===id);
 if(!a)return;
-populateAlarmRelayOptions();
+const targetRelay=(a.relay!=null)?a.relay:0;
+populateAlarmRelayOptions(targetRelay);
 document.getElementById('alarmModal').classList.add('active');
 document.getElementById('alarmEditId').value=String(a.id);
 document.getElementById('alarmMode').value=String(a.mode||0);
@@ -1597,12 +1856,12 @@ setClockPicker((a.hour!=null)?a.hour:8,(a.min!=null)?a.min:0);
 document.getElementById('alarmType').value=(a.type!=null)?a.type:0;
 document.getElementById('alarmDow').value=(a.dow!=null)?a.dow:0;
 document.getElementById('alarmAction').value=(a.action!=null)?a.action:0;
-document.getElementById('alarmRelay').value=(a.relay!=null)?a.relay:0;
 const totalDelay=parseInt(a.delay||0);
 document.getElementById('alarmDelayHours').value=Math.floor(totalDelay/60);
 document.getElementById('alarmDelayMinutes').value=totalDelay%60;
 document.getElementById('alarmModalTitle').textContent=(parseInt(a.mode||0)===1)?'Edit Delay Timer':'Edit Fixed-Time Task';
 updateAlarmMode();
+updateAlarmActionFields();
 document.getElementById('dowGroup').style.display=document.getElementById('alarmType').value==='2'?'block':'none';
 }
 function saveAlarm(){
@@ -1722,13 +1981,16 @@ if(!rules||!rules.length){
 el.innerHTML='<div style="color:var(--text2);font-size:0.85rem;padding:12px 0;">No automation rules configured. Click "+ Add New Rule" to create one.</div>';
 return;
 }
-const sensorNames=['Temperature','Humidity','Gas MQ-2','Ambient Light','Water Probe Temp','Water Tank Level'];
-const sensorUnits=['°C','%','','lx','°C','%'];
+const sensorNames=['Temperature','Humidity','Gas MQ-2','Ambient Light','Water Probe Temp','Water Tank Level','Motion'];
+const sensorUnits=['°C','%','','lx','°C','%',''];
 const condNames=['≥ (Rises above)','≤ (Falls below)'];
 const actNames=['Turn ON','Turn OFF'];
+const isGuest=(gAuthRole==='guest');
 let html='';
 rules.forEach(r=>{
-const sName=sensorNames[r.sensor]||'Sensor';
+const sIdx=(r.s_idx!==undefined)?r.s_idx:((r.sensor_index!==undefined)?r.sensor_index:0);
+const sBase=sensorNames[r.sensor]||'Sensor';
+const sName=sBase+(sIdx>0?(' #'+(sIdx+1)):'');
 const sUnit=sensorUnits[r.sensor]||'';
 const cName=condNames[r.cond]||'';
 const aName=actNames[r.act]||'Action';
@@ -1744,11 +2006,11 @@ ${r.trig?'<span class="badge" style="background:rgba(245,158,11,0.2);color:#fbbf
 IF <b>${sName}</b> ${cName} <b>${r.th}${sUnit}</b> &plusmn;${r.hyst}${sUnit} &rarr; <b>${aName}</b> <u>${escapeHtml(rName)}</u>
 </div>
 </div>
-<div style="display:flex;gap:6px">
+${isGuest?'':`<div style="display:flex;gap:6px">
 <button class="btn btn-sm ${r.en?'btn-red':'btn-green'}" onclick="toggleRuleEn(${r.id},${!r.en})">${r.en?'Disable':'Enable'}</button>
 <button class="btn btn-sm btn-outline" onclick="editRule(${r.id})">Edit</button>
 <button class="btn btn-sm btn-outline" style="border-color:var(--red);color:var(--red)" onclick="deleteRule(${r.id})">Delete</button>
-</div>
+</div>`}
 </div>`;
 });
 el.innerHTML=html;
@@ -1757,31 +2019,70 @@ function populateRuleRelayOptions(selectedRelay){
 const sel=document.getElementById('ruleTargetRelay');
 if(!sel)return;
 sel.innerHTML='';
-const count=(wsData&&wsData.relays)?wsData.relays.length:(wsData.num_relays!==undefined?wsData.num_relays:5);
+const count=(wsData&&wsData.relays)?wsData.relays.length:(wsData.num_relays!==undefined?wsData.num_relays:(gIsEsp8266?2:5));
+let target=(selectedRelay!==undefined&&selectedRelay!==null)?selectedRelay:0;
+let matched=false;
 for(let i=0;i<count;i++){
 if(wsData&&wsData.relays&&wsData.relays[i]&&wsData.relays[i].enabled===false)continue;
 const opt=document.createElement('option');
 opt.value=i;
 opt.textContent=getRelayName(i);
-if(i===(selectedRelay||0))opt.selected=true;
+if(i===target){opt.selected=true;matched=true;}
 sel.appendChild(opt);
 }
 const allOpt=document.createElement('option');
 allOpt.value=255;
 allOpt.textContent='All Active Relays';
-if(selectedRelay===255)allOpt.selected=true;
+if(target===255){allOpt.selected=true;matched=true;}
 sel.appendChild(allOpt);
+if(!matched&&sel.options.length>0)sel.selectedIndex=0;
 }
-function updateRuleSensorFields(){
+function populateRuleSensorIdxOptions(sensorType, selectedIdx){
+const grp=document.getElementById('ruleSensorIdxGroup');
+const sel=document.getElementById('ruleSensorIdx');
+if(!sel)return;
+let arr=[];
+if(wsData){
+if(sensorType===0||sensorType===1)arr=wsData.climates||[];
+else if(sensorType===2)arr=wsData.mq2s||[];
+else if(sensorType===3)arr=wsData.lights||[];
+else if(sensorType===4)arr=wsData.probes||[];
+else if(sensorType===5)arr=wsData.tanks||[];
+else if(sensorType===6)arr=wsData.motions||[];
+}
+sel.innerHTML='';
+const count=Math.max(1,arr.length,(selectedIdx||0)+1);
+for(let i=0;i<count;i++){
+const item=arr[i];
+const lbl=(item&&item.label)?item.label:'';
+const opt=document.createElement('option');
+opt.value=i;
+opt.textContent='Slot #'+(i+1)+(lbl?(' ('+lbl+')'):'')+((item&&item.enabled===false)?' [Disabled]':'');
+if(i===(selectedIdx||0))opt.selected=true;
+sel.appendChild(opt);
+}
+if(grp)grp.style.display=(count>1)?'block':'none';
+}
+function onRuleConditionChange(){
 const s=parseInt(document.getElementById('ruleSensor').value);
+if(s===6){
+const cond=parseInt(document.getElementById('ruleCondition').value);
+document.getElementById('ruleThreshold').value=(cond===1?'0':'1');
+}
+}
+function updateRuleSensorFields(selectedIdx){
+const s=parseInt(document.getElementById('ruleSensor').value);
+const cond=parseInt(document.getElementById('ruleCondition').value);
+populateRuleSensorIdxOptions(s, selectedIdx!==undefined?selectedIdx:0);
 const th=document.getElementById('ruleThreshold');
 const hy=document.getElementById('ruleHysteresis');
-if(s===0){th.step='0.5';if(!th.value||th.value>100)th.value='30.0';hy.value='0.5';}
-else if(s===1){th.step='1';if(!th.value||th.value>100)th.value='70';hy.value='2.0';}
-else if(s===2){th.step='10';if(!th.value||th.value<100)th.value='500';hy.value='50';}
-else if(s===3){th.step='10';if(!th.value||th.value<10)th.value='100';hy.value='15';}
-else if(s===4){th.step='0.5';if(!th.value||th.value>100)th.value='35.0';hy.value='0.5';}
-else if(s===5){th.step='1';if(!th.value||th.value>100)th.value='20';hy.value='3.0';}
+if(s===0){th.step='0.5';th.value='30.0';hy.value='0.5';}
+else if(s===1){th.step='1';th.value='70';hy.value='2.0';}
+else if(s===2){th.step='10';th.value='500';hy.value='50';}
+else if(s===3){th.step='10';th.value='100';hy.value='15';}
+else if(s===4){th.step='0.5';th.value='35.0';hy.value='0.5';}
+else if(s===5){th.step='1';th.value='20';hy.value='3.0';}
+else if(s===6){th.step='1';th.value=(cond===1?'0':'1');hy.value='0';}
 }
 function showRuleModal(){
 document.getElementById('ruleModalTitle').textContent='Add Automation Rule';
@@ -1791,7 +2092,7 @@ document.getElementById('ruleSensor').value='0';
 document.getElementById('ruleCondition').value='0';
 document.getElementById('ruleThreshold').value='30.0';
 document.getElementById('ruleHysteresis').value='0.5';
-updateRuleSensorFields();
+updateRuleSensorFields(0);
 populateRuleRelayOptions(0);
 document.getElementById('ruleAction').value='0';
 document.getElementById('ruleModal').classList.add('active');
@@ -1806,6 +2107,7 @@ document.getElementById('ruleSensor').value=String(r.sensor);
 document.getElementById('ruleCondition').value=String(r.cond);
 document.getElementById('ruleThreshold').value=r.th;
 document.getElementById('ruleHysteresis').value=r.hyst;
+populateRuleSensorIdxOptions(r.sensor,(r.s_idx!==undefined?r.s_idx:(r.sensor_index||0)));
 populateRuleRelayOptions(r.relay);
 document.getElementById('ruleAction').value=String(r.act);
 document.getElementById('ruleModal').classList.add('active');
@@ -1818,13 +2120,14 @@ const id=parseInt(document.getElementById('ruleEditId').value||'0');
 const name=document.getElementById('ruleName').value.trim();
 if(!name){toast('Please enter a rule name','warn');return;}
 const sensor=parseInt(document.getElementById('ruleSensor').value);
+const s_idx=parseInt((document.getElementById('ruleSensorIdx')||{}).value||'0')||0;
 const cond=parseInt(document.getElementById('ruleCondition').value);
 const th=parseFloat(document.getElementById('ruleThreshold').value);
 const hyst=parseFloat(document.getElementById('ruleHysteresis').value);
 const relay=parseInt(document.getElementById('ruleTargetRelay').value);
 const act=parseInt(document.getElementById('ruleAction').value);
 if(isNaN(th)){toast('Please enter a valid threshold','warn');return;}
-const payload={id,en:true,name,sensor,cond,th,hyst:isNaN(hyst)?0:hyst,relay,act};
+const payload={id,en:true,name,sensor,s_idx,cond,th,hyst:isNaN(hyst)?0:hyst,relay,act};
 api('POST','/api/rule',payload).then(()=>{
 toast(id>0?'Rule updated':'Rule added','ok');
 closeRuleModal();
@@ -1854,7 +2157,7 @@ let SAFE_INPUT_PINS  = [0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 
 let ADC1_PINS        = [32, 33, 34, 35, 36, 39];
 
 const ESP8266_OUTPUT_PINS = [0, 2, 4, 5, 12, 13, 14, 15, 16];
-const ESP8266_INPUT_PINS  = [0, 2, 4, 5, 12, 13, 14, 15, 16, 17];
+const ESP8266_INPUT_PINS  = [0, 2, 4, 5, 12, 13, 14, 15, 16];
 const ESP8266_ADC_PINS    = [17];
 
 const ESP8266_PIN_NAMES = {
@@ -1904,80 +2207,477 @@ function populatePinOptions(selectId, pinList, selectedPin, allowNone = true) {
     });
 }
 
+let gHwSensors = { climates: [], lights: [], motions: [], probes: [], ultrasonics: [], mq2s: [] };
+let gSensorLimits = { relays: 8, climates: 4, lights: 2, motions: 6, probes: 4, ultrasonics: 4, mq2s: 4 };
+
+const SENSOR_GROUP_META = {
+    climates:    { containerId: 'hwClimatesContainer',    badgeId: 'hwClimatesCount',    emptyText: 'No Climate sensors added — click + Add' },
+    lights:      { containerId: 'hwLightsContainer',      badgeId: 'hwLightsCount',      emptyText: 'No Ambient Light sensors added — click + Add' },
+    motions:     { containerId: 'hwMotionsContainer',     badgeId: 'hwMotionsCount',     emptyText: 'No Motion / Radar sensors added — click + Add' },
+    probes:      { containerId: 'hwProbesContainer',      badgeId: 'hwProbesCount',      emptyText: 'No DS18B20 Water Probes added — click + Add' },
+    ultrasonics: { containerId: 'hwUltrasonicsContainer', badgeId: 'hwUltrasonicsCount', emptyText: 'No Ultrasonic Tank Monitors added — click + Add' },
+    mq2s:        { containerId: 'hwMq2sContainer',        badgeId: 'hwMq2sCount',        emptyText: 'No MQ-2 Gas sensors added — click + Add' }
+};
+
+function getI2cClimateAddrs(type) {
+    if (type === 3) return [0x76, 0x77];
+    if (type === 4) return [0x38];
+    if (type === 5) return [0x44, 0x45];
+    return [];
+}
+
+function formatHexAddr(a) {
+    return '0x' + Number(a).toString(16).toUpperCase().padStart(2, '0');
+}
+
+function getUsedI2cAddrs(excludeGroup, excludeIdx) {
+    const used = new Set();
+    const lcdEn = document.getElementById('hwLcdEn');
+    if (lcdEn && lcdEn.value === '1') {
+        const la = parseInt((document.getElementById('hwLcdAddr') || {}).value || '39');
+        if (!isNaN(la) && la > 0) used.add(la);
+    }
+    gHwSensors.climates.forEach((c, i) => {
+        if (excludeGroup === 'climates' && excludeIdx === i) return;
+        if (c && c.type >= 3 && c.i2c_addr > 0) used.add(c.i2c_addr);
+    });
+    gHwSensors.lights.forEach((l, i) => {
+        if (excludeGroup === 'lights' && excludeIdx === i) return;
+        if (l && l.type === 1 && l.i2c_addr > 0) used.add(l.i2c_addr);
+    });
+    return used;
+}
+
+function pickFreePinFromSet(usedSet, list, preferred) {
+    const strapSet = new Set(gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15]);
+    if (preferred !== undefined && preferred !== 255 && list.includes(preferred) && !usedSet.has(preferred)) {
+        return preferred;
+    }
+    const clean = list.find(p => !usedSet.has(p) && !strapSet.has(p));
+    if (clean !== undefined) return clean;
+    const anyFree = list.find(p => !usedSet.has(p));
+    return anyFree !== undefined ? anyFree : 255;
+}
+
+function hasAnyI2cSensorActive() {
+    return gHwSensors.climates.some(c => c && c.type >= 3) ||
+           gHwSensors.lights.some(l => l && l.type === 1);
+}
+
+function ensureI2cPinsAssigned() {
+    const lcdEn = document.getElementById('hwLcdEn');
+    if (!hasAnyI2cSensorActive() && (!lcdEn || lcdEn.value !== '1')) return;
+    const strapSet = new Set(gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15]);
+    const ensureBusPin = (elId, defPin) => {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        const cur = parseInt(el.value);
+        if (cur !== 255 && !isNaN(cur)) return;
+        const used = getAllFormUsedPins(elId);
+        const picked = pickFreePinFromSet(used, SAFE_OUTPUT_PINS, defPin);
+        if (picked !== 255) el.value = String(picked);
+    };
+    ensureBusPin('hwLcdSda', gIsEsp8266 ? 4 : 21);
+    ensureBusPin('hwLcdScl', gIsEsp8266 ? 5 : 22);
+}
+
+function syncHwSensorsFromDOM() {
+    const numOr = (id, def) => {
+        const el = document.getElementById(id);
+        if (!el) return def;
+        const v = parseInt(el.value);
+        return isNaN(v) ? def : v;
+    };
+    const strOr = (id, def) => {
+        const el = document.getElementById(id);
+        return el ? el.value.trim() : def;
+    };
+    gHwSensors.climates.forEach((c, i) => {
+        if (!document.getElementById(`hw_cli_type_${i}`)) return;
+        c.type     = numOr(`hw_cli_type_${i}`, c.type);
+        c.pin      = (c.type === 1 || c.type === 2) ? numOr(`hw_cli_pin_${i}`, c.pin ?? 255) : 255;
+        c.i2c_addr = (c.type >= 3) ? numOr(`hw_cli_addr_${i}`, c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0) : 0;
+        c.label    = strOr(`hw_cli_lbl_${i}`, c.label || '');
+    });
+    gHwSensors.lights.forEach((l, i) => {
+        if (!document.getElementById(`hw_lgt_type_${i}`)) return;
+        l.type     = numOr(`hw_lgt_type_${i}`, l.type);
+        l.i2c_addr = (l.type === 1) ? numOr(`hw_lgt_addr_${i}`, l.i2c_addr || 0x23) : 0;
+        l.label    = strOr(`hw_lgt_lbl_${i}`, l.label || '');
+    });
+    gHwSensors.motions.forEach((m, i) => {
+        if (!document.getElementById(`hw_mot_type_${i}`)) return;
+        m.type  = numOr(`hw_mot_type_${i}`, m.type);
+        m.pin   = numOr(`hw_mot_pin_${i}`, m.pin ?? 255);
+        m.label = strOr(`hw_mot_lbl_${i}`, m.label || '');
+    });
+    gHwSensors.probes.forEach((p, i) => {
+        if (!document.getElementById(`hw_prb_type_${i}`)) return;
+        p.type  = numOr(`hw_prb_type_${i}`, p.type);
+        p.pin   = numOr(`hw_prb_pin_${i}`, p.pin ?? 255);
+        p.label = strOr(`hw_prb_lbl_${i}`, p.label || '');
+    });
+    gHwSensors.ultrasonics.forEach((u, i) => {
+        if (!document.getElementById(`hw_us_type_${i}`)) return;
+        u.type       = numOr(`hw_us_type_${i}`, u.type);
+        u.trig_pin   = numOr(`hw_us_trig_${i}`, u.trig_pin ?? 255);
+        u.echo_pin   = numOr(`hw_us_echo_${i}`, u.echo_pin ?? 255);
+        u.tank_depth = numOr(`hw_us_depth_${i}`, u.tank_depth || 150);
+        u.air_gap    = numOr(`hw_us_gap_${i}`, u.air_gap || 15);
+        u.label      = strOr(`hw_us_lbl_${i}`, u.label || '');
+    });
+    gHwSensors.mq2s.forEach((g, i) => {
+        if (!document.getElementById(`hw_mq2_en_${i}`)) return;
+        g.enabled     = (document.getElementById(`hw_mq2_en_${i}`).value === '1');
+        g.analog_pin  = numOr(`hw_mq2_apin_${i}`, g.analog_pin ?? 255);
+        g.digital_pin = numOr(`hw_mq2_dpin_${i}`, g.digital_pin ?? 255);
+        g.label       = strOr(`hw_mq2_lbl_${i}`, g.label || '');
+    });
+}
+
+function renderHwSensorGroup(key) {
+    const meta = SENSOR_GROUP_META[key];
+    if (!meta) return;
+    const container = document.getElementById(meta.containerId);
+    const badge = document.getElementById(meta.badgeId);
+    const list = gHwSensors[key] || [];
+    const limit = gSensorLimits[key] || 1;
+    if (badge) {
+        badge.textContent = `${list.length} / ${limit}`;
+        badge.className = 'badge ' + (list.length > 0 ? 'badge-ok' : 'badge-info');
+    }
+    if (!container) return;
+    container.innerHTML = '';
+    if (list.length === 0) {
+        container.innerHTML = `<div style="color:var(--text2);font-size:0.78rem;padding:6px 4px;">${meta.emptyText}</div>`;
+        return;
+    }
+
+    list.forEach((item, i) => {
+        const card = document.createElement('div');
+        card.style.cssText = 'background:var(--surface);padding:10px;border-radius:8px;border:1px solid var(--card-border);';
+        const header = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+            <span style="font-weight:600;font-size:0.8rem;color:var(--accent);">Slot #${i + 1}</span>
+            <button type="button" class="btn btn-sm btn-outline" style="padding:1px 7px;font-size:0.72rem;color:var(--red);border-color:rgba(239,68,68,0.4);" onclick="removeHwSensor('${key}',${i})" title="Remove Slot #${i + 1}">&times;</button>
+        </div>`;
+
+        if (key === 'climates') {
+            const isI2c = item.type >= 3;
+            const addrs = getI2cClimateAddrs(item.type);
+            const addrOpts = addrs.map(a => `<option value="${a}" ${item.i2c_addr === a ? 'selected' : ''}>${formatHexAddr(a)}</option>`).join('');
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
+                    <select id="hw_cli_type_${i}" onchange="onClimateSlotTypeChange(${i})">
+                        <option value="0" ${item.type===0?'selected':''}>Disabled</option>
+                        <option value="1" ${item.type===1?'selected':''}>DHT11</option>
+                        <option value="2" ${item.type===2?'selected':''}>DHT22 / AM2302</option>
+                        <option value="3" ${item.type===3?'selected':''}>BME280 (I2C Baro)</option>
+                        <option value="4" ${item.type===4?'selected':''}>AHT20 (I2C)</option>
+                        <option value="5" ${item.type===5?'selected':''}>SHT3x (I2C)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;${isI2c || item.type===0 ? 'display:none' : ''}"><label style="font-size:0.72rem">Data GPIO Pin</label><select id="hw_cli_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0;${!isI2c ? 'display:none' : ''}"><label style="font-size:0.72rem">I2C Address (Shared Bus)</label><select id="hw_cli_addr_${i}" ${addrs.length<=1?'disabled':''} onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">${addrOpts}</select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_cli_lbl_${i}" maxlength="15" placeholder="e.g. Living Room" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>`;
+            container.appendChild(card);
+            populatePinOptions(`hw_cli_pin_${i}`, SAFE_OUTPUT_PINS, item.pin, true);
+        } else if (key === 'lights') {
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
+                    <select id="hw_lgt_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');ensureI2cPinsAssigned();renderHwSensorGroup('lights');checkHwConflicts()">
+                        <option value="0" ${item.type===0?'selected':''}>Disabled</option>
+                        <option value="1" ${item.type===1?'selected':''}>BH1750 (I2C Lux)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0;${item.type===0?'display:none':''}"><label style="font-size:0.72rem">I2C Address</label>
+                    <select id="hw_lgt_addr_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
+                        <option value="35" ${(item.i2c_addr||35)===35?'selected':''}>0x23 (ADDR LOW)</option>
+                        <option value="92" ${item.i2c_addr===92?'selected':''}>0x5C (ADDR HIGH)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_lgt_lbl_${i}" maxlength="15" placeholder="e.g. Porch Lux" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>`;
+            container.appendChild(card);
+        } else if (key === 'motions') {
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Sensor Type</label>
+                    <select id="hw_mot_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
+                        <option value="0" ${item.type===0?'selected':''}>Disabled</option>
+                        <option value="1" ${item.type===1?'selected':''}>PIR Motion Sensor</option>
+                        <option value="2" ${item.type===2?'selected':''}>mmWave Radar (LD2410)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Digital Input GPIO Pin</label><select id="hw_mot_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_mot_lbl_${i}" maxlength="15" placeholder="e.g. Hallway PIR" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>`;
+            container.appendChild(card);
+            populatePinOptions(`hw_mot_pin_${i}`, SAFE_INPUT_PINS, item.pin, true);
+        } else if (key === 'probes') {
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Probe Type</label>
+                    <select id="hw_prb_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
+                        <option value="0" ${item.type===0?'selected':''}>Disabled</option>
+                        <option value="1" ${item.type===1?'selected':''}>DS18B20 (1-Wire Probe)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">1-Wire GPIO Pin (4.7k&Omega; Pull-up)</label><select id="hw_prb_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_prb_lbl_${i}" maxlength="15" placeholder="e.g. Solar Tank" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>`;
+            container.appendChild(card);
+            populatePinOptions(`hw_prb_pin_${i}`, SAFE_OUTPUT_PINS, item.pin, true);
+        } else if (key === 'ultrasonics') {
+            const note5v = item.type === 2 ? `<div style="background:rgba(245,158,11,0.12);border-left:4px solid #f59e0b;padding:8px 10px;border-radius:6px;margin-top:8px;font-size:0.76rem;color:var(--text1);"><b>5V Warning:</b> HC-SR04 ECHO outputs 5V &mdash; use a 1k&Omega;/2k&Omega; voltage divider to protect the 3.3V GPIO.</div>` : '';
+            const note3v = item.type === 1 ? `<div style="background:rgba(16,185,129,0.12);border-left:4px solid #10b981;padding:6px 10px;border-radius:6px;margin-top:8px;font-size:0.76rem;color:var(--text1);"><b style="color:#10b981">&#10003; 3.3V Safe:</b> HC-SR04P operates directly at 3.3V logic.</div>` : '';
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Module Model</label>
+                    <select id="hw_us_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');renderHwSensorGroup('ultrasonics');checkHwConflicts()">
+                        <option value="0" ${item.type===0?'selected':''}>Disabled</option>
+                        <option value="1" ${item.type===1?'selected':''}>HC-SR04P (3.3V Safe)</option>
+                        <option value="2" ${item.type===2?'selected':''}>HC-SR04 (5V Divider Req)</option>
+                        <option value="3" ${item.type===3?'selected':''}>JSN-SR04T (Waterproof)</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Trigger Pin</label><select id="hw_us_trig_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Echo Pin</label><select id="hw_us_echo_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Depth (cm)</label><input type="number" id="hw_us_depth_${i}" value="${item.tank_depth||150}" min="20" max="500" oninput="syncHwSensorsFromDOM();checkHwConflicts()"></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Air Gap (cm)</label><input type="number" id="hw_us_gap_${i}" value="${item.air_gap||15}" min="5" max="100" oninput="syncHwSensorsFromDOM();checkHwConflicts()"></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_us_lbl_${i}" maxlength="15" placeholder="e.g. Roof Tank" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>${note5v}${note3v}`;
+            container.appendChild(card);
+            populatePinOptions(`hw_us_trig_${i}`, SAFE_OUTPUT_PINS, item.trig_pin, true);
+            populatePinOptions(`hw_us_echo_${i}`, SAFE_INPUT_PINS, item.echo_pin, true);
+        } else if (key === 'mq2s') {
+            card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Status</label>
+                    <select id="hw_mq2_en_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
+                        <option value="1" ${item.enabled!==false?'selected':''}>Enabled</option>
+                        <option value="0" ${item.enabled===false?'selected':''}>Disabled</option>
+                    </select>
+                </div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Analog Pin (ADC1 only)</label><select id="hw_mq2_apin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Digital DO Pin</label><select id="hw_mq2_dpin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_mq2_lbl_${i}" maxlength="15" placeholder="e.g. Kitchen Gas" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+            </div>`;
+            container.appendChild(card);
+            populatePinOptions(`hw_mq2_apin_${i}`, ADC1_PINS, item.analog_pin, true);
+            populatePinOptions(`hw_mq2_dpin_${i}`, SAFE_INPUT_PINS, item.digital_pin, true);
+        }
+    });
+}
+
+function renderAllHwSensors() {
+    Object.keys(SENSOR_GROUP_META).forEach(k => renderHwSensorGroup(k));
+}
+
+function onClimateSlotTypeChange(idx) {
+    syncHwSensorsFromDOM();
+    const c = gHwSensors.climates[idx];
+    if (!c) return;
+    if (c.type >= 3) {
+        const allowed = getI2cClimateAddrs(c.type);
+        if (!allowed.includes(c.i2c_addr)) {
+            const usedI2c = getUsedI2cAddrs('climates', idx);
+            c.i2c_addr = allowed.find(a => !usedI2c.has(a)) || allowed[0];
+        }
+        c.pin = 255;
+        ensureI2cPinsAssigned();
+    } else if (c.type === 1 || c.type === 2) {
+        c.i2c_addr = 0;
+        if (c.pin === 255 || c.pin === undefined) {
+            const used = getAllFormUsedPins();
+            c.pin = pickFreePinFromSet(used, SAFE_OUTPUT_PINS, gIsEsp8266 ? 14 : 4);
+        }
+    }
+    setHwMode('custom');
+    renderHwSensorGroup('climates');
+    checkHwConflicts();
+}
+
+function addHwSensor(key) {
+    syncHwSensorsFromDOM();
+    const list = gHwSensors[key];
+    const limit = gSensorLimits[key] || 1;
+    if (!list) return;
+    if (list.length >= limit) {
+        toast(`Maximum ${limit} ${key} sensors supported`, 'warn');
+        return;
+    }
+
+    const usedPins = getAllFormUsedPins();
+    const usedI2c = getUsedI2cAddrs();
+    let warned = '';
+
+    if (key === 'climates') {
+        const freeGpio = pickFreePinFromSet(usedPins, SAFE_OUTPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 14 : 4) : undefined);
+        if (freeGpio !== 255) {
+            list.push({ type: 2, pin: freeGpio, i2c_addr: 0, label: '' });
+        } else {
+            const i2cChoices = [
+                { type: 5, addr: 0x44 }, { type: 5, addr: 0x45 },
+                { type: 3, addr: 0x76 }, { type: 3, addr: 0x77 },
+                { type: 4, addr: 0x38 }
+            ];
+            const pick = i2cChoices.find(x => !usedI2c.has(x.addr));
+            if (pick) {
+                list.push({ type: pick.type, pin: 255, i2c_addr: pick.addr, label: '' });
+                ensureI2cPinsAssigned();
+            } else {
+                list.push({ type: 2, pin: 255, i2c_addr: 0, label: '' });
+                warned = 'no free output GPIO or unused I2C address';
+            }
+        }
+    } else if (key === 'lights') {
+        const freeAddr = [0x23, 0x5C].find(a => !usedI2c.has(a));
+        if (freeAddr === undefined) {
+            toast('Both BH1750 I2C addresses (0x23 & 0x5C) are already assigned', 'warn');
+            return;
+        }
+        list.push({ type: 1, i2c_addr: freeAddr, label: '' });
+        ensureI2cPinsAssigned();
+    } else if (key === 'motions') {
+        const freePin = pickFreePinFromSet(usedPins, SAFE_INPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 14 : 32) : undefined);
+        list.push({ type: 1, pin: freePin, label: '' });
+        if (freePin === 255) warned = 'no free Input GPIO';
+    } else if (key === 'probes') {
+        const freePin = pickFreePinFromSet(usedPins, SAFE_OUTPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 13 : 15) : undefined);
+        list.push({ type: 1, pin: freePin, label: '' });
+        if (freePin === 255) warned = 'no free Output/1-Wire GPIO';
+    } else if (key === 'ultrasonics') {
+        const trig = pickFreePinFromSet(usedPins, SAFE_OUTPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 14 : 15) : undefined);
+        const uCopy = new Set(usedPins);
+        if (trig !== 255) uCopy.add(trig);
+        const echo = pickFreePinFromSet(uCopy, SAFE_INPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 12 : 35) : undefined);
+        list.push({ type: 1, trig_pin: trig, echo_pin: echo, tank_depth: 150, air_gap: 15, label: '' });
+        if (trig === 255 || echo === 255) warned = 'not enough free GPIOs for Trig + Echo';
+    } else if (key === 'mq2s') {
+        const aPin = pickFreePinFromSet(usedPins, ADC1_PINS, list.length === 0 ? (gIsEsp8266 ? 17 : 34) : undefined);
+        const uCopy = new Set(usedPins);
+        if (aPin !== 255) uCopy.add(aPin);
+        let dPin = 255;
+        if (aPin === 255) {
+            dPin = pickFreePinFromSet(uCopy, SAFE_INPUT_PINS);
+        } else if (!gIsEsp8266 && list.length === 0 && !uCopy.has(35)) {
+            dPin = 35;
+        }
+        list.push({ enabled: true, analog_pin: aPin, digital_pin: dPin, label: '' });
+        if (aPin === 255 && dPin === 255) warned = 'no free ADC1 or digital DO GPIO';
+        else if (aPin === 255 && gIsEsp8266) toast('Slot added using Digital DO pin (ESP8266 has 1 A0 ADC)', 'info');
+    }
+
+    setHwMode('custom');
+    renderHwSensorGroup(key);
+    checkHwConflicts();
+    if (warned) toast(`Slot added (${warned} — free a pin or disable another item)`, 'warn');
+}
+
+function removeHwSensor(key, idx) {
+    syncHwSensorsFromDOM();
+    const list = gHwSensors[key];
+    if (!list || list.length === 0) return;
+    if (idx !== undefined && idx >= 0 && idx < list.length) list.splice(idx, 1);
+    else list.pop();
+    setHwMode('custom');
+    renderHwSensorGroup(key);
+    checkHwConflicts();
+}
+
 function initHwDefaults() {
     if (gIsEsp8266) {
         SAFE_OUTPUT_PINS = ESP8266_OUTPUT_PINS;
         SAFE_INPUT_PINS  = ESP8266_INPUT_PINS;
         ADC1_PINS        = ESP8266_ADC_PINS;
-        const numEl = document.getElementById('hwNumRelays');
-        if (numEl) numEl.value = 2;
-        const nameEl = document.getElementById('hwBoardName');
-        if (nameEl) nameEl.value = 'SmartHome ESP8266 2-CH Dual';
-        populatePinOptions('hwDhtPin', SAFE_OUTPUT_PINS, 255, false);
-        populatePinOptions('hwMotionPin', SAFE_INPUT_PINS, 255, true);
-        populatePinOptions('hwProbePin', SAFE_OUTPUT_PINS, 255, true);
-        populatePinOptions('hwTrigPin', SAFE_OUTPUT_PINS, 255, true);
-        populatePinOptions('hwEchoPin', SAFE_INPUT_PINS, 255, true);
-        populatePinOptions('hwMq2AnalogPin', ADC1_PINS, 17, true);
-        populatePinOptions('hwMq2DigitalPin', SAFE_INPUT_PINS, 255, true);
-        populatePinOptions('hwBuzPin', SAFE_OUTPUT_PINS, 2, true);
-        populatePinOptions('hwLcdSda', SAFE_OUTPUT_PINS, 4, true);
-        populatePinOptions('hwLcdScl', SAFE_OUTPUT_PINS, 5, true);
-        populatePinOptions('hwBtnMultiPin', SAFE_INPUT_PINS, 0, true);
-        renderHwChannels(2, [
+    }
+    applyHwDataToForm({
+        board_name: gIsEsp8266 ? 'SmartHome ESP8266 2-CH Dual' : 'SmartHome 5-CH Standard',
+        num_relays: gIsEsp8266 ? 2 : 5,
+        channels: gIsEsp8266 ? [
             { enabled: true, switch_enabled: true, relay_pin: 12, switch_pin: 13, switch_mode: 0, trigger: 0 },
             { enabled: true, switch_enabled: true, relay_pin: 14, switch_pin: 16, switch_mode: 0, trigger: 0 }
-        ]);
-    } else {
-        const numEl = document.getElementById('hwNumRelays');
-        if (numEl) numEl.value = 5;
-        const nameEl = document.getElementById('hwBoardName');
-        if (nameEl) nameEl.value = 'SmartHome 5-CH Standard';
-        populatePinOptions('hwDhtPin', SAFE_OUTPUT_PINS, 4, false);
-        populatePinOptions('hwMotionPin', SAFE_INPUT_PINS, 32, true);
-        populatePinOptions('hwProbePin', SAFE_OUTPUT_PINS, 15, true);
-        populatePinOptions('hwTrigPin', SAFE_OUTPUT_PINS, 15, true);
-        populatePinOptions('hwEchoPin', SAFE_INPUT_PINS, 35, true);
-        populatePinOptions('hwMq2AnalogPin', ADC1_PINS, 34, true);
-        populatePinOptions('hwMq2DigitalPin', SAFE_INPUT_PINS, 35, true);
-        populatePinOptions('hwBuzPin', SAFE_OUTPUT_PINS, 5, true);
-        populatePinOptions('hwLcdSda', SAFE_OUTPUT_PINS, 21, true);
-        populatePinOptions('hwLcdScl', SAFE_OUTPUT_PINS, 22, true);
-        populatePinOptions('hwBtnMultiPin', SAFE_INPUT_PINS, 33, true);
-        renderHwChannels(5, []);
-    }
+        ] : [],
+        climates: gIsEsp8266 ? [] : [{ type: 2, pin: 4, i2c_addr: 0, label: '' }],
+        lights: [],
+        motions: [],
+        probes: [],
+        ultrasonics: [],
+        mq2_sensors: [{ enabled: true, analog_pin: gIsEsp8266 ? 17 : 34, digital_pin: gIsEsp8266 ? 255 : 35, label: '' }],
+        buzzer: { enabled: true, pin: gIsEsp8266 ? 2 : 5 },
+        lcd: { enabled: true, i2c_addr: 39, cols: 16, rows: 2, sda_pin: gIsEsp8266 ? 4 : 21, scl_pin: gIsEsp8266 ? 5 : 22 },
+        btn_multi_pin: gIsEsp8266 ? 0 : 33
+    });
 }
 
-function onClimateTypeChange() {
-    const t = parseInt(document.getElementById('hwDhtType').value);
-    const pinGroup = document.getElementById('hwDhtPinGroup');
-    const note = document.getElementById('hwI2cClimateNote');
-    if (t >= 3) {
-        if (pinGroup) pinGroup.style.display = 'none';
-        if (note) note.style.display = 'block';
-    } else if (t === 0) {
-        if (pinGroup) pinGroup.style.display = 'none';
-        if (note) note.style.display = 'none';
-    } else {
-        if (pinGroup) pinGroup.style.display = 'block';
-        if (note) note.style.display = 'none';
+function onPeripheralToggle() {
+    setHwMode('custom');
+    const buzEn = document.getElementById('hwBuzEn');
+    if (buzEn && buzEn.value === '1') {
+        const bp = document.getElementById('hwBuzPin');
+        if (bp && (parseInt(bp.value) === 255 || isNaN(parseInt(bp.value)))) {
+            const p = pickFreePinFromSet(getAllFormUsedPins('hwBuzPin'), SAFE_OUTPUT_PINS, gIsEsp8266 ? 2 : 5);
+            if (p !== 255) bp.value = String(p);
+        }
     }
+    ensureI2cPinsAssigned();
 }
 
-function onUltrasonicTypeChange() {
-    const val = parseInt(document.getElementById('hwUltrasonicType').value);
-    const warn = document.getElementById('hwUltrasonicWarn');
-    const info = document.getElementById('hwUltrasonicInfo');
-    if (warn) warn.style.display = (val === 2) ? 'block' : 'none';
-    if (info) info.style.display = (val === 1) ? 'block' : 'none';
+function getFormNonChannelUsedPins() {
+    syncHwSensorsFromDOM();
+    const used = new Set();
+    const addPin = (p) => { if (p !== undefined && p !== null && !isNaN(p) && p !== 255) used.add(Number(p)); };
+    gHwSensors.climates.forEach(c => { if (c && (c.type === 1 || c.type === 2)) addPin(c.pin); });
+    gHwSensors.motions.forEach(m => { if (m && m.type !== 0) addPin(m.pin); });
+    gHwSensors.probes.forEach(p => { if (p && p.type !== 0) addPin(p.pin); });
+    gHwSensors.ultrasonics.forEach(u => { if (u && u.type !== 0) { addPin(u.trig_pin); addPin(u.echo_pin); } });
+    gHwSensors.mq2s.forEach(g => { if (g && g.enabled !== false) { addPin(g.analog_pin); addPin(g.digital_pin); } });
+
+    const addEl = (id) => { const el = document.getElementById(id); if (el) addPin(parseInt(el.value)); };
+    if ((document.getElementById('hwBuzEn') || {}).value === '1') addEl('hwBuzPin');
+    const lcdOn = (document.getElementById('hwLcdEn') || {}).value === '1';
+    if (lcdOn || hasAnyI2cSensorActive()) { addEl('hwLcdSda'); addEl('hwLcdScl'); }
+    addEl('hwBtnMultiPin');
+    return used;
+}
+
+function getAllFormUsedPins(excludeElId) {
+    const used = getFormNonChannelUsedPins();
+    const num = parseInt((document.getElementById('hwNumRelays') || {}).value || '0') || 0;
+    for (let i = 0; i < num; i++) {
+        const enEl = document.getElementById(`hw_en_${i}`);
+        const swEnEl = document.getElementById(`hw_swen_${i}`);
+        if (enEl && enEl.value !== '1') continue;
+        const rEl = document.getElementById(`hw_rpin_${i}`);
+        if (rEl && rEl.id !== excludeElId) {
+            const rp = parseInt(rEl.value);
+            if (!isNaN(rp) && rp !== 255) used.add(rp);
+        }
+        const isSwEn = !swEnEl || swEnEl.value === '1';
+        const sEl = document.getElementById(`hw_spin_${i}`);
+        if (isSwEn && sEl && sEl.id !== excludeElId) {
+            const sp = parseInt(sEl.value);
+            if (!isNaN(sp) && sp !== 255) used.add(sp);
+        }
+    }
+    if (excludeElId) {
+        const exEl = document.getElementById(excludeElId);
+        if (exEl) {
+            const ep = parseInt(exEl.value);
+            if (!isNaN(ep) && ep !== 255) used.delete(ep);
+        }
+    }
+    return used;
 }
 
 function applyHwDataToForm(data) {
-    gIsEsp8266 = (data.platform === 'ESP8266') || (data.board_name && data.board_name.includes('ESP8266'));
+    if (data.platform) gIsEsp8266 = (data.platform === 'ESP8266');
+    else if (data.board_name && data.board_name.includes('ESP8266')) gIsEsp8266 = true;
+
     if (data.pin_capabilities) {
-        SAFE_OUTPUT_PINS = data.pin_capabilities.outputs || (gIsEsp8266 ? ESP8266_OUTPUT_PINS : SAFE_OUTPUT_PINS);
-        SAFE_INPUT_PINS  = data.pin_capabilities.inputs  || (gIsEsp8266 ? ESP8266_INPUT_PINS : SAFE_INPUT_PINS);
-        ADC1_PINS        = data.pin_capabilities.adc1    || (gIsEsp8266 ? ESP8266_ADC_PINS : ADC1_PINS);
+        SAFE_OUTPUT_PINS = data.pin_capabilities.outputs || SAFE_OUTPUT_PINS;
+        SAFE_INPUT_PINS  = data.pin_capabilities.inputs  || SAFE_INPUT_PINS;
+        ADC1_PINS        = data.pin_capabilities.adc1    || ADC1_PINS;
+        if (data.pin_capabilities.sensor_limits) {
+            Object.assign(gSensorLimits, data.pin_capabilities.sensor_limits);
+        }
     } else if (gIsEsp8266) {
         SAFE_OUTPUT_PINS = ESP8266_OUTPUT_PINS;
         SAFE_INPUT_PINS  = ESP8266_INPUT_PINS;
@@ -1988,42 +2688,64 @@ function applyHwDataToForm(data) {
     const numRelays = data.num_relays !== undefined ? data.num_relays : (gIsEsp8266 ? 2 : 5);
     document.getElementById('hwNumRelays').value = numRelays;
 
-    // Climate
-    document.getElementById('hwDhtType').value = (data.dht && data.dht.type !== undefined) ? data.dht.type : (gIsEsp8266 ? 0 : 2);
-    populatePinOptions('hwDhtPin', SAFE_OUTPUT_PINS, (data.dht && data.dht.pin !== undefined) ? data.dht.pin : (gIsEsp8266 ? 255 : 4), false);
-    onClimateTypeChange();
-
-    // Light
-    if (document.getElementById('hwLightType')) {
-        document.getElementById('hwLightType').value = (data.light && data.light.type !== undefined) ? data.light.type : 0;
+    // Populate multi-instance sensors (new array format OR legacy slot-0 fallback)
+    if (Array.isArray(data.climates)) {
+        gHwSensors.climates = data.climates.map(c => ({
+            type: c.type ?? 0, pin: c.pin ?? 255, i2c_addr: c.i2c_addr ?? (c.type >= 3 ? getI2cClimateAddrs(c.type)[0] : 0), label: c.label || ''
+        }));
+    } else if (data.dht && data.dht.type > 0) {
+        gHwSensors.climates = [{ type: data.dht.type, pin: data.dht.pin ?? 255, i2c_addr: data.dht.i2c_addr || (data.dht.type >= 3 ? getI2cClimateAddrs(data.dht.type)[0] : 0), label: '' }];
+    } else {
+        gHwSensors.climates = [];
     }
 
-    // Motion
-    if (document.getElementById('hwMotionType')) {
-        document.getElementById('hwMotionType').value = (data.motion && data.motion.type !== undefined) ? data.motion.type : 0;
-        populatePinOptions('hwMotionPin', SAFE_INPUT_PINS, (data.motion && data.motion.pin !== undefined) ? data.motion.pin : (gIsEsp8266 ? 255 : 32), true);
+    if (Array.isArray(data.lights)) {
+        gHwSensors.lights = data.lights.map(l => ({ type: l.type ?? 0, i2c_addr: l.i2c_addr || 0x23, label: l.label || '' }));
+    } else if (data.light && data.light.type > 0) {
+        gHwSensors.lights = [{ type: data.light.type, i2c_addr: data.light.i2c_addr || 0x23, label: '' }];
+    } else {
+        gHwSensors.lights = [];
     }
 
-    // Probe
-    if (document.getElementById('hwProbeType')) {
-        document.getElementById('hwProbeType').value = (data.probe && data.probe.type !== undefined) ? data.probe.type : 0;
-        populatePinOptions('hwProbePin', SAFE_OUTPUT_PINS, (data.probe && data.probe.pin !== undefined) ? data.probe.pin : (gIsEsp8266 ? 255 : 15), true);
+    if (Array.isArray(data.motions)) {
+        gHwSensors.motions = data.motions.map(m => ({ type: m.type ?? 0, pin: m.pin ?? 255, label: m.label || '' }));
+    } else if (data.motion && data.motion.type > 0) {
+        gHwSensors.motions = [{ type: data.motion.type, pin: data.motion.pin ?? 255, label: '' }];
+    } else {
+        gHwSensors.motions = [];
     }
 
-    // Ultrasonic
-    if (document.getElementById('hwUltrasonicType')) {
-        document.getElementById('hwUltrasonicType').value = (data.ultrasonic && data.ultrasonic.type !== undefined) ? data.ultrasonic.type : 0;
-        populatePinOptions('hwTrigPin', SAFE_OUTPUT_PINS, (data.ultrasonic && data.ultrasonic.trig_pin !== undefined) ? data.ultrasonic.trig_pin : (gIsEsp8266 ? 255 : 15), true);
-        populatePinOptions('hwEchoPin', SAFE_INPUT_PINS, (data.ultrasonic && data.ultrasonic.echo_pin !== undefined) ? data.ultrasonic.echo_pin : (gIsEsp8266 ? 255 : 35), true);
-        document.getElementById('hwTankDepth').value = (data.ultrasonic && data.ultrasonic.tank_depth !== undefined) ? data.ultrasonic.tank_depth : 150;
-        document.getElementById('hwTankAirGap').value = (data.ultrasonic && data.ultrasonic.air_gap !== undefined) ? data.ultrasonic.air_gap : 15;
-        onUltrasonicTypeChange();
+    if (Array.isArray(data.probes)) {
+        gHwSensors.probes = data.probes.map(p => ({ type: p.type ?? 0, pin: p.pin ?? 255, label: p.label || '' }));
+    } else if (data.probe && data.probe.type > 0) {
+        gHwSensors.probes = [{ type: data.probe.type, pin: data.probe.pin ?? 255, label: '' }];
+    } else {
+        gHwSensors.probes = [];
     }
 
-    // Gas MQ-2
-    document.getElementById('hwMq2En').value = (data.mq2 && data.mq2.enabled !== undefined) ? (data.mq2.enabled ? '1' : '0') : '1';
-    populatePinOptions('hwMq2AnalogPin', ADC1_PINS, (data.mq2 && data.mq2.analog_pin !== undefined) ? data.mq2.analog_pin : (gIsEsp8266 ? 17 : 34), true);
-    populatePinOptions('hwMq2DigitalPin', SAFE_INPUT_PINS, (data.mq2 && data.mq2.digital_pin !== undefined) ? data.mq2.digital_pin : 255, true);
+    if (Array.isArray(data.ultrasonics)) {
+        gHwSensors.ultrasonics = data.ultrasonics.map(u => ({
+            type: u.type ?? 0, trig_pin: u.trig_pin ?? 255, echo_pin: u.echo_pin ?? 255,
+            tank_depth: u.tank_depth ?? 150, air_gap: u.air_gap ?? 15, label: u.label || ''
+        }));
+    } else if (data.ultrasonic && data.ultrasonic.type > 0) {
+        gHwSensors.ultrasonics = [{
+            type: data.ultrasonic.type, trig_pin: data.ultrasonic.trig_pin ?? 255, echo_pin: data.ultrasonic.echo_pin ?? 255,
+            tank_depth: data.ultrasonic.tank_depth ?? 150, air_gap: data.ultrasonic.air_gap ?? 15, label: ''
+        }];
+    } else {
+        gHwSensors.ultrasonics = [];
+    }
+
+    if (Array.isArray(data.mq2_sensors)) {
+        gHwSensors.mq2s = data.mq2_sensors.map(g => ({
+            enabled: g.enabled !== false, analog_pin: g.analog_pin ?? 255, digital_pin: g.digital_pin ?? 255, label: g.label || ''
+        }));
+    } else if (data.mq2 && data.mq2.enabled !== false && ((data.mq2.analog_pin !== undefined && data.mq2.analog_pin !== 255) || (data.mq2.digital_pin !== undefined && data.mq2.digital_pin !== 255))) {
+        gHwSensors.mq2s = [{ enabled: data.mq2.enabled !== false, analog_pin: data.mq2.analog_pin ?? 255, digital_pin: data.mq2.digital_pin ?? 255, label: '' }];
+    } else {
+        gHwSensors.mq2s = [];
+    }
 
     // Buzzer
     document.getElementById('hwBuzEn').value = (data.buzzer && data.buzzer.enabled !== undefined) ? (data.buzzer.enabled ? '1' : '0') : '1';
@@ -2039,6 +2761,7 @@ function applyHwDataToForm(data) {
     // Multi-button
     populatePinOptions('hwBtnMultiPin', SAFE_INPUT_PINS, data.btn_multi_pin !== undefined ? data.btn_multi_pin : (gIsEsp8266 ? 0 : 33), true);
 
+    renderAllHwSensors();
     renderHwChannels(numRelays, data.channels || []);
     checkHwConflicts();
 }
@@ -2065,6 +2788,13 @@ function loadHardware() {
         }
 
         applyHwDataToForm(data);
+        const isPreset = data.presets && data.presets.includes(data.board_name);
+        if (data.board_name && !isPreset) {
+            setHwMode('custom');
+        } else {
+            setHwMode('preset');
+            if (sel && isPreset) sel.value = data.board_name;
+        }
     }).catch(err => {
         toast('Failed to load hardware profile: ' + (err.message || ''), 'err');
     });
@@ -2128,6 +2858,159 @@ function onHwChannelToggle(i) {
     checkHwConflicts();
 }
 
+function checkHwConflicts() {
+    syncHwSensorsFromDOM();
+    const alertBox = document.getElementById('hwConflictAlert');
+    const num = parseInt(document.getElementById('hwNumRelays').value) || 0;
+    const usedPins = {};
+    const usedI2c = {};
+    const conflicts = [];
+    const conflictPins = new Set();
+    const inOnlyPins = gIsEsp8266 ? [17] : [34, 35, 36, 39];
+
+    function claim(pin, name, isOutput, isAdc = false) {
+        if (pin === 255 || pin === undefined || isNaN(pin)) return;
+        if (gIsEsp8266 && pin === 17 && !isAdc) {
+            conflictPins.add(pin);
+            conflicts.push(`A0 (GPIO 17) is Analog ADC-only and CANNOT be used for digital "${name}".`);
+        }
+        if (isOutput && inOnlyPins.includes(pin)) {
+            conflictPins.add(pin);
+            conflicts.push(`GPIO ${pin} ("${name}") is an Input-Only pin and CANNOT be used as an output or bidirectional line.`);
+        }
+        if (usedPins[pin]) {
+            conflictPins.add(pin);
+            conflicts.push(`GPIO ${pin} is assigned to both "${usedPins[pin]}" and "${name}"`);
+        } else {
+            usedPins[pin] = name;
+        }
+    }
+
+    function claimI2c(addr, name) {
+        if (!addr || isNaN(addr)) return;
+        if (usedI2c[addr]) {
+            conflicts.push(`I2C address ${formatHexAddr(addr)} is assigned to both "${usedI2c[addr]}" and "${name}".`);
+        } else {
+            usedI2c[addr] = name;
+        }
+    }
+
+    for (let i = 0; i < num; i++) {
+        const enEl = document.getElementById(`hw_en_${i}`);
+        const swEnEl = document.getElementById(`hw_swen_${i}`);
+        const isChEn = !enEl || enEl.value === '1';
+        const isSwEn = isChEn && (!swEnEl || swEnEl.value === '1');
+        if (!isChEn) continue;
+
+        const rEl = document.getElementById(`hw_rpin_${i}`);
+        const sEl = document.getElementById(`hw_spin_${i}`);
+        if (rEl) {
+            const rp = parseInt(rEl.value);
+            if (rp === 255 || isNaN(rp)) conflicts.push(`Relay ${i + 1} is Enabled but has no Output Pin assigned.`);
+            else claim(rp, `Relay ${i + 1} Output`, true);
+        }
+        if (isSwEn && sEl) {
+            const sp = parseInt(sEl.value);
+            if (sp === 255 || isNaN(sp)) conflicts.push(`Relay ${i + 1} Switch is Enabled but has no Input Pin assigned.`);
+            else claim(sp, `Relay ${i + 1} Switch`, false);
+        }
+    }
+
+    gHwSensors.climates.forEach((c, i) => {
+        if (!c || c.type === 0) return;
+        const slotName = `Climate #${i + 1}`;
+        if (c.type === 1 || c.type === 2) {
+            if (c.pin === 255 || isNaN(c.pin)) conflicts.push(`${slotName} (${c.type===1?'DHT11':'DHT22'}) has no Data Pin assigned.`);
+            else claim(c.pin, slotName, true);
+        } else {
+            const addr = c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0;
+            claimI2c(addr, slotName);
+        }
+    });
+
+    gHwSensors.lights.forEach((l, i) => {
+        if (!l || l.type === 0) return;
+        claimI2c(l.i2c_addr || 0x23, `Light #${i + 1}`);
+    });
+
+    gHwSensors.motions.forEach((m, i) => {
+        if (!m || m.type === 0) return;
+        const slotName = `Motion #${i + 1}`;
+        if (m.pin === 255 || isNaN(m.pin)) conflicts.push(`${slotName} has no Signal Pin assigned.`);
+        else claim(m.pin, slotName, false);
+    });
+
+    gHwSensors.probes.forEach((p, i) => {
+        if (!p || p.type === 0) return;
+        const slotName = `Probe #${i + 1}`;
+        if (p.pin === 255 || isNaN(p.pin)) conflicts.push(`${slotName} has no Data Pin assigned.`);
+        else claim(p.pin, slotName, true);
+    });
+
+    gHwSensors.ultrasonics.forEach((u, i) => {
+        if (!u || u.type === 0) return;
+        const slotName = `Tank #${i + 1}`;
+        if (u.trig_pin === 255 || isNaN(u.trig_pin) || u.echo_pin === 255 || isNaN(u.echo_pin)) {
+            conflicts.push(`${slotName} is Enabled but Trig or Echo pin is unassigned.`);
+        } else {
+            claim(u.trig_pin, `${slotName} Trig`, true);
+            claim(u.echo_pin, `${slotName} Echo`, false);
+        }
+        if (isNaN(u.tank_depth) || u.tank_depth < 20 || u.tank_depth > 500 || isNaN(u.air_gap) || u.air_gap < 5 || u.air_gap > 100 || u.tank_depth <= u.air_gap) {
+            conflicts.push(`${slotName} Tank Depth (20-500 cm) must exceed Air Gap (5-100 cm).`);
+        }
+    });
+
+    gHwSensors.mq2s.forEach((g, i) => {
+        if (!g || g.enabled === false) return;
+        const slotName = `Gas #${i + 1}`;
+        const hasAnalog = (g.analog_pin !== 255 && !isNaN(g.analog_pin));
+        const hasDigital = (g.digital_pin !== 255 && !isNaN(g.digital_pin));
+        if (!hasAnalog && !hasDigital) {
+            conflicts.push(`${slotName} is Enabled but neither Analog nor Digital DO pin is assigned.`);
+        } else {
+            if (hasAnalog) claim(g.analog_pin, `${slotName} A0`, false, true);
+            if (hasDigital) claim(g.digital_pin, `${slotName} DO`, false);
+        }
+    });
+
+    const buzEn = document.getElementById('hwBuzEn').value === '1';
+    if (buzEn) {
+        const bp = parseInt(document.getElementById('hwBuzPin').value);
+        if (bp === 255 || isNaN(bp)) conflicts.push('Buzzer is Enabled but no GPIO pin is selected.');
+        else claim(bp, 'Buzzer', true);
+    }
+
+    const lcdEn = document.getElementById('hwLcdEn').value === '1';
+    if (lcdEn) claimI2c(parseInt(document.getElementById('hwLcdAddr').value || '39'), 'I2C LCD');
+
+    if (lcdEn || hasAnyI2cSensorActive()) {
+        const sda = parseInt(document.getElementById('hwLcdSda').value);
+        const scl = parseInt(document.getElementById('hwLcdScl').value);
+        if (sda === 255 || isNaN(sda) || scl === 255 || isNaN(scl)) conflicts.push('I2C Bus is active (LCD/Sensor) but SDA or SCL pin is unassigned.');
+        else {
+            claim(sda, 'I2C SDA (Shared Bus)', true);
+            claim(scl, 'I2C SCL (Shared Bus)', true);
+        }
+    }
+
+    claim(parseInt(document.getElementById('hwBtnMultiPin').value), 'Multi-Button', false);
+
+    renderPinMatrix(usedPins, conflicts, conflictPins);
+
+    if (alertBox) {
+        if (conflicts.length > 0) {
+            alertBox.innerHTML = '<strong>GPIO Conflict / Hardware Incompatibility Detected:</strong><br>' + conflicts.join('<br>');
+            alertBox.style.display = 'block';
+            return false;
+        } else {
+            alertBox.style.display = 'none';
+            return true;
+        }
+    }
+    return conflicts.length === 0;
+}
+
 function renderHwChannels(num, existingChannels) {
     const container = document.getElementById('hwChannelsContainer');
     if (!container) return;
@@ -2138,18 +3021,47 @@ function renderHwChannels(num, existingChannels) {
         return;
     }
 
-    const defaultRelayPins = gIsEsp8266 ? [12, 14, 4, 5, 255, 255, 255, 255] : [16, 17, 18, 19, 23, 25, 26, 27];
+    const defaultRelayPins = gIsEsp8266 ? [12, 14, 4, 5, 13, 15, 0, 16] : [16, 17, 18, 19, 23, 25, 26, 27];
     const defaultSwitchPins = gIsEsp8266 ? [13, 16, 255, 255, 255, 255, 255, 255] : [13, 14, 27, 26, 25, 255, 255, 255];
+    const usedNow = getFormNonChannelUsedPins();
+    if (existingChannels) {
+        existingChannels.forEach((c, idx) => {
+            if (idx < num && c && c.enabled !== false) {
+                if (c.relay_pin !== undefined && c.relay_pin !== 255) usedNow.add(c.relay_pin);
+                if (c.switch_enabled !== false && c.switch_pin !== undefined && c.switch_pin !== 255) usedNow.add(c.switch_pin);
+            }
+        });
+    }
+    const strapSet = new Set(gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15]);
+    const pickFreePin = (list, preferred) => {
+        if (preferred !== undefined && preferred !== 255 && list.includes(preferred) && !usedNow.has(preferred)) {
+            usedNow.add(preferred);
+            return preferred;
+        }
+        const clean = list.find(p => !usedNow.has(p) && !strapSet.has(p));
+        if (clean !== undefined) { usedNow.add(clean); return clean; }
+        const anyFree = list.find(p => !usedNow.has(p));
+        if (anyFree !== undefined) { usedNow.add(anyFree); return anyFree; }
+        return 255;
+    };
 
     for (let i = 0; i < num; i++) {
-        const ch = (existingChannels && existingChannels[i]) ? existingChannels[i] : {
-            enabled: true,
-            switch_enabled: (defaultSwitchPins[i] !== undefined && defaultSwitchPins[i] !== 255),
-            relay_pin: defaultRelayPins[i] !== undefined ? defaultRelayPins[i] : 255,
-            switch_pin: defaultSwitchPins[i] !== undefined ? defaultSwitchPins[i] : 255,
-            switch_mode: 0,
-            trigger: 0
-        };
+        let ch;
+        if (existingChannels && existingChannels[i]) {
+            ch = existingChannels[i];
+        } else {
+            const rPin = pickFreePin(SAFE_OUTPUT_PINS, defaultRelayPins[i]);
+            const wantsDefSw = (defaultSwitchPins[i] !== undefined && defaultSwitchPins[i] !== 255 && !usedNow.has(defaultSwitchPins[i]));
+            const sPin = wantsDefSw ? pickFreePin(SAFE_INPUT_PINS, defaultSwitchPins[i]) : 255;
+            ch = {
+                enabled: true,
+                switch_enabled: (sPin !== 255),
+                relay_pin: rPin,
+                switch_pin: sPin,
+                switch_mode: 0,
+                trigger: 0
+            };
+        }
         const isChEn = ch.enabled !== false;
         const isSwEn = ch.switch_enabled !== false;
 
@@ -2216,7 +3128,7 @@ function renderHwChannels(num, existingChannels) {
         `;
         container.appendChild(row);
 
-        populatePinOptions(`hw_rpin_${i}`, SAFE_OUTPUT_PINS, ch.relay_pin, false);
+        populatePinOptions(`hw_rpin_${i}`, SAFE_OUTPUT_PINS, ch.relay_pin, true);
         populatePinOptions(`hw_spin_${i}`, SAFE_INPUT_PINS, ch.switch_pin, true);
         onHwChannelToggle(i);
     }
@@ -2235,7 +3147,11 @@ function setHwMode(mode) {
         if (btnPre) { btnPre.className = 'btn btn-sm btn-outline'; btnPre.style.border = 'none'; }
         if (preBar) preBar.style.display = 'none';
         const bName = document.getElementById('hwBoardName');
-        if (bName && (!bName.value || bName.value.includes('Standard') || bName.value.includes('Dual'))) {
+        const isKnownPreset = bName && (
+            (gHwConfig && Array.isArray(gHwConfig.presets) && gHwConfig.presets.includes(bName.value)) ||
+            /(Standard|Mini|Dual|Pro|Quad|Max|Sensor Node)/.test(bName.value)
+        );
+        if (bName && (!bName.value || isKnownPreset)) {
             bName.value = gIsEsp8266 ? 'SmartHome ESP8266 Custom DIY' : 'SmartHome Custom DIY Controller';
         }
     }
@@ -2250,8 +3166,14 @@ function addHwRelayChannel() {
     }
     cur++;
     sel.value = String(cur);
+    setHwMode('custom');
     renderHwChannelsFromUI();
-    toast(`Relay Channel ${cur} added`, 'ok');
+    const newPinEl = document.getElementById(`hw_rpin_${cur - 1}`);
+    if (newPinEl && parseInt(newPinEl.value) === 255) {
+        toast(`Relay Channel ${cur} added (no free output GPIO — free a pin or disable a sensor)`, 'warn');
+    } else {
+        toast(`Relay Channel ${cur} added`, 'ok');
+    }
 }
 
 function removeHwRelayChannel() {
@@ -2260,14 +3182,15 @@ function removeHwRelayChannel() {
     if (cur <= 0) return;
     cur--;
     sel.value = String(cur);
+    setHwMode('custom');
     renderHwChannelsFromUI();
     toast(`Relay Channel ${cur + 1} removed`, 'info');
 }
 
-function renderPinMatrix(usedPins, conflicts) {
+function renderPinMatrix(usedPins, conflicts, conflictPins) {
     const grid = document.getElementById('hwPinMatrixGrid');
     if (!grid) return;
-    const pins = gIsEsp8266 ? [16, 5, 4, 0, 2, 14, 12, 13, 15, 17] : [2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39];
+    const pins = gIsEsp8266 ? [16, 5, 4, 0, 2, 14, 12, 13, 15, 17] : [0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39];
     const strapPins = gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15];
     const inOnlyPins = gIsEsp8266 ? [17] : [34, 35, 36, 39];
 
@@ -2277,8 +3200,9 @@ function renderPinMatrix(usedPins, conflicts) {
     pins.forEach(p => {
         const isStrap = strapPins.includes(p);
         const isInOnly = inOnlyPins.includes(p);
+        const isAdc8266 = (gIsEsp8266 && p === 17);
         const assigned = usedPins[p];
-        const isConflict = conflicts && conflicts.some(c => c.includes(`GPIO ${p}`));
+        const isConflict = conflictPins ? conflictPins.has(p) : (conflicts && conflicts.some(c => c.includes(`GPIO ${p} `)));
         if (assigned) usedCount++;
 
         let borderCol = 'var(--card-border)';
@@ -2302,7 +3226,7 @@ function renderPinMatrix(usedPins, conflicts) {
                 <span style="font-weight:700;font-size:0.75rem;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${pinLabel}</span>
                 <div style="display:flex;gap:2px;">
                     ${isStrap ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(245,158,11,0.25);color:#fbbf24;" title="Strapping Boot Pin">BOOT</span>' : ''}
-                    ${isInOnly ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(168,85,247,0.25);color:#c084fc;" title="Input-Only Pin">IN</span>' : ''}
+                    ${isAdc8266 ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(6,182,212,0.25);color:#22d3ee;" title="Analog ADC0 Input Only">ADC</span>' : (isInOnly ? '<span style="font-size:0.58rem;padding:1px 3px;border-radius:3px;background:rgba(168,85,247,0.25);color:#c084fc;" title="Input-Only Pin">IN</span>' : '')}
                 </div>
             </div>
             <div style="font-size:0.7rem;">${statusBadge}</div>
@@ -2315,99 +3239,6 @@ function renderPinMatrix(usedPins, conflicts) {
         const freeCount = pins.length - usedCount;
         statsEl.innerHTML = `Total: <b>${pins.length}</b> Pins &bull; Used: <b>${usedCount}</b> &bull; Free: <b style="color:#10b981">${freeCount} Available</b>`;
     }
-}
-
-function checkHwConflicts() {
-    const alertBox = document.getElementById('hwConflictAlert');
-    const num = parseInt(document.getElementById('hwNumRelays').value) || 0;
-    const usedPins = {};
-    const conflicts = [];
-    const inOnlyPins = gIsEsp8266 ? [17] : [34, 35, 36, 39];
-
-    function claim(pin, name, isOutput) {
-        if (pin === 255 || pin === undefined || isNaN(pin)) return;
-        if (isOutput && inOnlyPins.includes(pin)) {
-            conflicts.push(`GPIO ${pin} ("${name}") is an Input-Only pin and CANNOT be used as an output or bidirectional line.`);
-        }
-        if (usedPins[pin]) {
-            conflicts.push(`GPIO ${pin} is assigned to both "${usedPins[pin]}" and "${name}"`);
-        } else {
-            usedPins[pin] = name;
-        }
-    }
-
-    for (let i = 0; i < num; i++) {
-        const enEl = document.getElementById(`hw_en_${i}`);
-        const swEnEl = document.getElementById(`hw_swen_${i}`);
-        const isChEn = !enEl || enEl.value === '1';
-        const isSwEn = isChEn && (!swEnEl || swEnEl.value === '1');
-        if (!isChEn) continue;
-
-        const rEl = document.getElementById(`hw_rpin_${i}`);
-        const sEl = document.getElementById(`hw_spin_${i}`);
-        if (rEl) claim(parseInt(rEl.value), `Relay ${i + 1} Output`, true);
-        if (isSwEn && sEl) claim(parseInt(sEl.value), `Relay ${i + 1} Switch`, false);
-    }
-
-    const dhtType = parseInt(document.getElementById('hwDhtType').value);
-    if (dhtType === 1 || dhtType === 2) {
-        const dhtPin = parseInt(document.getElementById('hwDhtPin').value);
-        claim(dhtPin, 'DHT Climate', true);
-    }
-
-    const motionType = parseInt(document.getElementById('hwMotionType').value);
-    if (motionType !== 0) {
-        claim(parseInt(document.getElementById('hwMotionPin').value), 'Motion Sensor', false);
-    }
-
-    const probeType = parseInt(document.getElementById('hwProbeType').value);
-    if (probeType !== 0) {
-        claim(parseInt(document.getElementById('hwProbePin').value), 'DS18B20 Probe', true);
-    }
-
-    const ultrasonicType = parseInt(document.getElementById('hwUltrasonicType').value);
-    if (ultrasonicType !== 0) {
-        claim(parseInt(document.getElementById('hwTrigPin').value), 'Ultrasonic Trig', true);
-        claim(parseInt(document.getElementById('hwEchoPin').value), 'Ultrasonic Echo', false);
-    }
-
-    const mq2En = document.getElementById('hwMq2En').value === '1';
-    if (mq2En) {
-        claim(parseInt(document.getElementById('hwMq2AnalogPin').value), 'MQ-2 Analog', false);
-        const mq2DPin = parseInt(document.getElementById('hwMq2DigitalPin').value);
-        if (mq2DPin !== 255) claim(mq2DPin, 'MQ-2 Digital', false);
-    }
-
-    const buzEn = document.getElementById('hwBuzEn').value === '1';
-    if (buzEn) {
-        claim(parseInt(document.getElementById('hwBuzPin').value), 'Buzzer', true);
-    }
-
-    const isI2cUsed = (document.getElementById('hwLcdEn').value === '1') ||
-                      (parseInt(document.getElementById('hwDhtType').value) >= 3) ||
-                      (parseInt(document.getElementById('hwLightType').value) === 1);
-    if (isI2cUsed) {
-        const sda = parseInt(document.getElementById('hwLcdSda').value);
-        const scl = parseInt(document.getElementById('hwLcdScl').value);
-        claim(sda, 'I2C SDA (Shared Bus)', true);
-        claim(scl, 'I2C SCL (Shared Bus)', true);
-    }
-
-    claim(parseInt(document.getElementById('hwBtnMultiPin').value), 'Multi-Button', false);
-
-    renderPinMatrix(usedPins, conflicts);
-
-    if (alertBox) {
-        if (conflicts.length > 0) {
-            alertBox.innerHTML = '<strong>GPIO Conflict / Hardware Incompatibility Detected:</strong><br>' + conflicts.join('<br>');
-            alertBox.style.display = 'block';
-            return false;
-        } else {
-            alertBox.style.display = 'none';
-            return true;
-        }
-    }
-    return conflicts.length === 0;
 }
 
 function onPresetSelected() {
@@ -2439,6 +3270,34 @@ function onPresetSelected() {
                 buzzer: { enabled: true, pin: 2 },
                 lcd: { enabled: true, i2c_addr: 39, cols: 16, rows: 2, sda_pin: 4, scl_pin: 5 },
                 btn_multi_pin: 0
+            });
+        } else if (val.includes('4-CH')) {
+            applyHwDataToForm({
+                board_name: val,
+                num_relays: 4,
+                channels: [
+                    { enabled: true, switch_enabled: true, relay_pin: 12, switch_pin: 13, switch_mode: 0, trigger: 0 },
+                    { enabled: true, switch_enabled: true, relay_pin: 14, switch_pin: 16, switch_mode: 0, trigger: 0 },
+                    { enabled: true, switch_enabled: false, relay_pin: 4, switch_pin: 255, switch_mode: 0, trigger: 0 },
+                    { enabled: true, switch_enabled: false, relay_pin: 5, switch_pin: 255, switch_mode: 0, trigger: 0 }
+                ],
+                dht: { type: 0, pin: 255 },
+                mq2: { enabled: true, analog_pin: 17, digital_pin: 255 },
+                buzzer: { enabled: true, pin: 2 },
+                lcd: { enabled: false, i2c_addr: 39, cols: 16, rows: 2, sda_pin: 255, scl_pin: 255 },
+                btn_multi_pin: 0
+            });
+        } else if (val.includes('8-CH')) {
+            const rPins = [12, 14, 4, 5, 13, 15, 0, 16];
+            applyHwDataToForm({
+                board_name: val,
+                num_relays: 8,
+                channels: rPins.map(p => ({ enabled: true, switch_enabled: false, relay_pin: p, switch_pin: 255, switch_mode: 0, trigger: 0 })),
+                dht: { type: 0, pin: 255 },
+                mq2: { enabled: true, analog_pin: 17, digital_pin: 255 },
+                buzzer: { enabled: true, pin: 2 },
+                lcd: { enabled: false, i2c_addr: 39, cols: 16, rows: 2, sda_pin: 255, scl_pin: 255 },
+                btn_multi_pin: 255
             });
         } else if (val.includes('Sensor Node')) {
             applyHwDataToForm({
@@ -2603,33 +3462,51 @@ function saveHardware() {
         board_name: document.getElementById('hwBoardName').value.trim() || 'Custom',
         num_relays: num,
         channels: channels,
-        dht: {
-            type: parseInt(document.getElementById('hwDhtType').value),
-            pin: parseInt(document.getElementById('hwDhtPin').value)
-        },
-        light: {
-            type: parseInt(document.getElementById('hwLightType').value)
-        },
-        motion: {
-            type: parseInt(document.getElementById('hwMotionType').value),
-            pin: parseInt(document.getElementById('hwMotionPin').value)
-        },
-        probe: {
-            type: parseInt(document.getElementById('hwProbeType').value),
-            pin: parseInt(document.getElementById('hwProbePin').value)
-        },
-        ultrasonic: {
-            type: parseInt(document.getElementById('hwUltrasonicType').value),
-            trig_pin: parseInt(document.getElementById('hwTrigPin').value),
-            echo_pin: parseInt(document.getElementById('hwEchoPin').value),
-            tank_depth: parseInt(document.getElementById('hwTankDepth').value) || 150,
-            air_gap: parseInt(document.getElementById('hwTankAirGap').value) || 15
-        },
-        mq2: {
-            enabled: document.getElementById('hwMq2En').value === '1',
-            analog_pin: parseInt(document.getElementById('hwMq2AnalogPin').value),
-            digital_pin: parseInt(document.getElementById('hwMq2DigitalPin').value)
-        },
+        climates: gHwSensors.climates.map(c => ({
+            type: c.type || 0,
+            pin: (c.type === 1 || c.type === 2) ? (c.pin ?? 255) : 255,
+            i2c_addr: (c.type >= 3) ? (c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0) : 0,
+            label: (c.label || '').slice(0, 15)
+        })),
+        lights: gHwSensors.lights.map(l => ({
+            type: l.type || 0,
+            i2c_addr: l.type === 1 ? (l.i2c_addr || 0x23) : 0,
+            label: (l.label || '').slice(0, 15)
+        })),
+        motions: gHwSensors.motions.map(m => ({
+            type: m.type || 0,
+            pin: m.pin ?? 255,
+            label: (m.label || '').slice(0, 15)
+        })),
+        probes: gHwSensors.probes.map(p => ({
+            type: p.type || 0,
+            pin: p.pin ?? 255,
+            label: (p.label || '').slice(0, 15)
+        })),
+        ultrasonics: gHwSensors.ultrasonics.map(u => ({
+            type: u.type || 0,
+            trig_pin: u.trig_pin ?? 255,
+            echo_pin: u.echo_pin ?? 255,
+            tank_depth: u.tank_depth || 150,
+            air_gap: u.air_gap || 15,
+            label: (u.label || '').slice(0, 15)
+        })),
+        mq2_sensors: gHwSensors.mq2s.map(g => ({
+            enabled: g.enabled !== false,
+            analog_pin: g.analog_pin ?? 255,
+            digital_pin: g.digital_pin ?? 255,
+            label: (g.label || '').slice(0, 15)
+        })),
+        dht: gHwSensors.climates.length > 0 ? { type: gHwSensors.climates[0].type, pin: gHwSensors.climates[0].pin, i2c_addr: gHwSensors.climates[0].i2c_addr || 0 } : { type: 0, pin: 255 },
+        light: gHwSensors.lights.length > 0 ? { type: gHwSensors.lights[0].type, i2c_addr: gHwSensors.lights[0].i2c_addr || 0 } : { type: 0 },
+        motion: gHwSensors.motions.length > 0 ? { type: gHwSensors.motions[0].type, pin: gHwSensors.motions[0].pin } : { type: 0, pin: 255 },
+        probe: gHwSensors.probes.length > 0 ? { type: gHwSensors.probes[0].type, pin: gHwSensors.probes[0].pin } : { type: 0, pin: 255 },
+        ultrasonic: gHwSensors.ultrasonics.length > 0 ? {
+            type: gHwSensors.ultrasonics[0].type, trig_pin: gHwSensors.ultrasonics[0].trig_pin,
+            echo_pin: gHwSensors.ultrasonics[0].echo_pin, tank_depth: gHwSensors.ultrasonics[0].tank_depth,
+            air_gap: gHwSensors.ultrasonics[0].air_gap
+        } : { type: 0, trig_pin: 255, echo_pin: 255, tank_depth: 150, air_gap: 15 },
+        mq2: gHwSensors.mq2s.length > 0 ? { enabled: gHwSensors.mq2s[0].enabled !== false, analog_pin: gHwSensors.mq2s[0].analog_pin, digital_pin: gHwSensors.mq2s[0].digital_pin } : { enabled: false, analog_pin: 255, digital_pin: 255 },
         buzzer: {
             enabled: document.getElementById('hwBuzEn').value === '1',
             pin: parseInt(document.getElementById('hwBuzPin').value)
@@ -3068,6 +3945,12 @@ function enterRebootPhase() {
       return;
     }
 
+    if (tickCount <= 2) {
+      setProgress(93, 'Rebooting' + dots);
+      setStatus('Waiting for reboot' + dots, '');
+      return;
+    }
+
     if (!offlineDetected) {
       // Step A: Wait for device to go offline (confirms reboot started)
       var pct = Math.min(93 + Math.floor(tickCount / 2), 96);
@@ -3079,8 +3962,8 @@ function enterRebootPhase() {
           offlineDetected = true;
           setProgress(96, 'Restarting' + dots);
           setStatus('Device restarting, please wait' + dots, '');
-        } else if (tickCount >= 8) {
-          // Device never went offline &mdash; fast reboot, skip to verification
+        } else if (tickCount >= 12) {
+          // Device never observed offline &mdash; fast reboot, proceed to verification
           offlineDetected = true;
         }
       });
@@ -3093,7 +3976,7 @@ function enterRebootPhase() {
       pingDevice(function(alive) {
         if (alive) {
           clearInterval(polling);
-          enterVerifyPhase();
+          enterVerifyPhase(1);
         }
       });
     }
@@ -3103,17 +3986,37 @@ function enterRebootPhase() {
 // ============================================================================
 // Phase 4: Verify firmware version actually changed
 // ============================================================================
-function enterVerifyPhase() {
+function enterVerifyPhase(attempt) {
+  attempt = attempt || 1;
+  var maxAttempts = 5;
   setProgress(99, 'Verifying...');
-  setStatus('Verifying firmware update...', '');
+  setStatus('Verifying firmware update' + (attempt > 1 ? ' (retry ' + attempt + '/' + maxAttempts + ')' : '') + '...', '');
+
+  function retryOrFallback() {
+    if (attempt < maxAttempts) {
+      setTimeout(function() { enterVerifyPhase(attempt + 1); }, 1200);
+    } else {
+      setProgress(100, '\u2713 Done');
+      showResult(true, 'Update Complete',
+        'Device is online but version check failed. Refresh the dashboard to verify.');
+    }
+  }
 
   var x = new XMLHttpRequest();
   x.open('GET', '/api/ota/status?_=' + Date.now(), true);
-  x.timeout = 5000;
+  x.timeout = 6000;
   x.onload = function() {
-    setProgress(100, '\u2713 Done');
+    if (x.status !== 200) {
+      retryOrFallback();
+      return;
+    }
     try {
       var d = JSON.parse(x.responseText);
+      if (!d || !d.fw_version) {
+        retryOrFallback();
+        return;
+      }
+      setProgress(100, '\u2713 Done');
       var newVer = d.fw_version || 'unknown';
       var newBuild = d.fw_date || '';
       document.getElementById('fwVer').textContent = newVer;
@@ -3130,26 +4033,23 @@ function enterVerifyPhase() {
       }
       showResult(true, 'Update Successful!', detail);
     } catch(e) {
-      // Can't parse response &mdash; still show success since device is alive
-      showResult(true, 'Update Complete', 'Device is online. Could not verify version.');
+      retryOrFallback();
     }
   };
   x.onerror = x.ontimeout = function() {
-    setProgress(100, '\u2713 Done');
-    showResult(true, 'Update Complete',
-      'Device is online but version check failed. Refresh the dashboard to verify.');
+    retryOrFallback();
   };
   x.send();
 }
 
 // ============================================================================
-// Try a lightweight HEAD request to check if device is alive
+// Lightweight discovery ping to verify HTTP stack is back online
 // ============================================================================
 function pingDevice(cb) {
   var ctrl = new XMLHttpRequest();
-  ctrl.open('HEAD', '/?_=' + Date.now(), true);
-  ctrl.timeout = 2000;
-  ctrl.onload  = function() { cb(true); };
+  ctrl.open('GET', '/api/discovery?_=' + Date.now(), true);
+  ctrl.timeout = 2500;
+  ctrl.onload  = function() { cb(ctrl.status === 200); };
   ctrl.onerror = function() { cb(false); };
   ctrl.ontimeout = function() { cb(false); };
   try { ctrl.send(); } catch(e) { cb(false); }

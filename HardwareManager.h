@@ -21,7 +21,25 @@
 #include "StorageManager.h"
 
 #ifndef MAX_RELAYS
-#define MAX_RELAYS          8
+#define MAX_RELAYS              8
+#endif
+#ifndef MAX_CLIMATE_SENSORS
+#define MAX_CLIMATE_SENSORS     4
+#endif
+#ifndef MAX_LIGHT_SENSORS
+#define MAX_LIGHT_SENSORS       2
+#endif
+#ifndef MAX_MOTION_SENSORS
+#define MAX_MOTION_SENSORS      6
+#endif
+#ifndef MAX_PROBE_SENSORS
+#define MAX_PROBE_SENSORS       4
+#endif
+#ifndef MAX_ULTRASONIC_SENSORS
+#define MAX_ULTRASONIC_SENSORS  4
+#endif
+#ifndef MAX_MQ2_SENSORS
+#define MAX_MQ2_SENSORS         4
 #endif
 
 #ifndef PIN_UNUSED
@@ -84,32 +102,71 @@ struct ChannelHardware {
     TriggerMode triggerMode;    // TRIGGER_ACTIVE_LOW or TRIGGER_ACTIVE_HIGH
 };
 
+// Per-sensor instance hardware mapping structs
+struct ClimateSensorConfig {
+    ClimateSensorType type;     // CLIMATE_NONE..CLIMATE_SHT3X
+    uint8_t pin;                // GPIO for DHT11/DHT22 or PIN_UNUSED
+    uint8_t i2cAddr;            // I2C address for BME280/AHT20/SHT3X (0 = auto/default)
+    char label[16];             // Optional label e.g. "Living Room"
+};
+
+struct LightSensorConfig {
+    LightSensorType type;       // LIGHT_NONE, LIGHT_BH1750
+    uint8_t i2cAddr;            // 0x23 or 0x5C
+    char label[16];
+};
+
+struct MotionSensorConfig {
+    MotionSensorType type;      // MOTION_NONE, MOTION_PIR, MOTION_RADAR_LD2410
+    uint8_t pin;                // Input GPIO or PIN_UNUSED
+    char label[16];
+};
+
+struct ProbeSensorConfig {
+    ProbeSensorType type;       // PROBE_NONE, PROBE_DS18B20
+    uint8_t pin;                // 1-Wire GPIO or PIN_UNUSED
+    char label[16];
+};
+
+struct UltrasonicSensorConfig {
+    UltrasonicSensorType type;  // ULTRASONIC_NONE..ULTRASONIC_JSN_SR04T
+    uint8_t trigPin;            // Output GPIO or PIN_UNUSED
+    uint8_t echoPin;            // Input GPIO or PIN_UNUSED
+    uint16_t tankDepthCm;       // Total tank height (20-500 cm)
+    uint16_t tankAirGapCm;      // Sensor air gap to 100% full (5-100 cm)
+    char label[16];
+};
+
+struct Mq2SensorConfig {
+    bool enabled;
+    uint8_t analogPin;          // ADC1 GPIO (32..39 ESP32, 17/A0 ESP8266) or PIN_UNUSED
+    uint8_t digitalPin;         // Input GPIO or PIN_UNUSED
+    char label[16];
+};
+
 // Full hardware profile
 struct HardwareConfig {
     char boardName[32];
     uint8_t numRelays;                  // 0..MAX_RELAYS
     ChannelHardware channels[MAX_RELAYS];
 
-    ClimateSensorType dhtType;          // CLIMATE_NONE, CLIMATE_DHT11, CLIMATE_DHT22, CLIMATE_BME280, CLIMATE_AHT20, CLIMATE_SHT3X
-    uint8_t dhtPin;                     // GPIO or PIN_UNUSED
+    uint8_t numClimates;                // 0..MAX_CLIMATE_SENSORS
+    ClimateSensorConfig climates[MAX_CLIMATE_SENSORS];
 
-    LightSensorType lightType;          // LIGHT_NONE, LIGHT_BH1750 (uses I2C)
+    uint8_t numLights;                  // 0..MAX_LIGHT_SENSORS
+    LightSensorConfig lights[MAX_LIGHT_SENSORS];
 
-    MotionSensorType motionType;        // MOTION_NONE, MOTION_PIR, MOTION_RADAR_LD2410
-    uint8_t motionPin;                  // Input GPIO (e.g. 32) or PIN_UNUSED
+    uint8_t numMotions;                 // 0..MAX_MOTION_SENSORS
+    MotionSensorConfig motions[MAX_MOTION_SENSORS];
 
-    ProbeSensorType probeType;          // PROBE_NONE, PROBE_DS18B20
-    uint8_t probePin;                   // 1-Wire GPIO (e.g. 15) or PIN_UNUSED
+    uint8_t numProbes;                  // 0..MAX_PROBE_SENSORS
+    ProbeSensorConfig probes[MAX_PROBE_SENSORS];
 
-    UltrasonicSensorType ultrasonicType;// ULTRASONIC_NONE, ULTRASONIC_HCSR04P, ULTRASONIC_HCSR04, ULTRASONIC_JSN_SR04T
-    uint8_t trigPin;                    // Output GPIO (e.g. 15 or 32) or PIN_UNUSED
-    uint8_t echoPin;                    // Input GPIO (e.g. 35) or PIN_UNUSED
-    uint16_t tankDepthCm;               // Total tank height (e.g. 150 cm)
-    uint16_t tankAirGapCm;              // Sensor air gap to 100% full (e.g. 15 cm)
+    uint8_t numUltrasonics;             // 0..MAX_ULTRASONIC_SENSORS
+    UltrasonicSensorConfig ultrasonics[MAX_ULTRASONIC_SENSORS];
 
-    bool mq2Enabled;
-    uint8_t mq2AnalogPin;               // ADC1 GPIO (32..39) or PIN_UNUSED
-    uint8_t mq2DigitalPin;              // Input GPIO or PIN_UNUSED
+    uint8_t numMq2s;                    // 0..MAX_MQ2_SENSORS
+    Mq2SensorConfig mq2Sensors[MAX_MQ2_SENSORS];
 
     bool buzzerEnabled;
     uint8_t buzzerPin;                  // Output PWM GPIO or PIN_UNUSED
@@ -118,10 +175,10 @@ struct HardwareConfig {
     uint8_t lcdI2cAddr;                 // e.g. 0x27, 0x3F
     uint8_t lcdCols;                    // 16 or 20
     uint8_t lcdRows;                    // 2 or 4
-    uint8_t i2cSdaPin;                  // default 21
-    uint8_t i2cSclPin;                  // default 22
+    uint8_t i2cSdaPin;                  // default 21 / 4
+    uint8_t i2cSclPin;                  // default 22 / 5
 
-    uint8_t btnMultiPin;                // default 33 or PIN_UNUSED
+    uint8_t btnMultiPin;                // default 33 / 0 or PIN_UNUSED
 };
 
 class HardwareManager {
@@ -141,24 +198,41 @@ public:
     uint8_t getSwitchPin(uint8_t ch) const;
     SwitchMode getSwitchMode(uint8_t ch) const;
     TriggerMode getTriggerMode(uint8_t ch) const;
+    void setTriggerMode(uint8_t ch, TriggerMode mode);
 
-    ClimateSensorType getDhtType() const { return _config.dhtType; }
-    uint8_t getDhtPin() const { return _config.dhtPin; }
+    // --- Multi-Instance Sensor Accessors ---
+    uint8_t getClimateCount() const { return _config.numClimates; }
+    const ClimateSensorConfig* getClimate(uint8_t idx) const;
+    uint8_t getLightCount() const { return _config.numLights; }
+    const LightSensorConfig* getLight(uint8_t idx) const;
+    uint8_t getMotionCount() const { return _config.numMotions; }
+    const MotionSensorConfig* getMotion(uint8_t idx) const;
+    uint8_t getProbeCount() const { return _config.numProbes; }
+    const ProbeSensorConfig* getProbe(uint8_t idx) const;
+    uint8_t getUltrasonicCount() const { return _config.numUltrasonics; }
+    const UltrasonicSensorConfig* getUltrasonic(uint8_t idx) const;
+    uint8_t getMq2Count() const { return _config.numMq2s; }
+    const Mq2SensorConfig* getMq2(uint8_t idx) const;
+    bool hasAnyI2cSensor() const;
+    static uint8_t defaultI2cAddrForClimate(ClimateSensorType t);
+    static uint8_t defaultI2cAddrForLight(LightSensorType t);
 
-    LightSensorType getLightType() const { return _config.lightType; }
-    MotionSensorType getMotionType() const { return _config.motionType; }
-    uint8_t getMotionPin() const { return _config.motionPin; }
-    ProbeSensorType getProbeType() const { return _config.probeType; }
-    uint8_t getProbePin() const { return _config.probePin; }
-    UltrasonicSensorType getUltrasonicType() const { return _config.ultrasonicType; }
-    uint8_t getTrigPin() const { return _config.trigPin; }
-    uint8_t getEchoPin() const { return _config.echoPin; }
-    uint16_t getTankDepthCm() const { return _config.tankDepthCm; }
-    uint16_t getTankAirGapCm() const { return _config.tankAirGapCm; }
-
-    bool isMq2Enabled() const { return _config.mq2Enabled; }
-    uint8_t getMq2AnalogPin() const { return _config.mq2AnalogPin; }
-    uint8_t getMq2DigitalPin() const { return _config.mq2DigitalPin; }
+    // --- Slot-0 Convenience Compatibility Accessors ---
+    ClimateSensorType getDhtType() const;
+    uint8_t getDhtPin() const;
+    LightSensorType getLightType() const;
+    MotionSensorType getMotionType() const;
+    uint8_t getMotionPin() const;
+    ProbeSensorType getProbeType() const;
+    uint8_t getProbePin() const;
+    UltrasonicSensorType getUltrasonicType() const;
+    uint8_t getTrigPin() const;
+    uint8_t getEchoPin() const;
+    uint16_t getTankDepthCm() const;
+    uint16_t getTankAirGapCm() const;
+    bool isMq2Enabled() const;
+    uint8_t getMq2AnalogPin() const;
+    uint8_t getMq2DigitalPin() const;
 
     bool isBuzzerEnabled() const { return _config.buzzerEnabled; }
     uint8_t getBuzzerPin() const { return _config.buzzerPin; }

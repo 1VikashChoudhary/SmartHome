@@ -19,11 +19,11 @@ void Diagnostics::begin() {
 #endif
 
     Serial.println(F("[Diag] System Diagnostics:"));
-    Serial.printf("  Chip: %s rev%d  ID: %08X\n", getChipModel().c_str(), getChipRevision(), getChipId());
-    Serial.printf("  CPU: %d MHz  Flash: %d KB  Heap: %d KB\n",
-                  getCpuFreqMHz(), getFlashSize() / 1024, getTotalHeap() / 1024);
-    Serial.printf("  Reset reason: %s\n", _resetReason.c_str());
-    Serial.printf("  SDK: %s  Firmware: %s (%s %s)\n",
+    SERIAL_PRINTF("  Chip: %s rev%d  ID: %08lX\n", getChipModel().c_str(), getChipRevision(), (unsigned long)getChipId());
+    SERIAL_PRINTF("  CPU: %lu MHz  Flash: %lu KB  Heap: %lu KB\n",
+                  (unsigned long)getCpuFreqMHz(), (unsigned long)(getFlashSize() / 1024), (unsigned long)(getTotalHeap() / 1024));
+    SERIAL_PRINTF("  Reset reason: %s\n", _resetReason.c_str());
+    SERIAL_PRINTF("  SDK: %s  Firmware: %s (%s %s)\n",
                   getSdkVersion().c_str(), FW_VERSION, FW_BUILD_DATE, FW_BUILD_TIME);
 }
 
@@ -38,7 +38,7 @@ void Diagnostics::loop() {
     }
 
     if (isLowMemory()) {
-        Serial.printf("[Diag] WARNING: Low memory! Free: %u bytes\n", freeHeap);
+        SERIAL_PRINTF("[Diag] WARNING: Low memory! Free: %lu bytes\n", (unsigned long)freeHeap);
     }
 }
 

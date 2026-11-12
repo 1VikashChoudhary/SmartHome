@@ -47,7 +47,7 @@ bool StorageManager::begin() {
 
     _initialized = true;
 
-    Serial.printf("[Storage] LittleFS mounted. Used: %u / %u bytes (%.1f%%)\n",
+    SERIAL_PRINTF("[Storage] LittleFS mounted. Used: %u / %u bytes (%.1f%%)\n",
                   usedBytes(), totalBytes(), usagePercent());
 
     // Ensure default config files exist
@@ -66,13 +66,13 @@ bool StorageManager::loadJson(const char* path, JsonDocument& doc) {
     if (!_initialized) return false;
 
     if (!LittleFS.exists(path)) {
-        Serial.printf("[Storage] File not found: %s\n", path);
+        SERIAL_PRINTF("[Storage] File not found: %s\n", path);
         return false;
     }
 
     File file = LittleFS.open(path, "r");
     if (!file) {
-        Serial.printf("[Storage] Failed to open: %s\n", path);
+        SERIAL_PRINTF("[Storage] Failed to open: %s\n", path);
         return false;
     }
 
@@ -80,7 +80,7 @@ bool StorageManager::loadJson(const char* path, JsonDocument& doc) {
     file.close();
 
     if (error) {
-        Serial.printf("[Storage] JSON parse error in %s: %s\n", path, error.c_str());
+        SERIAL_PRINTF("[Storage] JSON parse error in %s: %s\n", path, error.c_str());
         return false;
     }
 
@@ -93,7 +93,7 @@ bool StorageManager::loadJson(const char* path, JsonDocument& doc) {
 bool StorageManager::saveJson(const char* path, const JsonDocument& doc) {
     if (!_initialized) return false;
     if (!_writeEnabled) {
-        Serial.printf("[Storage] Write blocked during OTA: %s\n", path);
+        SERIAL_PRINTF("[Storage] Write blocked during OTA: %s\n", path);
         return false;
     }
 
@@ -119,13 +119,13 @@ bool StorageManager::fileExists(const char* path) {
 bool StorageManager::deleteFile(const char* path) {
     if (!_initialized) return false;
     if (!_writeEnabled) {
-        Serial.printf("[Storage] Delete blocked during OTA: %s\n", path);
+        SERIAL_PRINTF("[Storage] Delete blocked during OTA: %s\n", path);
         return false;
     }
 
     if (LittleFS.exists(path)) {
         bool ok = LittleFS.remove(path);
-        Serial.printf("[Storage] Delete %s: %s\n", path, ok ? "OK" : "FAIL");
+        SERIAL_PRINTF("[Storage] Delete %s: %s\n", path, ok ? "OK" : "FAIL");
         return ok;
     }
     return true; // Already gone
@@ -133,7 +133,7 @@ bool StorageManager::deleteFile(const char* path) {
 
 void StorageManager::setWriteEnabled(bool enabled) {
     _writeEnabled = enabled;
-    Serial.printf("[Storage] Writes %s\n", enabled ? "enabled" : "disabled");
+    SERIAL_PRINTF("[Storage] Writes %s\n", enabled ? "enabled" : "disabled");
 }
 
 bool StorageManager::isWriteEnabled() const {
@@ -258,6 +258,9 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
             // Validate architecture compatibility for hardware.json
             if (strcmp(m.path, PATH_HARDWARE) == 0) {
 #if defined(ESP8266)
+                auto isValid8266DigitalPin = [](uint8_t p) -> bool {
+                    return p == PIN_UNUSED || (p <= 16 && p != 1 && p != 3 && !(p >= 6 && p <= 11));
+                };
                 bool isEsp8266Compatible = true;
                 const char* bChip = doc["_chip"] | "";
                 if (strcmp(bChip, "ESP32") == 0) {
@@ -265,32 +268,108 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 }
                 if (subDoc.containsKey("channels")) {
                     for (JsonObjectConst ch : subDoc["channels"].as<JsonArrayConst>()) {
+                        if (!(ch["enabled"] | true)) continue;
                         uint8_t rp = ch["relay_pin"] | PIN_UNUSED;
                         uint8_t sp = ch["switch_pin"] | PIN_UNUSED;
-                        if ((rp != PIN_UNUSED && rp > 16) || (sp != PIN_UNUSED && sp > 16)) {
+                        bool swEn = ch["switch_enabled"] | true;
+                        if (!isValid8266DigitalPin(rp) || (swEn && !isValid8266DigitalPin(sp))) {
                             isEsp8266Compatible = false;
                             break;
                         }
                     }
                 }
-                if (subDoc.containsKey("lcd")) {
+                bool anyI2c = (subDoc["lcd"]["enabled"] | false);
+                if (subDoc.containsKey("climates")) {
+                    for (JsonObjectConst c : subDoc["climates"].as<JsonArrayConst>()) {
+                        uint8_t dt = c["type"] | 0;
+                        uint8_t dp = c["pin"] | PIN_UNUSED;
+                        if ((dt == 1 || dt == 2) && !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                        if (dt >= 3) anyI2c = true;
+                    }
+                } else {
+                    uint8_t dhtType = subDoc["dht"]["type"] | 0;
+                    uint8_t dhtPin = subDoc["dht"]["pin"] | PIN_UNUSED;
+                    if ((dhtType == 1 || dhtType == 2) && !isValid8266DigitalPin(dhtPin)) isEsp8266Compatible = false;
+                    if (dhtType >= 3) anyI2c = true;
+                }
+                if (subDoc.containsKey("lights")) {
+                    for (JsonObjectConst l : subDoc["lights"].as<JsonArrayConst>()) {
+                        if ((l["type"] | 0) == 1) anyI2c = true;
+                    }
+                } else if ((subDoc["light"]["type"] | 0) == 1) {
+                    anyI2c = true;
+                }
+                if (subDoc.containsKey("motions")) {
+                    for (JsonObjectConst mot : subDoc["motions"].as<JsonArrayConst>()) {
+                        if ((mot["type"] | 0) != 0 && !isValid8266DigitalPin(mot["pin"] | PIN_UNUSED)) isEsp8266Compatible = false;
+                    }
+                } else {
+                    uint8_t motionType = subDoc["motion"]["type"] | 0;
+                    uint8_t motionPin = subDoc["motion"]["pin"] | PIN_UNUSED;
+                    if (motionType != 0 && !isValid8266DigitalPin(motionPin)) isEsp8266Compatible = false;
+                }
+                if (subDoc.containsKey("probes")) {
+                    for (JsonObjectConst prb : subDoc["probes"].as<JsonArrayConst>()) {
+                        if ((prb["type"] | 0) != 0 && !isValid8266DigitalPin(prb["pin"] | PIN_UNUSED)) isEsp8266Compatible = false;
+                    }
+                } else {
+                    uint8_t probeType = subDoc["probe"]["type"] | 0;
+                    uint8_t probePin = subDoc["probe"]["pin"] | PIN_UNUSED;
+                    if (probeType != 0 && !isValid8266DigitalPin(probePin)) isEsp8266Compatible = false;
+                }
+                if (subDoc.containsKey("ultrasonics")) {
+                    for (JsonObjectConst us : subDoc["ultrasonics"].as<JsonArrayConst>()) {
+                        if ((us["type"] | 0) != 0 && (!isValid8266DigitalPin(us["trig_pin"] | PIN_UNUSED) || !isValid8266DigitalPin(us["echo_pin"] | PIN_UNUSED))) {
+                            isEsp8266Compatible = false;
+                        }
+                    }
+                } else {
+                    uint8_t usType = subDoc["ultrasonic"]["type"] | 0;
+                    uint8_t trigPin = subDoc["ultrasonic"]["trig_pin"] | PIN_UNUSED;
+                    uint8_t echoPin = subDoc["ultrasonic"]["echo_pin"] | PIN_UNUSED;
+                    if (usType != 0 && (!isValid8266DigitalPin(trigPin) || !isValid8266DigitalPin(echoPin))) isEsp8266Compatible = false;
+                }
+                if (subDoc.containsKey("mq2_sensors")) {
+                    for (JsonObjectConst g : subDoc["mq2_sensors"].as<JsonArrayConst>()) {
+                        if (!(g["enabled"] | true)) continue;
+                        uint8_t ap = g["analog_pin"] | PIN_UNUSED;
+                        uint8_t dp = g["digital_pin"] | PIN_UNUSED;
+                        if ((ap != PIN_UNUSED && ap != 17) || !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                    }
+                } else if (subDoc["mq2"]["enabled"] | false) {
+                    uint8_t ap = subDoc["mq2"]["analog_pin"] | PIN_UNUSED;
+                    uint8_t dp = subDoc["mq2"]["digital_pin"] | PIN_UNUSED;
+                    if ((ap != PIN_UNUSED && ap != 17) || !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                }
+                if (anyI2c) {
                     uint8_t sda = subDoc["lcd"]["sda_pin"] | PIN_UNUSED;
                     uint8_t scl = subDoc["lcd"]["scl_pin"] | PIN_UNUSED;
-                    if ((sda != PIN_UNUSED && sda > 16) || (scl != PIN_UNUSED && scl > 16)) isEsp8266Compatible = false;
+                    if (!isValid8266DigitalPin(sda) || !isValid8266DigitalPin(scl)) {
+                        isEsp8266Compatible = false;
+                    }
                 }
-                if (subDoc.containsKey("buzzer")) {
+                if (subDoc["buzzer"]["enabled"] | false) {
                     uint8_t bp = subDoc["buzzer"]["pin"] | PIN_UNUSED;
-                    if (bp != PIN_UNUSED && bp > 16) isEsp8266Compatible = false;
+                    if (!isValid8266DigitalPin(bp)) isEsp8266Compatible = false;
                 }
                 if (subDoc.containsKey("btn_multi_pin")) {
                     uint8_t bmp = subDoc["btn_multi_pin"] | PIN_UNUSED;
-                    if (bmp != PIN_UNUSED && bmp > 16) isEsp8266Compatible = false;
+                    if (!isValid8266DigitalPin(bmp)) isEsp8266Compatible = false;
                 }
                 if (!isEsp8266Compatible) {
-                    Serial.println(F("[Storage] Notice: Backup hardware profile belongs to ESP32 (or has pins > 16). Preserving current valid ESP8266 hardware configuration."));
+                    Serial.println(F("[Storage] Notice: Backup hardware profile belongs to ESP32 (or has invalid ESP8266 GPIOs). Preserving current valid ESP8266 hardware configuration."));
                     continue; // Skip saving hardware.json, preserve existing valid hardware configuration
                 }
 #elif defined(ESP32)
+                auto isValidEsp32OutPin = [](uint8_t p) -> bool {
+                    return p == PIN_UNUSED ||
+                           (p < 40 && p != 0 && p != 1 && p != 3 && !(p >= 6 && p <= 11) &&
+                            p != 34 && p != 35 && p != 36 && p != 39);
+                };
+                auto isValidEsp32InPin = [](uint8_t p) -> bool {
+                    return p == PIN_UNUSED ||
+                           (p < 40 && p != 1 && p != 3 && !(p >= 6 && p <= 11));
+                };
                 bool isEsp32Compatible = true;
                 const char* bChip = doc["_chip"] | "";
                 if (strcmp(bChip, "ESP8266") == 0) {
@@ -302,12 +381,96 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 }
                 if (subDoc.containsKey("channels")) {
                     for (JsonObjectConst ch : subDoc["channels"].as<JsonArrayConst>()) {
+                        if (!(ch["enabled"] | true)) continue;
                         uint8_t rp = ch["relay_pin"] | PIN_UNUSED;
-                        if (rp == 12) isEsp32Compatible = false; // GPIO 12 is MTDI strapping pin on ESP32
+                        uint8_t sp = ch["switch_pin"] | PIN_UNUSED;
+                        bool swEn = ch["switch_enabled"] | true;
+                        if (!isValidEsp32OutPin(rp) || (swEn && !isValidEsp32InPin(sp))) {
+                            isEsp32Compatible = false;
+                            break;
+                        }
                     }
                 }
+                bool anyI2c = (subDoc["lcd"]["enabled"] | false);
+                if (subDoc.containsKey("climates")) {
+                    for (JsonObjectConst c : subDoc["climates"].as<JsonArrayConst>()) {
+                        uint8_t dt = c["type"] | 0;
+                        uint8_t dp = c["pin"] | PIN_UNUSED;
+                        if ((dt == 1 || dt == 2) && !isValidEsp32OutPin(dp)) isEsp32Compatible = false;
+                        if (dt >= 3) anyI2c = true;
+                    }
+                } else {
+                    uint8_t dhtType = subDoc["dht"]["type"] | 0;
+                    uint8_t dhtPin = subDoc["dht"]["pin"] | PIN_UNUSED;
+                    if ((dhtType == 1 || dhtType == 2) && !isValidEsp32OutPin(dhtPin)) isEsp32Compatible = false;
+                    if (dhtType >= 3) anyI2c = true;
+                }
+                if (subDoc.containsKey("lights")) {
+                    for (JsonObjectConst l : subDoc["lights"].as<JsonArrayConst>()) {
+                        if ((l["type"] | 0) == 1) anyI2c = true;
+                    }
+                } else if ((subDoc["light"]["type"] | 0) == 1) {
+                    anyI2c = true;
+                }
+                if (subDoc.containsKey("motions")) {
+                    for (JsonObjectConst mot : subDoc["motions"].as<JsonArrayConst>()) {
+                        if ((mot["type"] | 0) != 0 && !isValidEsp32InPin(mot["pin"] | PIN_UNUSED)) isEsp32Compatible = false;
+                    }
+                } else {
+                    uint8_t motionType = subDoc["motion"]["type"] | 0;
+                    uint8_t motionPin = subDoc["motion"]["pin"] | PIN_UNUSED;
+                    if (motionType != 0 && !isValidEsp32InPin(motionPin)) isEsp32Compatible = false;
+                }
+                if (subDoc.containsKey("probes")) {
+                    for (JsonObjectConst prb : subDoc["probes"].as<JsonArrayConst>()) {
+                        if ((prb["type"] | 0) != 0 && !isValidEsp32OutPin(prb["pin"] | PIN_UNUSED)) isEsp32Compatible = false;
+                    }
+                } else {
+                    uint8_t probeType = subDoc["probe"]["type"] | 0;
+                    uint8_t probePin = subDoc["probe"]["pin"] | PIN_UNUSED;
+                    if (probeType != 0 && !isValidEsp32OutPin(probePin)) isEsp32Compatible = false;
+                }
+                if (subDoc.containsKey("ultrasonics")) {
+                    for (JsonObjectConst us : subDoc["ultrasonics"].as<JsonArrayConst>()) {
+                        if ((us["type"] | 0) != 0 && (!isValidEsp32OutPin(us["trig_pin"] | PIN_UNUSED) || !isValidEsp32InPin(us["echo_pin"] | PIN_UNUSED))) {
+                            isEsp32Compatible = false;
+                        }
+                    }
+                } else {
+                    uint8_t usType = subDoc["ultrasonic"]["type"] | 0;
+                    uint8_t trigPin = subDoc["ultrasonic"]["trig_pin"] | PIN_UNUSED;
+                    uint8_t echoPin = subDoc["ultrasonic"]["echo_pin"] | PIN_UNUSED;
+                    if (usType != 0 && (!isValidEsp32OutPin(trigPin) || !isValidEsp32InPin(echoPin))) isEsp32Compatible = false;
+                }
+                if (subDoc.containsKey("mq2_sensors")) {
+                    for (JsonObjectConst g : subDoc["mq2_sensors"].as<JsonArrayConst>()) {
+                        if (!(g["enabled"] | true)) continue;
+                        uint8_t ap = g["analog_pin"] | PIN_UNUSED;
+                        uint8_t dp = g["digital_pin"] | PIN_UNUSED;
+                        if (ap == 17 || !isValidEsp32InPin(ap) || !isValidEsp32InPin(dp)) isEsp32Compatible = false;
+                    }
+                } else if (subDoc["mq2"]["enabled"] | false) {
+                    uint8_t ap = subDoc["mq2"]["analog_pin"] | PIN_UNUSED;
+                    uint8_t dp = subDoc["mq2"]["digital_pin"] | PIN_UNUSED;
+                    if (ap == 17 || !isValidEsp32InPin(ap) || !isValidEsp32InPin(dp)) isEsp32Compatible = false;
+                }
+                if (anyI2c) {
+                    uint8_t sda = subDoc["lcd"]["sda_pin"] | PIN_UNUSED;
+                    uint8_t scl = subDoc["lcd"]["scl_pin"] | PIN_UNUSED;
+                    if (!isValidEsp32OutPin(sda) || !isValidEsp32OutPin(scl)) {
+                        isEsp32Compatible = false;
+                    }
+                }
+                if (subDoc["buzzer"]["enabled"] | false) {
+                    uint8_t bp = subDoc["buzzer"]["pin"] | PIN_UNUSED;
+                    if (!isValidEsp32OutPin(bp)) isEsp32Compatible = false;
+                }
+                if (subDoc.containsKey("btn_multi_pin")) {
+                    uint8_t bmp = subDoc["btn_multi_pin"] | PIN_UNUSED;
+                    if (!isValidEsp32InPin(bmp)) isEsp32Compatible = false;
+                }
                 if (!isEsp32Compatible) {
-                    Serial.println(F("[Storage] Notice: Backup hardware profile belongs to ESP8266. Preserving current valid ESP32 hardware configuration."));
+                    Serial.println(F("[Storage] Notice: Backup hardware profile belongs to ESP8266 (or has invalid ESP32 GPIOs). Preserving current valid ESP32 hardware configuration."));
                     continue;
                 }
 #endif
@@ -461,7 +624,7 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
 
             if (saveJson(m.path, subDoc)) {
                 restored++;
-                Serial.printf("[Storage] Restored: %s\n", m.path);
+                SERIAL_PRINTF("[Storage] Restored: %s\n", m.path);
             }
         } else if (isFullBackup && m.wipeIfMissingInFullBackup && LittleFS.exists(m.path)) {
             // If this is a full backup and an optional module file was not present when
@@ -469,12 +632,12 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
             // any subsequently created file so the module genuinely reverts to the backup state!
             if (deleteFile(m.path)) {
                 restored++;
-                Serial.printf("[Storage] Removed post-backup config to restore default state: %s\n", m.path);
+                SERIAL_PRINTF("[Storage] Removed post-backup config to restore default state: %s\n", m.path);
             }
         }
     }
 
-    Serial.printf("[Storage] Import complete: %d files applied\n", restored);
+    SERIAL_PRINTF("[Storage] Import complete: %d files applied\n", restored);
     return restored > 0;
 }
 
@@ -483,7 +646,7 @@ bool StorageManager::importAllConfig(const String& jsonBlob) {
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, jsonBlob);
     if (error) {
-        Serial.printf("[Storage] Import parse error: %s\n", error.c_str());
+        SERIAL_PRINTF("[Storage] Import parse error: %s\n", error.c_str());
         return false;
     }
     return importAllConfig(doc.as<JsonObjectConst>());
@@ -547,7 +710,7 @@ void StorageManager::migrateIfNeeded() {
     if (loadJson(PATH_CONFIG, doc)) {
         int version = doc["schema_version"] | 0;
         if (version < CONFIG_SCHEMA_VERSION) {
-            Serial.printf("[Storage] Migrating config from v%d to v%d\n",
+            SERIAL_PRINTF("[Storage] Migrating config from v%d to v%d\n",
                           version, CONFIG_SCHEMA_VERSION);
 
             doc["schema_version"] = CONFIG_SCHEMA_VERSION;
@@ -573,7 +736,7 @@ void StorageManager::migrateIfNeeded() {
                 count++;
             }
             saveRelayStatesNVS(logical, wallSw, count > 0 ? count : MAX_RELAYS);
-            Serial.printf("[Storage-NVS] Migrated %d legacy relay states to wear-leveled NVS.\n", count);
+            SERIAL_PRINTF("[Storage-NVS] Migrated %d legacy relay states to wear-leveled NVS.\n", count);
         }
         deleteFile(PATH_RELAY_STATES);
         Serial.println(F("[Storage-NVS] Removed legacy /relay_states.json from LittleFS to eliminate flash wear."));
@@ -618,7 +781,7 @@ void StorageManager::createDefaultConfig() {
 // ============================================================================
 bool StorageManager::writeFile(const char* path, const String& content) {
     if (!_writeEnabled) {
-        Serial.printf("[Storage] Write helper blocked during OTA: %s\n", path);
+        SERIAL_PRINTF("[Storage] Write helper blocked during OTA: %s\n", path);
         return false;
     }
 
@@ -627,7 +790,7 @@ bool StorageManager::writeFile(const char* path, const String& content) {
 
     File file = LittleFS.open(tempPath, "w");
     if (!file) {
-        Serial.printf("[Storage] Failed to create temp file for %s\n", path);
+        SERIAL_PRINTF("[Storage] Failed to create temp file for %s\n", path);
         return false;
     }
 
@@ -635,7 +798,7 @@ bool StorageManager::writeFile(const char* path, const String& content) {
     file.close();
 
     if (written != content.length()) {
-        Serial.printf("[Storage] Write incomplete for %s (%u/%u bytes)\n",
+        SERIAL_PRINTF("[Storage] Write incomplete for %s (%u/%u bytes)\n",
                       path, written, content.length());
         LittleFS.remove(tempPath);
         return false;
@@ -644,11 +807,11 @@ bool StorageManager::writeFile(const char* path, const String& content) {
     // Atomic rename: remove old, rename temp to target
     LittleFS.remove(path);
     if (!LittleFS.rename(tempPath, path)) {
-        Serial.printf("[Storage] Rename failed for %s\n", path);
+        SERIAL_PRINTF("[Storage] Rename failed for %s\n", path);
         return false;
     }
 
-    Serial.printf("[Storage] Saved: %s (%u bytes)\n", path, written);
+    SERIAL_PRINTF("[Storage] Saved: %s (%u bytes)\n", path, written);
     return true;
 }
 
@@ -657,18 +820,18 @@ bool StorageManager::writeFile(const char* path, const String& content) {
 // ============================================================================
 void StorageManager::dumpFile(const char* path) {
     if (!_initialized || !LittleFS.exists(path)) {
-        Serial.printf("[Storage] Cannot dump %s\n", path);
+        SERIAL_PRINTF("[Storage] Cannot dump %s\n", path);
         return;
     }
 
     File file = LittleFS.open(path, "r");
     if (!file) return;
 
-    Serial.printf("--- %s (%u bytes) ---\n", path, file.size());
+    SERIAL_PRINTF("--- %s (%u bytes) ---\n", path, file.size());
     while (file.available()) {
         Serial.write(file.read());
     }
-    Serial.println("\n---");
+    Serial.println(F("\n---"));
     file.close();
 }
 
@@ -682,17 +845,17 @@ void StorageManager::listFiles() {
 #if defined(ESP8266)
     Dir dir = LittleFS.openDir("/");
     while (dir.next()) {
-        Serial.printf("  %-25s %6u bytes\n", dir.fileName().c_str(), (unsigned int)dir.fileSize());
+        SERIAL_PRINTF("  %-25s %6u bytes\n", dir.fileName().c_str(), (unsigned int)dir.fileSize());
     }
 #else
     File root = LittleFS.open("/");
     File file = root.openNextFile();
     while (file) {
-        Serial.printf("  %-25s %6u bytes\n", file.name(), file.size());
+        SERIAL_PRINTF("  %-25s %6u bytes\n", file.name(), file.size());
         file = root.openNextFile();
     }
 #endif
-    Serial.printf("[Storage] Total: %u / %u bytes\n", usedBytes(), totalBytes());
+    SERIAL_PRINTF("[Storage] Total: %u / %u bytes\n", usedBytes(), totalBytes());
 }
 
 // ============================================================================
@@ -706,7 +869,7 @@ bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* s
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
-        Serial.printf("[NVS] nvs_open failed (0x%X)\n", err);
+        SERIAL_PRINTF("[NVS] nvs_open failed (0x%X)\n", err);
         return false;
     }
 

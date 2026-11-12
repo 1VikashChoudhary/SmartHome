@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * LCDManager.cpp — Non-blocking LCD1602 Implementation
+ * LCDManager.cpp — Non-blocking LCD1602 / LCD2004 Implementation
  * ============================================================================
  * 
  * KEY DESIGN: Never call lcd.clear(). Only update changed characters via
@@ -25,6 +25,8 @@ static const uint8_t CHAR_CHECK[]  = {0x00,0x01,0x03,0x16,0x1C,0x08,0x00,0x00};
 LCDManager::LCDManager()
     : _lcd(LCD_I2C_ADDR, LCD_COLS, LCD_ROWS),
       _storage(nullptr), _time(nullptr), _enabled(DEFAULT_LCD_ENABLED),
+      _hwLcdAllowed(true), _sdaPin(PIN_I2C_SDA), _sclPin(PIN_I2C_SCL), _i2cAddr(LCD_I2C_ADDR),
+      _lcdCols(LCD_COLS), _lcdRows(LCD_ROWS),
       _backlight(DEFAULT_LCD_BACKLIGHT),
       _displayMode(LCD_MODE_ROTATE),
       _rotationInterval(LCD_DEFAULT_ROTATION / 1000),
@@ -35,18 +37,18 @@ LCDManager::LCDManager()
       _lastPageChange(0), _lastUpdate(0),
       _lastUserInteraction(0),
       _alarmType(LCD_ALARM_NONE), _otaProgress(0),
-      _temp(0), _hum(0), _dhtFault(false),
+      _temp(0), _hum(0), _dhtFault(false), _dhtEnabled(true),
+      _numRelays(NUM_RELAYS),
       _gasValue(0), _gasThreshold(MQ2_DEFAULT_THRESHOLD),
-      _gasAlarm(false), _gasWarming(true),
+      _gasAlarm(false), _gasWarming(true), _mq2Enabled(true),
       _mqttConnected(false),
-      _isAPMode(false), _apSSID(""), _apPass(""),
-      _numRelays(NUM_RELAYS) {
+      _isAPMode(false), _apSSID(""), _apPass("") {
     memset(_buffer, ' ', sizeof(_buffer));
     memset(_prevBuffer, 0, sizeof(_prevBuffer)); // Different from spaces to force first draw
     memset(_relayStates, 0, sizeof(_relayStates));
-    for (int r = 0; r < LCD_ROWS; r++) {
-        _buffer[r][LCD_COLS] = '\0';
-        _prevBuffer[r][LCD_COLS] = '\0';
+    for (int r = 0; r < LCD_MAX_ROWS; r++) {
+        _buffer[r][LCD_MAX_COLS] = '\0';
+        _prevBuffer[r][LCD_MAX_COLS] = '\0';
     }
 }
 
@@ -54,10 +56,15 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time) {
     _storage = &storage;
     _time = &time;
     _numRelays = NUM_RELAYS;
+    _sdaPin = PIN_I2C_SDA;
+    _sclPin = PIN_I2C_SCL;
+    _i2cAddr = LCD_I2C_ADDR;
+    _hwLcdAllowed = (_sdaPin != PIN_UNUSED && _sclPin != PIN_UNUSED);
     loadConfig();
 
-    if (!_enabled) {
-        Serial.println(F("[LCD] Disabled in config"));
+    if (!_enabled || !_hwLcdAllowed) {
+        _enabled = false;
+        Serial.println(F("[LCD] Disabled in config or pins unset"));
         return;
     }
 
@@ -72,7 +79,7 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time) {
     Wire.beginTransmission(LCD_I2C_ADDR);
     byte error = Wire.endTransmission();
     if (error != 0) {
-        Serial.printf("[LCD] LCD not detected at I2C address 0x%02X (error: %d). Disabling LCD.\n", LCD_I2C_ADDR, error);
+        SERIAL_PRINTF("[LCD] LCD not detected at I2C address 0x%02X (error: %d). Disabling LCD.\n", LCD_I2C_ADDR, error);
         _enabled = false;
         return;
     }
@@ -100,7 +107,7 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time) {
     _lastPageChange = millis();
     _lastUpdate = millis();
 
-    Serial.printf("[LCD] Ready (addr: 0x%02X, rotation: %ds, brightness: %d%%)\n",
+    SERIAL_PRINTF("[LCD] Ready (addr: 0x%02X, rotation: %ds, brightness: %d%%)\n",
                   LCD_I2C_ADDR, _rotationInterval, _brightness);
 }
 
@@ -111,7 +118,18 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time, HardwareManag
     if (_numRelays > MAX_RELAYS) _numRelays = MAX_RELAYS;
     loadConfig();
 
-    if (!_enabled || !hw.isLcdEnabled()) {
+    _sdaPin = hw.getI2cSdaPin();
+    _sclPin = hw.getI2cSclPin();
+    _i2cAddr = hw.getLcdI2cAddr();
+    uint8_t hwCols = hw.getLcdCols();
+    uint8_t hwRows = hw.getLcdRows();
+    _lcdCols = (hwCols >= 8 && hwCols <= LCD_MAX_COLS) ? hwCols : LCD_COLS;
+    _lcdRows = (hwRows >= 1 && hwRows <= LCD_MAX_ROWS) ? hwRows : LCD_ROWS;
+    _dhtEnabled = (hw.getDhtType() != CLIMATE_NONE);
+    _mq2Enabled = hw.isMq2Enabled();
+    _hwLcdAllowed = hw.isLcdEnabled() && (_sdaPin != PIN_UNUSED) && (_sclPin != PIN_UNUSED);
+
+    if (!_enabled || !_hwLcdAllowed) {
         _enabled = false;
         Serial.println(F("[LCD] Disabled in hardware profile"));
         return;
@@ -121,9 +139,9 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time, HardwareManag
     pinMode(PIN_LCD_BACKLIGHT_PWM, OUTPUT);
 #endif
 
-    uint8_t sda = hw.getI2cSdaPin();
-    uint8_t scl = hw.getI2cSclPin();
-    uint8_t addr = hw.getLcdI2cAddr();
+    uint8_t sda = _sdaPin;
+    uint8_t scl = _sclPin;
+    uint8_t addr = _i2cAddr;
 
     // Initialize I2C bus with hardware profile pins
     Wire.begin(sda, scl);
@@ -131,13 +149,13 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time, HardwareManag
     Wire.beginTransmission(addr);
     byte error = Wire.endTransmission();
     if (error != 0) {
-        Serial.printf("[LCD] LCD not detected at I2C 0x%02X (SDA:%d, SCL:%d, error: %d). Disabling LCD.\n",
+        SERIAL_PRINTF("[LCD] LCD not detected at I2C 0x%02X (SDA:%d, SCL:%d, error: %d). Disabling LCD.\n",
                       addr, sda, scl, error);
         _enabled = false;
         return;
     }
 
-    _lcd = LiquidCrystal_I2C(addr, hw.getLcdCols(), hw.getLcdRows());
+    _lcd = LiquidCrystal_I2C(addr, _lcdCols, _lcdRows);
     _lcd.init();
 
     uint8_t initBrightness = _brightness;
@@ -160,7 +178,7 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time, HardwareManag
     _lastPageChange = millis();
     _lastUpdate = millis();
 
-    Serial.printf("[LCD] Ready via Hardware Profile (addr: 0x%02X, SDA:%d, SCL:%d, %d relays)\n",
+    SERIAL_PRINTF("[LCD] Ready via Hardware Profile (addr: 0x%02X, SDA:%d, SCL:%d, %d relays)\n",
                   addr, sda, scl, _numRelays);
 }
 
@@ -218,6 +236,12 @@ void LCDManager::loop() {
     // Update display content periodically
     if (now - _lastUpdate < LCD_UPDATE_INTERVAL && !_forceRedraw) return;
     _lastUpdate = now;
+
+    // Clear off-screen buffer rows cleanly so 20x4 displays never leave stale lines
+    uint8_t activeRows = (_lcdRows <= LCD_MAX_ROWS) ? _lcdRows : LCD_MAX_ROWS;
+    for (uint8_t r = 0; r < activeRows; r++) {
+        setLine(r, "");
+    }
 
     // Render current content to buffer
     if (_alarmType != LCD_ALARM_NONE) {
@@ -299,24 +323,28 @@ void LCDManager::showOTAProgress(int percent) {
 void LCDManager::showBootScreen(const char* deviceName) {
     if (!_enabled) return;
 
+    uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
+
     // Direct write for boot screen (one-time, before loop starts)
     _lcd.clear();
     _lcd.setCursor(0, 0);
 
-    // Center device name
+    // Center device name (bounded to active column width)
     int nameLen = strlen(deviceName);
-    int pad = (LCD_COLS - nameLen) / 2;
+    int pad = ((int)cols - nameLen) / 2;
+    if (pad < 0) pad = 0;
     for (int i = 0; i < pad; i++) _lcd.print(' ');
-    _lcd.print(deviceName);
+    for (int i = 0; i < ((int)cols - pad) && i < nameLen; i++) _lcd.print(deviceName[i]);
 
     _lcd.setCursor(0, 1);
-    char verLine[LCD_COLS + 1];
+    char verLine[LCD_MAX_COLS + 1];
     snprintf(verLine, sizeof(verLine), "  v%s  Ready  ", FW_VERSION);
+    verLine[cols] = '\0';
     _lcd.print(verLine);
 
-    // Mark prev buffer as unknown to force full redraw on first loop
+    // Mark prev buffer as unknown across all rows to force full redraw on first loop
     memset(_prevBuffer, 0xFF, sizeof(_prevBuffer));
-    for (int r = 0; r < LCD_ROWS; r++) _prevBuffer[r][LCD_COLS] = '\0';
+    for (int r = 0; r < LCD_MAX_ROWS; r++) _prevBuffer[r][LCD_MAX_COLS] = '\0';
 }
 
 // ============================================================================
@@ -325,9 +353,23 @@ void LCDManager::showBootScreen(const char* deviceName) {
 bool LCDManager::isEnabled() { return _enabled; }
 
 void LCDManager::setEnabled(bool enabled) {
+    if (enabled && !_hwLcdAllowed) {
+        Serial.println(F("[LCD] Cannot enable LCD: disabled or pins unassigned in hardware profile"));
+        _enabled = false;
+        saveConfig();
+        return;
+    }
     _enabled = enabled;
     if (_enabled) {
-        Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+        Wire.begin(_sdaPin, _sclPin);
+        Wire.beginTransmission(_i2cAddr);
+        if (Wire.endTransmission() != 0) {
+            SERIAL_PRINTF("[LCD] Cannot enable LCD: no I2C ACK at 0x%02X\n", _i2cAddr);
+            _enabled = false;
+            saveConfig();
+            return;
+        }
+        _lcd = LiquidCrystal_I2C(_i2cAddr, _lcdCols, _lcdRows);
         _lcd.init();
         if (_backlight) _lcd.backlight();
         createCustomChars();
@@ -364,11 +406,13 @@ void LCDManager::setAutoDimEnabled(bool enabled) {
 }
 
 void LCDManager::setDimStartTime(const String& time) {
+    if (time.indexOf(':') < 1 || time.length() < 3 || time.length() > 5) return;
     _dimStartTime = time;
     saveConfig();
 }
 
 void LCDManager::setDimEndTime(const String& time) {
+    if (time.indexOf(':') < 1 || time.length() < 3 || time.length() > 5) return;
     _dimEndTime = time;
     saveConfig();
 }
@@ -418,8 +462,8 @@ void LCDManager::saveConfig() {
 // ============================================================================
 // Data Update Methods
 // ============================================================================
-void LCDManager::updateSensorData(float temp, float hum, bool dhtFault) {
-    _temp = temp; _hum = hum; _dhtFault = dhtFault;
+void LCDManager::updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled) {
+    _temp = temp; _hum = hum; _dhtFault = dhtFault; _dhtEnabled = dhtEnabled;
 }
 
 void LCDManager::updateRelayStates(const bool states[5]) {
@@ -447,9 +491,9 @@ void LCDManager::updateNetworkInfo(const String& ip, const String& date, const S
     _apPass = apPass;
 }
 
-void LCDManager::updateGasData(int gasValue, int threshold, bool alarm, bool warming) {
+void LCDManager::updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled) {
     _gasValue = gasValue; _gasThreshold = threshold;
-    _gasAlarm = alarm; _gasWarming = warming;
+    _gasAlarm = alarm; _gasWarming = warming; _mq2Enabled = mq2Enabled;
 }
 
 void LCDManager::updateMqttStatus(bool connected, const String& uptime) {
@@ -461,27 +505,34 @@ void LCDManager::updateMqttStatus(bool connected, const String& uptime) {
 // ============================================================================
 
 void LCDManager::renderSensorPage() {
+    uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
+
     // Line 1: T:25.3°C  H:62.1%
-    if (_dhtFault) {
+    if (!_dhtEnabled) {
+        setLine(0, "No Climate Sens ");
+    } else if (_dhtFault) {
         setLine(0, "\x08 --.-\xDF""C H:--.-% ");
     } else {
         setLinef(0, "\x08%5.1f\xDF""C H:%4.1f%%", _temp, _hum);
     }
 
-    // Line 2: R:■■□■□  MQ:Safe  (in rotate mode, include gas status)
-    char line2[LCD_COLS + 1];
+    // Line 2: R:■■□■□  MQ:Safe  (in rotate mode, include gas status when enabled)
+    char line2[LCD_MAX_COLS + 1];
     if (_numRelays == 0) {
         snprintf(line2, sizeof(line2), "Sensors Active");
     } else {
         snprintf(line2, sizeof(line2), "R:");
-        for (int i = 0; i < _numRelays; i++) {
+        int maxRelayIcons = (int)cols - 2;
+        if (maxRelayIcons < 0) maxRelayIcons = 0;
+        int shown = (_numRelays < maxRelayIcons) ? _numRelays : maxRelayIcons;
+        for (int i = 0; i < shown; i++) {
             line2[2 + i] = _relayStates[i] ? '\x02' : '\x03'; // Custom char ON/OFF
         }
-        line2[2 + _numRelays] = '\0';
+        line2[2 + shown] = '\0';
     }
 
-    if (_displayMode == LCD_MODE_ROTATE && _numRelays <= 5) {
-        // In rotate mode, append gas status alongside relay icons
+    if (_displayMode == LCD_MODE_ROTATE && _mq2Enabled && (int)(strlen(line2) + 8) <= (int)cols) {
+        // In rotate mode, append gas status alongside relay icons when width permits
         if (_gasWarming) {
             strncat(line2, " MQ:Warm", sizeof(line2) - strlen(line2) - 1);
         } else if (_gasAlarm) {
@@ -491,26 +542,40 @@ void LCDManager::renderSensorPage() {
         }
     }
 
-    // Pad to LCD_COLS
-    int len = strlen(line2);
-    while (len < LCD_COLS) line2[len++] = ' ';
-    line2[LCD_COLS] = '\0';
     setLine(1, line2);
+
+    // Extra rows populated automatically on 20x4 I2C displays
+    if (_lcdRows >= 4) {
+        if (!_mq2Enabled) {
+            setLine(2, "Gas: Disabled");
+        } else if (_gasWarming) {
+            setLinef(2, "\x05 Gas:%4d Warming", _gasValue);
+        } else if (_gasAlarm) {
+            setLinef(2, "\x06 GAS DANGER! %4d", _gasValue);
+        } else {
+            setLinef(2, "\x07 Gas:%4d/%4d OK", _gasValue, _gasThreshold);
+        }
+        setLinef(3, "%-14.14s MQ:%s", _ipAddr.c_str(), _mqttConnected ? "OK" : "--");
+    }
 }
 
 void LCDManager::renderDHTRelayPage() {
+    uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
+
     // Line 1: Plain ASCII temperature and humidity — no custom chars
-    if (_dhtFault) {
+    if (!_dhtEnabled) {
+        setLine(0, "T:--.-C H:--.-% ");
+    } else if (_dhtFault) {
         setLine(0, "T:ERR   H:ERR   ");
     } else {
         setLinef(0, "T:%4.1fC H:%4.1f%%", _temp, _hum);
     }
 
     // Line 2: Relay ON/OFF status
-    char line2[LCD_COLS + 1];
+    char line2[LCD_MAX_COLS + 1];
     if (_numRelays == 0) {
         snprintf(line2, sizeof(line2), "No Relays Config");
-    } else if (_numRelays <= 5) {
+    } else if ((_numRelays * 3 - 1) <= (int)cols) {
         int pos = 0;
         for (int i = 0; i < _numRelays; i++) {
             if (_relayStates[i]) {
@@ -520,19 +585,27 @@ void LCDManager::renderDHTRelayPage() {
             }
             if (i < _numRelays - 1) line2[pos++] = ' ';
         }
-        while (pos < LCD_COLS) line2[pos++] = ' ';
-        line2[LCD_COLS] = '\0';
+        line2[pos] = '\0';
     } else {
-        // 6 to 8 relays: "R: 1 0 1 1 0 1 0 1"
+        // High channel counts (e.g. 6-8 relays): compact "R:10110101"
         int pos = snprintf(line2, sizeof(line2), "R:");
-        for (int i = 0; i < _numRelays && pos < LCD_COLS; i++) {
-            line2[pos++] = ' ';
+        for (int i = 0; i < _numRelays && pos < (int)cols; i++) {
             line2[pos++] = _relayStates[i] ? '1' : '0';
         }
-        while (pos < LCD_COLS) line2[pos++] = ' ';
-        line2[LCD_COLS] = '\0';
+        line2[pos] = '\0';
     }
     setLine(1, line2);
+
+    if (_lcdRows >= 4) {
+        if (!_mq2Enabled) {
+            setLine(2, "Gas: Disabled");
+        } else if (_gasAlarm) {
+            setLinef(2, "GAS ALERT! %d/%d", _gasValue, _gasThreshold);
+        } else {
+            setLinef(2, "Gas:%4d/%4d %s", _gasValue, _gasThreshold, _gasWarming ? "Warm" : "Safe");
+        }
+        setLinef(3, "%-14.14s MQ:%s", _ipAddr.c_str(), _mqttConnected ? "OK" : "--");
+    }
 }
 
 
@@ -545,31 +618,39 @@ void LCDManager::renderNetworkPage() {
         // Keep this layout stable for recovery: SSID on line 1, password on
         // line 2. The `SmartHome-` / `SmartHome@` prefixes make their role
         // unambiguous without spending display columns on labels.
-        char line1[LCD_COLS + 1];
-        snprintf(line1, sizeof(line1), "%-16.16s", _apSSID.c_str());
-        setLine(0, line1);
+        setLine(0, _apSSID.c_str());
 
         // Line 2: full WPA2 password. Do not prepend a label here.
-        char line2[LCD_COLS + 1];
         if (_apPass.length() > 0) {
-            snprintf(line2, sizeof(line2), "%-16.16s", _apPass.c_str());
+            setLine(1, _apPass.c_str());
         } else {
-            snprintf(line2, sizeof(line2), "IP:192.168.4.1   ");
+            setLine(1, "IP:192.168.4.1");
         }
-        setLine(1, line2);
+        if (_lcdRows >= 4) {
+            setLine(2, "AP IP: 192.168.4.1");
+            setLine(3, "Open Browser/App");
+        }
         return;
     }
 
     // Line 1: 12 Jun 2026  Fri
-    char line1[LCD_COLS + 1];
-    snprintf(line1, sizeof(line1), "%-12s %3s", _dateStr.c_str(), _dowStr.c_str());
-    setLine(0, line1);
+    setLinef(0, "%-12s %3s", _dateStr.c_str(), _dowStr.c_str());
 
     // Line 2: 192.168.1.100
-    setLinef(1, "%-16s", _ipAddr.c_str());
+    setLine(1, _ipAddr.c_str());
+
+    if (_lcdRows >= 4) {
+        setLine(2, _mqttConnected ? "MQTT: Connected" : "MQTT: Offline");
+        setLinef(3, "Up: %s", _uptimeStr.c_str());
+    }
 }
 
 void LCDManager::renderGasPage() {
+    if (!_mq2Enabled) {
+        setLine(0, "MQ-2 Disabled   ");
+        setLine(1, "Off in HW Config");
+        return;
+    }
     // Line 1: Gas: 125 / 400
     setLinef(0, "\x05 Gas:%4d/%4d", _gasValue, _gasThreshold);
 
@@ -580,6 +661,11 @@ void LCDManager::renderGasPage() {
         setLine(1, "\x06 DANGER! \x06     ");
     } else {
         setLine(1, "\x07 Status: Safe  ");
+    }
+
+    if (_lcdRows >= 4) {
+        setLinef(2, "Alarm Limit: %d", _gasThreshold);
+        setLinef(3, "IP: %s", _ipAddr.c_str());
     }
 }
 
@@ -593,6 +679,11 @@ void LCDManager::renderMqttPage() {
 
     // Line 2: Up: 2d 14h 32m
     setLinef(1, "Up:%-13s", _uptimeStr.c_str());
+
+    if (_lcdRows >= 4) {
+        setLinef(2, "IP: %s", _ipAddr.c_str());
+        setLinef(3, "%-12s %3s", _dateStr.c_str(), _dowStr.c_str());
+    }
 }
 
 void LCDManager::renderGasAlarm() {
@@ -634,8 +725,10 @@ void LCDManager::renderLightResetPrompt() {
 // Display Update — Character-by-character diff
 // ============================================================================
 void LCDManager::updateDisplay() {
-    for (uint8_t row = 0; row < LCD_ROWS; row++) {
-        for (uint8_t col = 0; col < LCD_COLS; col++) {
+    uint8_t rows = (_lcdRows <= LCD_MAX_ROWS) ? _lcdRows : LCD_MAX_ROWS;
+    uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
+    for (uint8_t row = 0; row < rows; row++) {
+        for (uint8_t col = 0; col < cols; col++) {
             if (_buffer[row][col] != _prevBuffer[row][col] || _forceRedraw) {
                 _lcd.setCursor(col, row);
                 _lcd.write(_buffer[row][col]);
@@ -649,17 +742,20 @@ void LCDManager::updateDisplay() {
 // Buffer Helpers
 // ============================================================================
 void LCDManager::setLine(uint8_t row, const char* text) {
-    if (row >= LCD_ROWS) return;
+    uint8_t rows = (_lcdRows <= LCD_MAX_ROWS) ? _lcdRows : LCD_MAX_ROWS;
+    uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
+    if (row >= rows) return;
     int len = strlen(text);
-    for (int i = 0; i < LCD_COLS; i++) {
+    for (int i = 0; i < (int)cols; i++) {
         _buffer[row][i] = (i < len) ? text[i] : ' ';
     }
-    _buffer[row][LCD_COLS] = '\0';
+    _buffer[row][cols] = '\0';
 }
 
 void LCDManager::setLinef(uint8_t row, const char* fmt, ...) {
-    if (row >= LCD_ROWS) return;
-    char temp[LCD_COLS + 8]; // Extra space for safety
+    uint8_t rows = (_lcdRows <= LCD_MAX_ROWS) ? _lcdRows : LCD_MAX_ROWS;
+    if (row >= rows) return;
+    char temp[LCD_MAX_COLS + 16]; // Extra space for formatting before clamp
     va_list args;
     va_start(args, fmt);
     vsnprintf(temp, sizeof(temp), fmt, args);
@@ -690,13 +786,17 @@ void LCDManager::loadConfig() {
     if (_storage->loadJson(PATH_LCD, doc)) {
         _enabled = doc["enabled"] | DEFAULT_LCD_ENABLED;
         _backlight = doc["backlight"] | DEFAULT_LCD_BACKLIGHT;
-        _rotationInterval = doc["rotation"] | (LCD_DEFAULT_ROTATION / 1000);
+        _rotationInterval = constrain(doc["rotation"] | (LCD_DEFAULT_ROTATION / 1000), 3, 30);
 
-        _brightness = doc["brightness"] | (_backlight ? 100 : 0);
+        _brightness = constrain(doc["brightness"] | (_backlight ? 100 : 0), 0, 100);
         _autoDim = doc["auto_dim"] | false;
-        _dimStartTime = doc["dim_start"].as<String>() != "" ? doc["dim_start"].as<String>() : "22:00";
-        _dimEndTime = doc["dim_end"].as<String>() != "" ? doc["dim_end"].as<String>() : "06:00";
-        _dimmedBrightness = doc["dim_brightness"] | 0;
+        String ds = doc["dim_start"] | "22:00";
+        if (ds.length() < 3 || ds.indexOf(':') < 1) ds = "22:00";
+        _dimStartTime = ds;
+        String de = doc["dim_end"] | "06:00";
+        if (de.length() < 3 || de.indexOf(':') < 1) de = "06:00";
+        _dimEndTime = de;
+        _dimmedBrightness = constrain(doc["dim_brightness"] | 0, 0, 100);
 
         // Load display_mode — "rotate" or "dht_relay"
         // Also handles old "static_sensor" gracefully by falling back to rotate

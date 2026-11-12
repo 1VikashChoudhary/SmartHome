@@ -28,7 +28,7 @@ void ButtonManager::begin(HardwareManager& hw) {
     uint8_t btnPin = hw.getBtnMultiPin();
     if (btnPin != PIN_UNUSED) {
         initButton(_btnMulti, btnPin);
-        Serial.printf("[Button] Multi-button initialized on GPIO %d\n", btnPin);
+        SERIAL_PRINTF("[Button] Multi-button initialized on GPIO %d\n", btnPin);
     } else {
         _btnMulti.enabled = false;
         Serial.println(F("[Button] Multi-button disabled in hardware profile"));
@@ -93,12 +93,12 @@ void ButtonManager::initWallSwitchPins(HardwareManager& hw) {
             _switches[i].lastReading = currentReading;
             _switches[i].stableState = currentReading;
             _switches[i].lastChangeTime = now;
-            Serial.printf("[Button] Switch %d: GPIO %d (mode %d)\n", i + 1, pin, (int)_switches[i].mode);
+            SERIAL_PRINTF("[Button] Switch %d: GPIO %d (mode %d)\n", i + 1, pin, (int)_switches[i].mode);
         } else {
-            Serial.printf("[Button] Switch %d: Disabled\n", i + 1);
+            SERIAL_PRINTF("[Button] Switch %d: Disabled\n", i + 1);
         }
     }
-    Serial.printf("[Button] Wall switch polling initialized (%d channels)\n", _numRelays);
+    SERIAL_PRINTF("[Button] Wall switch polling initialized (%d channels)\n", _numRelays);
 }
 
 void ButtonManager::setWallSwitchCallback(void (*cb)(uint8_t)) {
@@ -178,7 +178,7 @@ void ButtonManager::processSwitches() {
                     } else if (_wallSwitchCb) {
                         _wallSwitchCb(i);
                     }
-                    Serial.printf("[Button] Wall switch %d changed → pin=%s, action=%d\n",
+                    SERIAL_PRINTF("[Button] Wall switch %d changed → pin=%s, action=%d\n",
                                   i + 1, reading == LOW ? "LOW" : "HIGH", action);
                 }
             }

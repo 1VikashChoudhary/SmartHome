@@ -85,6 +85,8 @@ private:
     bool _httpUpdateOk;
     String _httpLastError;
     size_t _httpTotalSize;
+    int _otaLastReportedPct;
+    int _httpLastReportedPct;
 
     // Rollback stability verification state
     bool _stabilityCheckPending;

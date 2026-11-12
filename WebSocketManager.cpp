@@ -175,7 +175,7 @@ void WebSocketManager::disconnectAll() {
 void WebSocketManager::setAuthentication(const String& user, const String& pass) {
     if (user.length() > 0 && pass.length() > 0) {
         _ws.setAuthentication(user.c_str(), pass.c_str());
-        Serial.printf("[WS] Authentication enabled for user '%s'\n", user.c_str());
+        SERIAL_PRINTF("[WS] Authentication enabled for user '%s'\n", user.c_str());
     } else {
         _ws.setAuthentication("", "");
         Serial.println(F("[WS] Authentication disabled"));
@@ -202,13 +202,13 @@ void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cli
                                 AwsEventType type, void* arg, uint8_t* data, size_t len) {
     switch (type) {
         case WS_EVT_CONNECT:
-            Serial.printf("[WS] Client #%u connected from %s\n",
-                          client->id(), client->remoteIP().toString().c_str());
+            SERIAL_PRINTF("[WS] Client #%lu connected from %s\n",
+                          (unsigned long)client->id(), client->remoteIP().toString().c_str());
             subscriptionFor(client->id(), true);
             break;
 
         case WS_EVT_DISCONNECT:
-            Serial.printf("[WS] Client #%u disconnected\n", client->id());
+            SERIAL_PRINTF("[WS] Client #%lu disconnected\n", (unsigned long)client->id());
             removeSubscription(client->id());
             break;
 
@@ -257,7 +257,7 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
             sub->authenticated = false;
             client->text("{\"type\":\"auth_error\",\"auth_required\":true,\"message\":\"Authentication required\"}");
             client->close(4001, "Unauthorized");
-            Serial.printf("[WS] Client #%u rejected: authentication required\n", client->id());
+            SERIAL_PRINTF("[WS] Client #%lu rejected: authentication required\n", (unsigned long)client->id());
             return;
         }
     }
@@ -267,7 +267,7 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
     sub->lastSent = millis() - sub->intervalMs; // Send the first update promptly.
     sub->active = true;
     sub->authenticated = true;
-    Serial.printf("[WS] Client #%u subscribed to status (%lums)\n", client->id(), sub->intervalMs);
+    SERIAL_PRINTF("[WS] Client #%lu subscribed to status (%lums)\n", (unsigned long)client->id(), sub->intervalMs);
 }
 
 void WebSocketManager::cleanupClients() {
