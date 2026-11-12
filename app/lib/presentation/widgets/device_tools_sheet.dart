@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -53,7 +54,17 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   // Calibration State
   double _tempOffset = 0.0;
   double _humOffset = 0.0;
-  int _mq2Threshold = 1000;
+  int _mq2Threshold = 400;
+  int _gasMax = 4095;
+  int _selectedClimateIdx = 0;
+  int _selectedMq2Idx = 0;
+  List<Map<String, dynamic>> _climateCals = [];
+  List<Map<String, dynamic>> _mq2Cals = [];
+
+  // Hardware profile permissions
+  bool _lcdHwAllowed = true;
+  bool _buzzerHwAllowed = true;
+  bool _mq2HwAllowed = true;
 
   // Hardware Controls State
   bool _lcdBacklight = true;
@@ -102,6 +113,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   @override
   void initState() {
     super.initState();
+    _gasMax = widget.device.telemetry.gasMax > 0
+        ? widget.device.telemetry.gasMax
+        : (widget.device.isEsp8266 ? 1023 : 4095);
+    final initialThresh = widget.device.telemetry.gasThreshold > 0
+        ? widget.device.telemetry.gasThreshold
+        : (widget.device.isEsp8266 ? 100 : 400);
+    _mq2Threshold = initialThresh.clamp(10, _gasMax);
     _tabController = TabController(length: 5, vsync: this);
     _loadInitialData();
   }
@@ -131,6 +149,56 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     super.dispose();
   }
 
+  void _applyClimateCalIndex(int idx) {
+    _selectedClimateIdx = idx;
+    if (idx >= 0 && idx < _climateCals.length) {
+      final c = _climateCals[idx];
+      _tempOffset = ((c['temp_offset'] as num?)?.toDouble() ?? 0.0).clamp(-5.0, 5.0);
+      _humOffset = ((c['hum_offset'] as num?)?.toDouble() ?? 0.0).clamp(-10.0, 10.0);
+    } else if (idx >= 0 && idx < widget.device.telemetry.climates.length) {
+      final c = widget.device.telemetry.climates[idx];
+      _tempOffset = c.tempOffset.clamp(-5.0, 5.0);
+      _humOffset = c.humOffset.clamp(-10.0, 10.0);
+    }
+  }
+
+  void _applyMq2CalIndex(int idx) {
+    _selectedMq2Idx = idx;
+    if (idx >= 0 && idx < _mq2Cals.length) {
+      final m = _mq2Cals[idx];
+      _mq2Threshold = ((m['threshold'] as num?)?.toInt() ?? 400).clamp(10, _gasMax);
+      _mq2Enabled = m['enabled'] as bool? ?? true;
+      _mq2HwAllowed = m['hw_allowed'] as bool? ?? true;
+    } else if (idx >= 0 && idx < widget.device.telemetry.mq2s.length) {
+      final m = widget.device.telemetry.mq2s[idx];
+      _mq2Threshold = m.threshold.clamp(10, _gasMax);
+      _mq2Enabled = m.enabled;
+      _mq2HwAllowed = m.hwAllowed;
+    }
+  }
+
+  int get _climateSlotCount => math.max(
+        _climateCals.length,
+        widget.device.telemetry.climates.length,
+      );
+
+  int get _mq2SlotCount => math.max(
+        _mq2Cals.length,
+        widget.device.telemetry.mq2s.length,
+      );
+
+  String _climateSlotName(int idx) {
+    final tList = widget.device.telemetry.climates;
+    if (idx >= 0 && idx < tList.length) return tList[idx].displayName;
+    return 'Climate #${idx + 1}';
+  }
+
+  String _mq2SlotName(int idx) {
+    final tList = widget.device.telemetry.mq2s;
+    if (idx >= 0 && idx < tList.length) return tList[idx].displayName;
+    return 'Gas #${idx + 1}';
+  }
+
   Future<void> _loadInitialData() async {
     _loadDiagnostics();
     _loadLogs();
@@ -143,29 +211,71 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     setState(() {
       if (cfg['sensor'] is Map) {
         final s = cfg['sensor'] as Map;
-        _tempOffset = (s['temp_offset'] as num?)?.toDouble() ?? _tempOffset;
-        _humOffset = (s['hum_offset'] as num?)?.toDouble() ?? _humOffset;
-        _mq2Threshold = (s['mq2_threshold'] as num?)?.toInt() ?? _mq2Threshold;
-        _tempAlarm = (s['temp_alarm'] as num?)?.toDouble() ?? _tempAlarm;
-        _mq2Enabled = s['mq2_enabled'] as bool? ?? _mq2Enabled;
+        final cfgGasMax = (s['gas_max'] as num?)?.toInt();
+        if (cfgGasMax != null && cfgGasMax >= 100) {
+          _gasMax = cfgGasMax;
+        }
+        _tempAlarm =
+            ((s['temp_alarm'] as num?)?.toDouble() ?? _tempAlarm).clamp(10.0, 60.0);
+
+        if (s['climates'] is List) {
+          _climateCals = (s['climates'] as List)
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+        }
+        if (s['mq2_sensors'] is List) {
+          _mq2Cals = (s['mq2_sensors'] as List)
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList();
+        }
+
+        if (_climateCals.isNotEmpty) {
+          _selectedClimateIdx = _selectedClimateIdx.clamp(0, _climateCals.length - 1);
+          _applyClimateCalIndex(_selectedClimateIdx);
+        } else {
+          _tempOffset =
+              ((s['temp_offset'] as num?)?.toDouble() ?? _tempOffset).clamp(-5.0, 5.0);
+          _humOffset =
+              ((s['hum_offset'] as num?)?.toDouble() ?? _humOffset).clamp(-10.0, 10.0);
+        }
+
+        if (_mq2Cals.isNotEmpty) {
+          _selectedMq2Idx = _selectedMq2Idx.clamp(0, _mq2Cals.length - 1);
+          _applyMq2CalIndex(_selectedMq2Idx);
+        } else {
+          _mq2Threshold =
+              ((s['mq2_threshold'] as num?)?.toInt() ?? _mq2Threshold).clamp(10, _gasMax);
+          _mq2Enabled = s['mq2_enabled'] as bool? ?? _mq2Enabled;
+          _mq2HwAllowed = s['mq2_hw_allowed'] as bool? ?? true;
+        }
       }
       if (cfg['lcd'] is Map) {
         final l = cfg['lcd'] as Map;
         _lcdEnabled = l['enabled'] as bool? ?? _lcdEnabled;
+        _lcdHwAllowed = l['hw_allowed'] as bool? ?? true;
         _lcdBacklight = l['backlight'] as bool? ?? _lcdBacklight;
-        _lcdDisplayMode = l['display_mode'] as String? ?? _lcdDisplayMode;
-        _lcdRotation = (l['rotation'] as num?)?.toInt() ?? _lcdRotation;
-        _lcdBrightness = (l['brightness'] as num?)?.toInt() ?? _lcdBrightness;
+        final rawMode = l['display_mode'] as String?;
+        if (rawMode == 'rotate' || rawMode == 'dht_relay') {
+          _lcdDisplayMode = rawMode!;
+        }
+        _lcdRotation =
+            ((l['rotation'] as num?)?.toInt() ?? _lcdRotation).clamp(3, 30);
+        _lcdBrightness =
+            ((l['brightness'] as num?)?.toInt() ?? _lcdBrightness).clamp(0, 100);
         _autoDim = l['auto_dim'] as bool? ?? _autoDim;
         _dimStart.text = l['dim_start'] as String? ?? '22:00';
         _dimEnd.text = l['dim_end'] as String? ?? '06:00';
         _lcdDimBrightness =
-            (l['dim_brightness'] as num?)?.toInt() ?? _lcdDimBrightness;
+            ((l['dim_brightness'] as num?)?.toInt() ?? _lcdDimBrightness).clamp(0, 100);
       }
       if (cfg['buzzer'] is Map) {
         final b = cfg['buzzer'] as Map;
         _buzzerEnabled = b['enabled'] as bool? ?? _buzzerEnabled;
-        _buzzerVolume = (b['volume'] as num?)?.toInt() ?? _buzzerVolume;
+        _buzzerHwAllowed = b['hw_allowed'] as bool? ?? true;
+        _buzzerVolume =
+            ((b['volume'] as num?)?.toInt() ?? _buzzerVolume).clamp(0, 255);
       }
       if (cfg['mqtt'] is Map) {
         final m = cfg['mqtt'] as Map;
@@ -294,11 +404,15 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         ),
                         Row(
                           children: [
-                            Text(
-                              '${widget.device.name} (${widget.device.ip})',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: AppColors.textSecondary,
+                            Flexible(
+                              child: Text(
+                                '${widget.device.name} (${widget.device.ip})',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.textSecondary,
+                                ),
                               ),
                             ),
                             if (widget.device.isGuest) ...[
@@ -430,11 +544,15 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           color: AppColors.primaryLight,
                         ),
                         SizedBox(width: 6),
-                        Text(
-                          'RAM Memory',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSecondary,
+                        Expanded(
+                          child: Text(
+                            'RAM Memory',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
                         ),
                       ],
@@ -469,11 +587,15 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                       children: [
                         Icon(Icons.speed, size: 16, color: AppColors.accent),
                         SizedBox(width: 6),
-                        Text(
-                          'CPU Frequency',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.textSecondary,
+                        Expanded(
+                          child: Text(
+                            'CPU Frequency',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
                           ),
                         ),
                       ],
@@ -511,23 +633,30 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.folder_special_outlined,
-                        size: 16,
-                        color: AppColors.humCyan,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'LittleFS Storage Flash',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.folder_special_outlined,
+                          size: 16,
+                          color: AppColors.humCyan,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        const Expanded(
+                          child: Text(
+                            'LittleFS Storage Flash',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  const SizedBox(width: 8),
                   Text(
                     '$usedFsKb KB / $totalFsKb KB',
                     style: TextStyle(
@@ -585,18 +714,29 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       child: Row(
         children: [
           Icon(icon, size: 16, color: AppColors.textSecondary),
-          SizedBox(width: 10),
-          Text(
-            label,
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            flex: 2,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            ),
           ),
-          const Spacer(),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+          const SizedBox(width: 8),
+          Flexible(
+            flex: 3,
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.end,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: AppColors.textPrimary,
+              ),
             ),
           ),
         ],
@@ -632,13 +772,42 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     );
   }
 
+  Widget _buildHwDisabledNotice(String message) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.developer_board_off, color: AppColors.warning, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: AppColors.warning,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- 2. Hardware Tuning Tab ---
   Widget _buildHardwareTuningTab() {
+    final isGuest = widget.device.isGuest;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (widget.device.isGuest)
-          _buildGuestRestrictedBanner('Hardware Tuning & GPIO profile editing is restricted to Administrators. Guest accounts have read-only monitoring access.'),
+        if (isGuest)
+          _buildGuestRestrictedBanner('Hardware Tuning & GPIO profile editing is restricted to Administrators. Guest accounts have read-only monitoring access (buzzer mute remains available).'),
         // Hardware & GPIO Template Engine Card
         GlassCard(
           padding: const EdgeInsets.all(16),
@@ -683,19 +852,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                   ),
                   icon: const Icon(Icons.tune_rounded, size: 18),
                   label: const Text('Configure Hardware & GPIOs'),
-                  onPressed: () {
-                    if (widget.device.isGuest) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Forbidden: Admin privileges required to configure hardware profiles.'),
-                          backgroundColor: AppColors.warning,
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
-                      return;
-                    }
-                    HardwareConfigSheet.show(context, widget.device, widget.manager);
-                  },
+                  onPressed: isGuest
+                      ? null
+                      : () => HardwareConfigSheet.show(
+                            context,
+                            widget.device,
+                            widget.manager,
+                          ),
                 ),
               ),
             ],
@@ -715,13 +878,21 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     color: AppColors.warning,
                     size: 20,
                   ),
-                  SizedBox(width: 8),
-                  Text(
-                    'Active Hardware Buzzer',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Active Hardware Buzzer',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
                   ),
                 ],
               ),
+              if (!_buzzerHwAllowed)
+                _buildHwDisabledNotice(
+                  'Alarm Buzzer is disabled or GPIO pin unassigned in Hardware Profile.',
+                ),
               SizedBox(height: 12),
               Row(
                 children: [
@@ -729,26 +900,28 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.music_note, size: 16),
                       label: const Text('Test Beep'),
-                      onPressed: () async {
-                        final ok = await widget.manager.controlBuzzer(
-                          widget.device.id,
-                          action: 'test',
-                        );
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              ok
-                                  ? 'Buzzer test beep triggered'
-                                  : 'Failed to trigger buzzer test',
-                            ),
-                            backgroundColor: ok
-                                ? AppColors.success
-                                : AppColors.danger,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      },
+                      onPressed: (isGuest || !_buzzerHwAllowed)
+                          ? null
+                          : () async {
+                              final ok = await widget.manager.controlBuzzer(
+                                widget.device.id,
+                                action: 'test',
+                              );
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    ok
+                                        ? 'Buzzer test beep triggered'
+                                        : 'Failed to trigger buzzer test',
+                                  ),
+                                  backgroundColor: ok
+                                      ? AppColors.success
+                                      : AppColors.danger,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -756,26 +929,28 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.volume_off, size: 16),
                       label: const Text('Mute 5 Min'),
-                      onPressed: () async {
-                        final ok = await widget.manager.controlBuzzer(
-                          widget.device.id,
-                          action: 'mute',
-                        );
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              ok
-                                  ? 'Buzzer muted for 5 minutes'
-                                  : 'Failed to mute buzzer',
-                            ),
-                            backgroundColor: ok
-                                ? AppColors.success
-                                : AppColors.danger,
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      },
+                      onPressed: !_buzzerHwAllowed
+                          ? null
+                          : () async {
+                              final ok = await widget.manager.controlBuzzer(
+                                widget.device.id,
+                                action: 'mute',
+                              );
+                              if (!mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    ok
+                                        ? 'Buzzer muted for 5 minutes'
+                                        : 'Failed to mute buzzer',
+                                  ),
+                                  backgroundColor: ok
+                                      ? AppColors.success
+                                      : AppColors.danger,
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
                     ),
                   ),
                 ],
@@ -794,13 +969,21 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Row(
                 children: [
                   Icon(Icons.tv_outlined, color: AppColors.accent, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'LCD 20x4 / 16x2 Display',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'LCD 20x4 / 16x2 Display',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
                   ),
                 ],
               ),
+              if (!_lcdHwAllowed)
+                _buildHwDisabledNotice(
+                  'I2C LCD Display is disabled or pins unassigned in Hardware Profile.',
+                ),
               SizedBox(height: 8),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -810,25 +993,27 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ),
                 value: _lcdBacklight,
                 activeThumbColor: AppColors.primary,
-                onChanged: (v) async {
-                  setState(() => _lcdBacklight = v);
-                  final ok = await widget.manager.saveLcdSettings(
-                    widget.device.id,
-                    backlight: v,
-                  );
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        ok
-                            ? (v ? 'LCD Backlight enabled' : 'LCD Backlight turned off')
-                            : 'Failed to update LCD backlight',
-                      ),
-                      backgroundColor: ok ? AppColors.success : AppColors.danger,
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
+                onChanged: (isGuest || !_lcdHwAllowed)
+                    ? null
+                    : (v) async {
+                        setState(() => _lcdBacklight = v);
+                        final ok = await widget.manager.saveLcdSettings(
+                          widget.device.id,
+                          backlight: v,
+                        );
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              ok
+                                  ? (v ? 'LCD Backlight enabled' : 'LCD Backlight turned off')
+                                  : 'Failed to update LCD backlight',
+                            ),
+                            backgroundColor: ok ? AppColors.success : AppColors.danger,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
               ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
@@ -838,22 +1023,24 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ),
                 value: _lcdEnabled,
                 activeThumbColor: AppColors.primary,
-                onChanged: (v) async {
-                  setState(() => _lcdEnabled = v);
-                  final ok = await widget.manager.saveLcdSettings(widget.device.id, enabled: v);
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        ok
-                            ? (v ? 'LCD display output enabled' : 'LCD display output turned off')
-                            : 'Failed to update LCD display status',
-                      ),
-                      backgroundColor: ok ? AppColors.success : AppColors.danger,
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
+                onChanged: (isGuest || !_lcdHwAllowed)
+                    ? null
+                    : (v) async {
+                        setState(() => _lcdEnabled = v);
+                        final ok = await widget.manager.saveLcdSettings(widget.device.id, enabled: v);
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              ok
+                                  ? (v ? 'LCD display output enabled' : 'LCD display output turned off')
+                                  : 'Failed to update LCD display status',
+                            ),
+                            backgroundColor: ok ? AppColors.success : AppColors.danger,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
               ),
             ],
           ),
@@ -869,14 +1056,41 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Row(
                 children: [
                   Icon(Icons.tune, color: AppColors.tempAmber, size: 20),
-                  SizedBox(width: 8),
-                  Text(
-                    'Sensor Calibration & Thresholds',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Sensor Calibration & Thresholds',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
                   ),
                 ],
               ),
               SizedBox(height: 14),
+
+              if (_climateSlotCount > 1) ...[
+                DropdownButtonFormField<int>(
+                  key: ValueKey('cal_climate_$_selectedClimateIdx'),
+                  isExpanded: true,
+                  initialValue: _selectedClimateIdx.clamp(0, _climateSlotCount - 1),
+                  decoration: const InputDecoration(
+                    labelText: 'Climate Sensor Instance',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: List.generate(
+                    _climateSlotCount,
+                    (i) => DropdownMenuItem(value: i, child: Text(_climateSlotName(i))),
+                  ),
+                  onChanged: isGuest
+                      ? null
+                      : (v) {
+                          if (v != null) setState(() => _applyClimateCalIndex(v));
+                        },
+                ),
+                const SizedBox(height: 12),
+              ],
 
               // Temp Offset
               Row(
@@ -896,12 +1110,12 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ],
               ),
               Slider(
-                value: _tempOffset,
+                value: _tempOffset.clamp(-5.0, 5.0),
                 min: -5.0,
                 max: 5.0,
                 divisions: 20,
                 activeColor: AppColors.tempAmber,
-                onChanged: (v) => setState(() => _tempOffset = v),
+                onChanged: isGuest ? null : (v) => setState(() => _tempOffset = v),
               ),
 
               // Humidity Offset
@@ -922,25 +1136,59 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ],
               ),
               Slider(
-                value: _humOffset,
+                value: _humOffset.clamp(-10.0, 10.0),
                 min: -10.0,
                 max: 10.0,
                 divisions: 20,
                 activeColor: AppColors.humCyan,
-                onChanged: (v) => setState(() => _humOffset = v),
+                onChanged: isGuest ? null : (v) => setState(() => _humOffset = v),
               ),
+
+              if (_mq2SlotCount > 1) ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  key: ValueKey('cal_mq2_$_selectedMq2Idx'),
+                  isExpanded: true,
+                  initialValue: _selectedMq2Idx.clamp(0, _mq2SlotCount - 1),
+                  decoration: const InputDecoration(
+                    labelText: 'MQ-2 Gas Sensor Instance',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: List.generate(
+                    _mq2SlotCount,
+                    (i) => DropdownMenuItem(value: i, child: Text(_mq2SlotName(i))),
+                  ),
+                  onChanged: isGuest
+                      ? null
+                      : (v) {
+                          if (v != null) setState(() => _applyMq2CalIndex(v));
+                        },
+                ),
+                const SizedBox(height: 10),
+              ],
+
+              if (!_mq2HwAllowed)
+                _buildHwDisabledNotice(
+                  'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+                ),
 
               // Gas Threshold
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'MQ-2 Smoke/Gas Alarm Threshold',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
+                  Expanded(
+                    child: Text(
+                      'MQ-2 Smoke/Gas Alarm Threshold',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Text(
                     '$_mq2Threshold ADC',
                     style: TextStyle(
@@ -951,12 +1199,14 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ],
               ),
               Slider(
-                value: _mq2Threshold.toDouble(),
-                min: 200.0,
-                max: 3000.0,
-                divisions: 56,
+                value: _mq2Threshold.toDouble().clamp(10.0, _gasMax.toDouble()),
+                min: 10.0,
+                max: _gasMax.toDouble(),
+                divisions: widget.device.isEsp8266 ? 50 : 80,
                 activeColor: AppColors.danger,
-                onChanged: (v) => setState(() => _mq2Threshold = v.toInt()),
+                onChanged: (isGuest || !_mq2HwAllowed)
+                    ? null
+                    : (v) => setState(() => _mq2Threshold = v.toInt()),
               ),
               SizedBox(height: 10),
 
@@ -979,12 +1229,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                             ? 'Calibrating...'
                             : 'Calibrate Clean Air',
                       ),
-                      onPressed: _isCalibratingCleanAir
+                      onPressed: (_isCalibratingCleanAir || isGuest || !_mq2HwAllowed)
                           ? null
                           : () async {
                               setState(() => _isCalibratingCleanAir = true);
                               final ok = await widget.manager.calibrateSensors(
                                 widget.device.id,
+                                sensorIndex: _selectedMq2Idx,
                                 calibrateMq2: true,
                               );
                               if (mounted) {
@@ -1028,16 +1279,42 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                             ? 'Saving...'
                             : 'Save Calibration',
                       ),
-                      onPressed: _isSavingCalibration
+                      onPressed: (_isSavingCalibration || isGuest)
                           ? null
                           : () async {
                               setState(() => _isSavingCalibration = true);
-                              final ok = await widget.manager.calibrateSensors(
-                                widget.device.id,
-                                tempOffset: _tempOffset,
-                                humOffset: _humOffset,
-                                mq2Threshold: _mq2Threshold,
-                              );
+                              bool ok;
+                              if (_selectedClimateIdx == _selectedMq2Idx || !_mq2HwAllowed) {
+                                ok = await widget.manager.calibrateSensors(
+                                  widget.device.id,
+                                  sensorIndex: _selectedClimateIdx,
+                                  tempOffset: _tempOffset,
+                                  humOffset: _humOffset,
+                                  mq2Threshold: _mq2HwAllowed ? _mq2Threshold : null,
+                                );
+                              } else {
+                                final okCli = await widget.manager.calibrateSensors(
+                                  widget.device.id,
+                                  sensorIndex: _selectedClimateIdx,
+                                  tempOffset: _tempOffset,
+                                  humOffset: _humOffset,
+                                );
+                                final okMq = await widget.manager.calibrateSensors(
+                                  widget.device.id,
+                                  sensorIndex: _selectedMq2Idx,
+                                  mq2Threshold: _mq2Threshold,
+                                );
+                                ok = okCli && okMq;
+                              }
+                              if (ok) {
+                                if (_selectedClimateIdx < _climateCals.length) {
+                                  _climateCals[_selectedClimateIdx]['temp_offset'] = _tempOffset;
+                                  _climateCals[_selectedClimateIdx]['hum_offset'] = _humOffset;
+                                }
+                                if (_mq2HwAllowed && _selectedMq2Idx < _mq2Cals.length) {
+                                  _mq2Cals[_selectedMq2Idx]['threshold'] = _mq2Threshold;
+                                }
+                              }
                               if (!mounted) return;
                               setState(() => _isSavingCalibration = false);
                               ScaffoldMessenger.of(context).showSnackBar(
@@ -1101,11 +1378,15 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               children: [
                 Icon(icon, color: AppColors.primaryLight, size: 20),
                 const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
+                Expanded(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
                 ),
               ],
@@ -1125,10 +1406,11 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   );
 
   Widget _buildControllerSettingsTab() {
+    final isGuest = widget.device.isGuest;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (widget.device.isGuest)
+        if (isGuest)
           _buildGuestRestrictedBanner('Controller Settings (Wi-Fi, MQTT, Security) are restricted to Administrators. Guest accounts cannot modify network credentials.'),
         _settingsCard('Wi-Fi connection', Icons.wifi_outlined, [
           Text(
@@ -1138,11 +1420,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           const SizedBox(height: 12),
           TextField(
             controller: _wifiSsid,
+            enabled: !isGuest,
             decoration: _field('Network name (SSID)'),
           ),
           const SizedBox(height: 10),
           TextField(
             controller: _wifiPassword,
+            enabled: !isGuest,
             obscureText: true,
             decoration: _field('Network password'),
           ),
@@ -1158,7 +1442,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     )
                   : const Icon(Icons.wifi_protected_setup_rounded, size: 18),
               label: Text(_isSavingWifi ? 'Applying & Reconnecting...' : 'Save & Connect'),
-              onPressed: _isSavingWifi
+              onPressed: (_isSavingWifi || isGuest)
                   ? null
                   : () async {
                       final ssid = _wifiSsid.text.trim();
@@ -1189,10 +1473,11 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
             contentPadding: EdgeInsets.zero,
             title: const Text('Enable MQTT'),
             value: _mqttEnabled,
-            onChanged: (value) => setState(() => _mqttEnabled = value),
+            onChanged: isGuest ? null : (value) => setState(() => _mqttEnabled = value),
           ),
           TextField(
             controller: _mqttBroker,
+            enabled: !isGuest,
             decoration: _field('Broker host or IP'),
           ),
           const SizedBox(height: 10),
@@ -1201,6 +1486,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Expanded(
                 child: TextField(
                   controller: _mqttPort,
+                  enabled: !isGuest,
                   keyboardType: TextInputType.number,
                   decoration: _field('Port'),
                 ),
@@ -1209,19 +1495,25 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Expanded(
                 child: TextField(
                   controller: _mqttPrefix,
+                  enabled: !isGuest,
                   decoration: _field('Topic prefix'),
                 ),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          TextField(controller: _mqttClientId, decoration: _field('Client ID')),
+          TextField(
+            controller: _mqttClientId,
+            enabled: !isGuest,
+            decoration: _field('Client ID'),
+          ),
           const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: TextField(
                   controller: _mqttUser,
+                  enabled: !isGuest,
                   decoration: _field('Username'),
                 ),
               ),
@@ -1229,6 +1521,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               Expanded(
                 child: TextField(
                   controller: _mqttPassword,
+                  enabled: !isGuest,
                   obscureText: true,
                   decoration: _field('Password', helper: 'Enter to set/change'),
                 ),
@@ -1247,7 +1540,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     )
                   : const Icon(Icons.save_rounded, size: 18),
               label: Text(_isSavingMqtt ? 'Saving to Controller...' : 'Save MQTT Settings'),
-              onPressed: _isSavingMqtt
+              onPressed: (_isSavingMqtt || isGuest)
                   ? null
                   : () async {
                       final port = int.tryParse(_mqttPort.text.trim());
@@ -1294,41 +1587,46 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           const SizedBox(height: 10),
           TextField(
             controller: _deviceName,
+            enabled: !isGuest,
             maxLength: 20,
             decoration: _field('Device name'),
           ),
           const SizedBox(height: 10),
           TextField(
             controller: _hostname,
+            enabled: !isGuest,
             maxLength: 24,
             decoration: _field('mDNS hostname'),
           ),
           const SizedBox(height: 10),
           TextField(
             controller: _timezone,
+            enabled: !isGuest,
             decoration: _field('POSIX timezone', helper: 'Example: IST-5:30'),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('24-hour time'),
             value: _use24h,
-            onChanged: (value) => setState(() => _use24h = value),
+            onChanged: isGuest ? null : (value) => setState(() => _use24h = value),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Web password protection'),
             value: _webAuth,
-            onChanged: (value) => setState(() => _webAuth = value),
+            onChanged: isGuest ? null : (value) => setState(() => _webAuth = value),
           ),
           if (_webAuth) ...[
             TextField(
               controller: _webUser,
+              enabled: !isGuest,
               maxLength: 20,
               decoration: _field('Web username'),
             ),
             const SizedBox(height: 10),
             TextField(
               controller: _webPassword,
+              enabled: !isGuest,
               obscureText: true,
               maxLength: 20,
               decoration: _field(
@@ -1349,7 +1647,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     )
                   : const Icon(Icons.save_rounded, size: 18),
               label: Text(_isSavingDevice ? 'Saving Settings...' : 'Save Device Settings'),
-              onPressed: _isSavingDevice
+              onPressed: (_isSavingDevice || isGuest)
                   ? null
                   : () async {
                       if (_webAuth && _webUser.text.trim().isEmpty) {
@@ -1436,51 +1734,70 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           ),
         ]),
         _settingsCard('LCD display', Icons.tv_outlined, [
+          if (!_lcdHwAllowed)
+            _buildHwDisabledNotice(
+              'I2C LCD Display is disabled or pins unassigned in Hardware Profile.',
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('LCD enabled'),
             value: _lcdEnabled,
-            onChanged: (value) => setState(() => _lcdEnabled = value),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) => setState(() => _lcdEnabled = value),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Backlight enabled'),
             value: _lcdBacklight,
-            onChanged: (value) => setState(() => _lcdBacklight = value),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) => setState(() => _lcdBacklight = value),
           ),
           DropdownButtonFormField<String>(
-            initialValue: _lcdDisplayMode,
+            key: ValueKey('lcd_mode_${_lcdDisplayMode}_${isGuest}_$_lcdHwAllowed'),
+            initialValue:
+                (_lcdDisplayMode == 'dht_relay' || _lcdDisplayMode == 'rotate')
+                    ? _lcdDisplayMode
+                    : 'rotate',
             decoration: _field('Display mode'),
             items: const [
               DropdownMenuItem(value: 'rotate', child: Text('Auto rotate')),
               DropdownMenuItem(value: 'dht_relay', child: Text('DHT + relays')),
             ],
-            onChanged: (value) =>
-                setState(() => _lcdDisplayMode = value ?? _lcdDisplayMode),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) =>
+                    setState(() => _lcdDisplayMode = value ?? _lcdDisplayMode),
           ),
           const SizedBox(height: 10),
           Text('Page rotation: $_lcdRotation seconds'),
           Slider(
-            value: _lcdRotation.toDouble(),
+            value: _lcdRotation.toDouble().clamp(3.0, 30.0),
             min: 3,
             max: 30,
             divisions: 27,
-            onChanged: (value) => setState(() => _lcdRotation = value.round()),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) => setState(() => _lcdRotation = value.round()),
           ),
           Text('Backlight brightness: $_lcdBrightness%'),
           Slider(
-            value: _lcdBrightness.toDouble(),
+            value: _lcdBrightness.toDouble().clamp(0.0, 100.0),
             min: 0,
             max: 100,
             divisions: 20,
-            onChanged: (value) =>
-                setState(() => _lcdBrightness = value.round()),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) => setState(() => _lcdBrightness = value.round()),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Auto-dim schedule'),
             value: _autoDim,
-            onChanged: (value) => setState(() => _autoDim = value),
+            onChanged: (isGuest || !_lcdHwAllowed)
+                ? null
+                : (value) => setState(() => _autoDim = value),
           ),
           if (_autoDim) ...[
             Row(
@@ -1488,6 +1805,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 Expanded(
                   child: TextField(
                     controller: _dimStart,
+                    enabled: !isGuest && _lcdHwAllowed,
                     decoration: _field('Dim start', helper: 'HH:MM'),
                   ),
                 ),
@@ -1495,6 +1813,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 Expanded(
                   child: TextField(
                     controller: _dimEnd,
+                    enabled: !isGuest && _lcdHwAllowed,
                     decoration: _field('Dim end', helper: 'HH:MM'),
                   ),
                 ),
@@ -1503,12 +1822,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
             const SizedBox(height: 10),
             Text('Dimmed brightness: $_lcdDimBrightness%'),
             Slider(
-              value: _lcdDimBrightness.toDouble(),
+              value: _lcdDimBrightness.toDouble().clamp(0.0, 100.0),
               min: 0,
               max: 100,
               divisions: 20,
-              onChanged: (value) =>
-                  setState(() => _lcdDimBrightness = value.round()),
+              onChanged: (isGuest || !_lcdHwAllowed)
+                  ? null
+                  : (value) => setState(() => _lcdDimBrightness = value.round()),
             ),
           ],
           const SizedBox(height: 12),
@@ -1523,7 +1843,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     )
                   : const Icon(Icons.tv_rounded, size: 18),
               label: Text(_isSavingLcd ? 'Saving LCD...' : 'Save LCD Settings'),
-              onPressed: _isSavingLcd
+              onPressed: (_isSavingLcd || isGuest || !_lcdHwAllowed)
                   ? null
                   : () async {
                       setState(() => _isSavingLcd = true);
@@ -1552,91 +1872,135 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           ),
         ]),
         _settingsCard('Buzzer & sensor safety', Icons.sensors_outlined, [
+          if (!_buzzerHwAllowed)
+            _buildHwDisabledNotice(
+              'Alarm Buzzer is disabled or GPIO pin unassigned in Hardware Profile.',
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Buzzer enabled'),
             value: _buzzerEnabled,
-            onChanged: (value) => setState(() => _buzzerEnabled = value),
+            onChanged: (isGuest || !_buzzerHwAllowed)
+                ? null
+                : (value) => setState(() => _buzzerEnabled = value),
           ),
           Text('Buzzer volume: $_buzzerVolume'),
           Slider(
-            value: _buzzerVolume.toDouble(),
+            value: _buzzerVolume.toDouble().clamp(0.0, 255.0),
             min: 0,
             max: 255,
             divisions: 51,
-            onChanged: (value) => setState(() => _buzzerVolume = value.round()),
+            onChanged: (isGuest || !_buzzerHwAllowed)
+                ? null
+                : (value) => setState(() => _buzzerVolume = value.round()),
           ),
           Row(
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () async {
-                    final ok = await widget.manager.controlBuzzer(
-                      widget.device.id,
-                      action: 'test',
-                    );
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          ok
-                              ? 'Buzzer test beep triggered'
-                              : 'Failed to trigger buzzer test',
-                        ),
-                        backgroundColor: ok
-                            ? AppColors.success
-                            : AppColors.danger,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
+                  onPressed: (isGuest || !_buzzerHwAllowed)
+                      ? null
+                      : () async {
+                          final ok = await widget.manager.controlBuzzer(
+                            widget.device.id,
+                            action: 'test',
+                          );
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                ok
+                                    ? 'Buzzer test beep triggered'
+                                    : 'Failed to trigger buzzer test',
+                              ),
+                              backgroundColor: ok
+                                  ? AppColors.success
+                                  : AppColors.danger,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
                   child: const Text('Test buzzer'),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: () async {
-                    final ok = await widget.manager.controlBuzzer(
-                      widget.device.id,
-                      action: 'mute',
-                    );
-                    if (!mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          ok
-                              ? 'Buzzer muted for 5 minutes'
-                              : 'Failed to mute buzzer',
-                        ),
-                        backgroundColor: ok
-                            ? AppColors.success
-                            : AppColors.danger,
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  },
+                  onPressed: !_buzzerHwAllowed
+                      ? null
+                      : () async {
+                          final ok = await widget.manager.controlBuzzer(
+                            widget.device.id,
+                            action: 'mute',
+                          );
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                ok
+                                    ? 'Buzzer muted for 5 minutes'
+                                    : 'Failed to mute buzzer',
+                              ),
+                              backgroundColor: ok
+                                  ? AppColors.success
+                                  : AppColors.danger,
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
                   child: const Text('Mute 5 min'),
                 ),
               ),
             ],
           ),
           const Divider(height: 28),
+          if (_mq2SlotCount > 1) ...[
+            DropdownButtonFormField<int>(
+              key: ValueKey('settings_mq2_$_selectedMq2Idx'),
+              isExpanded: true,
+              initialValue: _selectedMq2Idx.clamp(0, _mq2SlotCount - 1),
+              decoration: const InputDecoration(
+                labelText: 'MQ-2 Gas Sensor Instance',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: List.generate(
+                _mq2SlotCount,
+                (i) => DropdownMenuItem(value: i, child: Text(_mq2SlotName(i))),
+              ),
+              onChanged: isGuest
+                  ? null
+                  : (v) {
+                      if (v != null) setState(() => _applyMq2CalIndex(v));
+                    },
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (!_mq2HwAllowed)
+            _buildHwDisabledNotice(
+              'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+            ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('MQ-2 gas sensor enabled'),
+            title: Text(
+              _mq2SlotCount > 1
+                  ? 'MQ-2 gas sensor enabled (${_mq2SlotName(_selectedMq2Idx)})'
+                  : 'MQ-2 gas sensor enabled',
+            ),
             value: _mq2Enabled,
-            onChanged: (value) => setState(() => _mq2Enabled = value),
+            onChanged: (isGuest || !_mq2HwAllowed)
+                ? null
+                : (value) => setState(() => _mq2Enabled = value),
           ),
           Text(
             'Temperature alarm threshold: ${_tempAlarm.toStringAsFixed(1)}°C',
           ),
           Slider(
-            value: _tempAlarm,
+            value: _tempAlarm.clamp(10.0, 60.0),
             min: 10,
             max: 60,
             divisions: 100,
-            onChanged: (value) => setState(() => _tempAlarm = value),
+            onChanged: isGuest ? null : (value) => setState(() => _tempAlarm = value),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -1650,20 +2014,26 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     )
                   : const Icon(Icons.security_rounded, size: 18),
               label: Text(_isSavingBuzzer ? 'Saving Safety...' : 'Save buzzer & sensor settings'),
-              onPressed: _isSavingBuzzer
+              onPressed: (_isSavingBuzzer || isGuest)
                   ? null
                   : () async {
                       setState(() => _isSavingBuzzer = true);
-                      final buzzerOk = await widget.manager.controlBuzzer(
-                        widget.device.id,
-                        enabled: _buzzerEnabled,
-                        volume: _buzzerVolume,
-                      );
+                      final buzzerOk = !_buzzerHwAllowed
+                          ? true
+                          : await widget.manager.controlBuzzer(
+                              widget.device.id,
+                              enabled: _buzzerEnabled,
+                              volume: _buzzerVolume,
+                            );
                       final sensorOk = await widget.manager.calibrateSensors(
                         widget.device.id,
+                        sensorIndex: _selectedMq2Idx,
                         tempAlarm: _tempAlarm,
-                        mq2Enabled: _mq2Enabled,
+                        mq2Enabled: _mq2HwAllowed ? _mq2Enabled : null,
                       );
+                      if (sensorOk && _mq2HwAllowed && _selectedMq2Idx < _mq2Cals.length) {
+                        _mq2Cals[_selectedMq2Idx]['enabled'] = _mq2Enabled;
+                      }
                       if (mounted) {
                         setState(() => _isSavingBuzzer = false);
                         _showSaveResult(
@@ -1693,27 +2063,29 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
             children: [
-              Wrap(
-                spacing: 6,
-                children: ['ALL', 'INFO', 'WARN', 'ERROR'].map((lvl) {
-                  final isSel = _logFilter == lvl;
-                  return ChoiceChip(
-                    label: Text(
-                      lvl,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isSel ? Colors.white : AppColors.textSecondary,
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: ['ALL', 'INFO', 'WARN', 'ERROR'].map((lvl) {
+                    final isSel = _logFilter == lvl;
+                    return ChoiceChip(
+                      label: Text(
+                        lvl,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: isSel ? Colors.white : AppColors.textSecondary,
+                        ),
                       ),
-                    ),
-                    selected: isSel,
-                    selectedColor: AppColors.primary,
-                    onSelected: (_) => setState(() => _logFilter = lvl),
-                  );
-                }).toList(),
+                      selected: isSel,
+                      selectedColor: AppColors.primary,
+                      onSelected: (_) => setState(() => _logFilter = lvl),
+                    );
+                  }).toList(),
+                ),
               ),
-              const Spacer(),
               IconButton(
-                icon: Icon(Icons.refresh, size: 20),
+                icon: const Icon(Icons.refresh, size: 20),
                 tooltip: 'Refresh Logs',
                 onPressed: _loadLogs,
               ),
@@ -1721,10 +2093,14 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 icon: Icon(
                   Icons.delete_outline,
                   size: 20,
-                  color: AppColors.danger,
+                  color: widget.device.isGuest
+                      ? AppColors.textMuted
+                      : AppColors.danger,
                 ),
-                tooltip: 'Clear Logs',
-                onPressed: _clearLogs,
+                tooltip: widget.device.isGuest
+                    ? 'Clear Logs (Admin only)'
+                    : 'Clear Logs',
+                onPressed: widget.device.isGuest ? null : _clearLogs,
               ),
             ],
           ),
@@ -1793,14 +2169,19 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text(
-                                      l.source,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 12,
-                                        color: AppColors.textPrimary,
+                                    Expanded(
+                                      child: Text(
+                                        l.source,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                          color: AppColors.textPrimary,
+                                        ),
                                       ),
                                     ),
+                                    const SizedBox(width: 8),
                                     Text(
                                       l.formattedTime,
                                       style: TextStyle(
@@ -1833,10 +2214,11 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
 
   // --- 4. Maintenance Tab ---
   Widget _buildMaintenanceTab() {
+    final isGuest = widget.device.isGuest;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        if (widget.device.isGuest)
+        if (isGuest)
           _buildGuestRestrictedBanner('System Maintenance (Backup, Restore, Reboot, Factory Reset, and OTA updates) is restricted to Administrators.'),
         GlassCard(
           padding: const EdgeInsets.all(16),
@@ -1869,7 +2251,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         )
                       : const Icon(Icons.download_rounded),
                   label: Text(_isExportingBackup ? 'Exporting Backup...' : 'Export Config JSON Backup'),
-                  onPressed: _isExportingBackup
+                  onPressed: (isGuest || _isExportingBackup)
                       ? null
                       : () async {
                           setState(() => _isExportingBackup = true);
@@ -1911,15 +2293,17 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                   ),
                   icon: const Icon(Icons.settings_backup_restore_rounded),
                   label: const Text('Restore Config Backup'),
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (ctx) => _RestoreConfigDialog(
-                        device: widget.device,
-                        manager: widget.manager,
-                      ),
-                    );
-                  },
+                  onPressed: isGuest
+                      ? null
+                      : () {
+                          showDialog(
+                            context: context,
+                            builder: (ctx) => _RestoreConfigDialog(
+                              device: widget.device,
+                              manager: widget.manager,
+                            ),
+                          );
+                        },
                 ),
               ),
             ],
@@ -1968,29 +2352,31 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 ),
                 value: _arduinoOta,
                 activeThumbColor: AppColors.primary,
-                onChanged: (val) async {
-                  setState(() => _arduinoOta = val);
-                  final ok = await widget.manager.saveDeviceConfig(
-                    widget.device.id,
-                    {'arduino_ota': val},
-                  );
-                  if (!mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        ok
-                            ? (val
-                                  ? 'ArduinoOTA (port 3232) enabled'
-                                  : 'ArduinoOTA (port 3232) disabled')
-                            : 'Failed to update OTA settings',
-                      ),
-                      backgroundColor: ok
-                          ? AppColors.success
-                          : AppColors.danger,
-                      behavior: SnackBarBehavior.floating,
-                    ),
-                  );
-                },
+                onChanged: isGuest
+                    ? null
+                    : (val) async {
+                        setState(() => _arduinoOta = val);
+                        final ok = await widget.manager.saveDeviceConfig(
+                          widget.device.id,
+                          {'arduino_ota': val},
+                        );
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              ok
+                                  ? (val
+                                        ? 'ArduinoOTA (port 3232) enabled'
+                                        : 'ArduinoOTA (port 3232) disabled')
+                                  : 'Failed to update OTA settings',
+                            ),
+                            backgroundColor: ok
+                                ? AppColors.success
+                                : AppColors.danger,
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      },
               ),
             ],
           ),
@@ -2023,63 +2409,70 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                     child: OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.warning,
-                        side: const BorderSide(color: AppColors.warning),
+                        side: BorderSide(
+                          color: isGuest
+                              ? AppColors.cardBorder
+                              : AppColors.warning,
+                        ),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                       icon: const Icon(Icons.restart_alt),
                       label: Text('Reboot ${widget.device.isEsp8266 ? "ESP8266" : "ESP32"}'),
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: AppColors.surface,
-                            title: Row(
-                              children: [
-                                const Icon(Icons.restart_alt, color: AppColors.warning),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Reboot Controller?',
-                                  style: TextStyle(color: AppColors.textPrimary),
+                      onPressed: isGuest
+                          ? null
+                          : () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  backgroundColor: AppColors.surface,
+                                  title: Row(
+                                    children: [
+                                      const Icon(Icons.restart_alt, color: AppColors.warning),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Reboot Controller?',
+                                        style: TextStyle(color: AppColors.textPrimary),
+                                      ),
+                                    ],
+                                  ),
+                                  content: Text(
+                                    'Are you sure you want to reboot ${widget.device.name}? It will take ~5-10 seconds to reconnect.',
+                                    style: TextStyle(color: AppColors.textSecondary),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, false),
+                                      child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.warning,
+                                        foregroundColor: Colors.black,
+                                      ),
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      child: const Text('Reboot Now', style: TextStyle(fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            content: Text(
-                              'Are you sure you want to reboot ${widget.device.name}? It will take ~5-10 seconds to reconnect.',
-                              style: TextStyle(color: AppColors.textSecondary),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-                              ),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.warning,
-                                  foregroundColor: Colors.black,
-                                ),
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Reboot Now', style: TextStyle(fontWeight: FontWeight.bold)),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirm == true) {
-                          final ok = await widget.manager.rebootDevice(widget.device.id);
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                ok
-                                    ? 'Reboot signal delivered to ${widget.device.name}!'
-                                    : 'Failed to deliver reboot command',
-                              ),
-                              backgroundColor: ok ? AppColors.success : AppColors.danger,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                          Navigator.pop(context);
-                        }
-                      },
+                              );
+                              if (confirm == true && mounted) {
+                                final messenger = ScaffoldMessenger.of(context);
+                                final ok = await widget.manager.rebootDevice(widget.device.id);
+                                if (!mounted) return;
+                                Navigator.pop(context);
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      ok
+                                          ? 'Reboot signal delivered to ${widget.device.name}!'
+                                          : 'Failed to deliver reboot command',
+                                    ),
+                                    backgroundColor: ok ? AppColors.success : AppColors.danger,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -2092,52 +2485,55 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                       ),
                       icon: const Icon(Icons.warning_amber),
                       label: const Text('Factory Reset'),
-                      onPressed: () async {
-                        final confirm = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            backgroundColor: AppColors.surface,
-                            title: Text(
-                              'Confirm Factory Reset',
-                              style: TextStyle(color: AppColors.danger),
-                            ),
-                            content: Text(
-                              'This will wipe all LittleFS configs, Wi-Fi credentials, and automations. The controller will reboot into AP setup mode.',
-                              style: TextStyle(color: AppColors.textSecondary),
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(ctx, false),
-                                child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-                              ),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.danger,
-                                  foregroundColor: Colors.white,
+                      onPressed: isGuest
+                          ? null
+                          : () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  backgroundColor: AppColors.surface,
+                                  title: Text(
+                                    'Confirm Factory Reset',
+                                    style: TextStyle(color: AppColors.danger),
+                                  ),
+                                  content: Text(
+                                    'This will wipe all LittleFS configs, Wi-Fi credentials, and automations. The controller will reboot into AP setup mode.',
+                                    style: TextStyle(color: AppColors.textSecondary),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, false),
+                                      child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppColors.danger,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      child: const Text('Wipe & Reset'),
+                                    ),
+                                  ],
                                 ),
-                                onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Wipe & Reset'),
-                              ),
-                            ],
-                          ),
-                        );
-                        if (confirm == true) {
-                          final ok = await widget.manager.factoryReset(widget.device.id);
-                          if (!mounted) return;
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text(
-                                ok
-                                    ? 'Factory reset initiated. Device wiping and rebooting...'
-                                    : 'Failed to send factory reset command',
-                              ),
-                              backgroundColor: ok ? AppColors.warning : AppColors.danger,
-                              behavior: SnackBarBehavior.floating,
-                            ),
-                          );
-                          Navigator.pop(context);
-                        }
-                      },
+                              );
+                              if (confirm == true && mounted) {
+                                final messenger = ScaffoldMessenger.of(context);
+                                final ok = await widget.manager.factoryReset(widget.device.id);
+                                if (!mounted) return;
+                                Navigator.pop(context);
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      ok
+                                          ? 'Factory reset initiated. Device wiping and rebooting...'
+                                          : 'Failed to send factory reset command',
+                                    ),
+                                    backgroundColor: ok ? AppColors.warning : AppColors.danger,
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                              }
+                            },
                     ),
                   ),
                 ],
@@ -2199,6 +2595,8 @@ class _ExportConfigDialog extends StatelessWidget {
                 ),
                 Text(
                   '${device.name} • $sizeKb KB ($keyCount modules)',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
               ],
@@ -2237,7 +2635,7 @@ class _ExportConfigDialog extends StatelessWidget {
               height: 220,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.35),
+                color: const Color(0xFF111827),
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: AppColors.cardBorder),
               ),
@@ -2270,9 +2668,10 @@ class _ExportConfigDialog extends StatelessWidget {
           icon: const Icon(Icons.copy_rounded, size: 16),
           label: const Text('Copy JSON'),
           onPressed: () {
+            final messenger = ScaffoldMessenger.of(context);
             Clipboard.setData(ClipboardData(text: jsonStr));
             Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
+            messenger.showSnackBar(
               SnackBar(
                 content: const Row(
                   children: [
@@ -2297,6 +2696,7 @@ class _ExportConfigDialog extends StatelessWidget {
           icon: const Icon(Icons.save_alt_rounded, size: 16),
           label: const Text('Save File (.json)'),
           onPressed: () async {
+            final messenger = ScaffoldMessenger.of(context);
             try {
               final safeName = device.name
                   .replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')
@@ -2310,7 +2710,7 @@ class _ExportConfigDialog extends StatelessWidget {
               if (!context.mounted) return;
               if (savedPath != null) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   SnackBar(
                     content: Row(
                       children: [
@@ -2327,7 +2727,7 @@ class _ExportConfigDialog extends StatelessWidget {
               }
             } catch (e) {
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
+              messenger.showSnackBar(
                 SnackBar(
                   content: Text('Could not save file: $e'),
                   backgroundColor: AppColors.danger,
@@ -2552,9 +2952,10 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
     }
 
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context); // close restore dialog
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
@@ -2627,6 +3028,8 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                         ),
                         Text(
                           'Target: ${widget.device.name} (${widget.device.ip})',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
                             color: AppColors.textSecondary,
@@ -2842,7 +3245,8 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                           ),
                           decoration: InputDecoration(
                             hintText: '{\n  "wifi": { ... },\n  "relays": [ ... ]\n}',
-                            fillColor: Colors.black.withValues(alpha: 0.3),
+                            hintStyle: const TextStyle(color: Colors.white54),
+                            fillColor: const Color(0xFF111827),
                             filled: true,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -2982,40 +3386,45 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
               const SizedBox(height: 16),
 
               // Bottom Actions
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: _isRestoring ? null : () => Navigator.pop(context),
-                    child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-                  ),
-                  const SizedBox(width: 10),
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.end,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 10,
+                  runSpacing: 8,
+                  children: [
+                    TextButton(
+                      onPressed: _isRestoring ? null : () => Navigator.pop(context),
+                      child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
                     ),
-                    icon: _isRestoring
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.settings_backup_restore_rounded, size: 18),
-                    label: Text(
-                      _isRestoring ? 'Restoring to controller...' : 'Restore & Reboot',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      ),
+                      icon: _isRestoring
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.settings_backup_restore_rounded, size: 18),
+                      label: Text(
+                        _isRestoring ? 'Restoring to controller...' : 'Restore & Reboot',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: (_parsedData == null || _isRestoring)
+                          ? null
+                          : _confirmAndRestore,
                     ),
-                    onPressed: (_parsedData == null || _isRestoring)
-                        ? null
-                        : _confirmAndRestore,
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),

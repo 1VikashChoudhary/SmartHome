@@ -61,11 +61,12 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.relay.name);
-    _iconType = widget.relay.iconType.toLowerCase();
-    _triggerMode = widget.relay.trigger;
-    _bootState = widget.relay.boot;
-    _autoOffMinutes = widget.relay.autoOff;
-    _autoOnMinutes = widget.relay.autoOn;
+    final rawIcon = widget.relay.iconType.toLowerCase();
+    _iconType = _applianceCategories.any((c) => c['id'] == rawIcon) ? rawIcon : 'light';
+    _triggerMode = widget.relay.trigger == 1 ? 1 : 0;
+    _bootState = widget.relay.boot.clamp(0, 2);
+    _autoOffMinutes = widget.relay.autoOff.clamp(0, 1440);
+    _autoOnMinutes = widget.relay.autoOn.clamp(0, 1440);
     _failsafe = widget.relay.failsafe;
 
     // Immediately fetch fresh hardware config from physical ESP32
@@ -79,15 +80,18 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
     setState(() => _isLoading = true);
     final relays = await widget.manager.fetchDeviceRelays(widget.device.id);
     if (!mounted) return;
-    if (relays != null && widget.relay.index < relays.length) {
+    if (relays != null &&
+        widget.relay.index >= 0 &&
+        widget.relay.index < relays.length) {
       final live = relays[widget.relay.index];
+      final rawIcon = live.iconType.toLowerCase();
       setState(() {
         _nameController.text = live.name;
-        _iconType = live.iconType.toLowerCase();
-        _triggerMode = live.trigger;
-        _bootState = live.boot;
-        _autoOffMinutes = live.autoOff;
-        _autoOnMinutes = live.autoOn;
+        _iconType = _applianceCategories.any((c) => c['id'] == rawIcon) ? rawIcon : 'light';
+        _triggerMode = live.trigger == 1 ? 1 : 0;
+        _bootState = live.boot.clamp(0, 2);
+        _autoOffMinutes = live.autoOff.clamp(0, 1440);
+        _autoOnMinutes = live.autoOn.clamp(0, 1440);
         _failsafe = live.failsafe;
         _isLoading = false;
         _isSynced = true;
@@ -106,6 +110,7 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
   }
 
   Future<void> _save() async {
+    if (widget.device.isGuest) return;
     setState(() => _isSaving = true);
     final ok = await widget.manager.saveRelayHardwareConfig(
       widget.device.id,
@@ -122,8 +127,9 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
     );
     if (mounted) {
       setState(() => _isSaving = false);
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text(ok ? 'Relay hardware config saved to controller flash!' : 'Failed to update relay config'),
           backgroundColor: ok ? AppColors.success : AppColors.danger,
@@ -138,6 +144,7 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
         MediaQuery.of(context).padding.bottom +
         20;
     final isDark = AppColors.isDark;
+    final isGuest = widget.device.isGuest;
 
     return Container(
       decoration: BoxDecoration(
@@ -274,11 +281,48 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
               ),
             const SizedBox(height: 14),
 
-            // Channel Label Input (Sleek filled card, zero harsh lines!)
-            Text(
-              'Channel Label',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
-            ),
+            if (isGuest) ...[
+              Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.warning.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.visibility_outlined, size: 16, color: AppColors.warning),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'View-only mode: Log in with Administrator credentials to modify relay hardware settings.',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: AppColors.warning,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+
+            AbsorbPointer(
+              absorbing: isGuest,
+              child: Opacity(
+                opacity: isGuest ? 0.65 : 1.0,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Channel Label Input (Sleek filled card, zero harsh lines!)
+                    Text(
+                      'Channel Label',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
+                    ),
             const SizedBox(height: 6),
             Container(
               decoration: BoxDecoration(
@@ -372,13 +416,22 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Hardware Trigger Polarity',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
+                Expanded(
+                  child: Text(
+                    'Hardware Trigger Polarity',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
+                  ),
                 ),
-                Text(
-                  _triggerMode == 0 ? 'Active LOW (Standard)' : 'Active HIGH',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    _triggerMode == 0 ? 'Active LOW (Standard)' : 'Active HIGH',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                  ),
                 ),
               ],
             ),
@@ -391,8 +444,8 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
             LuxurySegmentedSelector<int>(
               values: const [0, 1],
               labels: const {
-                0: 'Active LOW ',
-                1: 'Active HIGH ',
+                0: 'Active LOW',
+                1: 'Active HIGH',
               },
               selectedValue: _triggerMode,
               onSelected: (val) => setState(() => _triggerMode = val),
@@ -403,13 +456,22 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'Power-Outage Boot State',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
+                Expanded(
+                  child: Text(
+                    'Power-Outage Boot State',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary),
+                  ),
                 ),
-                Text(
-                  _bootState == 0 ? 'Restore Last State' : (_bootState == 1 ? 'Always ON' : 'Always OFF'),
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    _bootState == 0 ? 'Restore Last State' : (_bootState == 1 ? 'Always ON' : 'Always OFF'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
+                  ),
                 ),
               ],
             ),
@@ -431,38 +493,42 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
             ),
             const SizedBox(height: 18),
 
-            // Auto-Off & Auto-On Timers (Sleek filled dropdowns, zero harsh black lines!)
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Auto-OFF Timer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
-                      const SizedBox(height: 6),
-                      _buildLuxuryDropdown(
-                        value: _autoOffMinutes,
-                        onChanged: (v) => setState(() => _autoOffMinutes = v),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Auto-ON Timer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
-                      const SizedBox(height: 6),
-                      _buildLuxuryDropdown(
-                        value: _autoOnMinutes,
-                        onChanged: (v) => setState(() => _autoOnMinutes = v),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+                    // Auto-Off & Auto-On Timers (Sleek filled dropdowns, zero harsh black lines!)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Auto-OFF Timer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+                              const SizedBox(height: 6),
+                              _buildLuxuryDropdown(
+                                title: 'Custom Auto-OFF (Minutes)',
+                                value: _autoOffMinutes,
+                                enabled: !isGuest,
+                                onChanged: (v) => setState(() => _autoOffMinutes = v),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Auto-ON Timer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textSecondary)),
+                              const SizedBox(height: 6),
+                              _buildLuxuryDropdown(
+                                title: 'Custom Auto-ON (Minutes)',
+                                value: _autoOnMinutes,
+                                enabled: !isGuest,
+                                onChanged: (v) => setState(() => _autoOnMinutes = v),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
             const SizedBox(height: 18),
 
             // Failsafe Mode Card
@@ -509,9 +575,13 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                     activeTrackColor: AppColors.success.withValues(alpha: 0.35),
                     inactiveThumbColor: isDark ? const Color(0xFF64748B) : const Color(0xFFCBD5E1),
                     inactiveTrackColor: AppColors.surfaceElevated,
-                    onChanged: (v) => setState(() => _failsafe = v),
+                    onChanged: isGuest ? null : (v) => setState(() => _failsafe = v),
                   ),
                 ],
+              ),
+            ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 22),
@@ -522,27 +592,31 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
               height: 52,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
+                  backgroundColor: isGuest ? AppColors.textMuted : AppColors.primary,
                   foregroundColor: Colors.white,
                   elevation: 2,
                   shadowColor: AppColors.primary.withValues(alpha: 0.4),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
-                onPressed: _isSaving ? null : _save,
+                onPressed: (isGuest || _isSaving) ? null : _save,
                 child: _isSaving
                     ? const SizedBox(
                         width: 22,
                         height: 22,
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
                       )
-                    : const Row(
+                    : Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.save_rounded, size: 20),
-                          SizedBox(width: 8),
-                          Text(
-                            'Save to Hardware Flash',
-                            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: -0.2),
+                          Icon(isGuest ? Icons.lock_outline_rounded : Icons.save_rounded, size: 20),
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              isGuest ? 'Admin Credentials Required' : 'Save to Hardware Flash',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold, letterSpacing: -0.2),
+                            ),
                           ),
                         ],
                       ),
@@ -554,10 +628,45 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
     );
   }
 
+  Future<void> _pickCustomMinutes({
+    required String title,
+    required int currentValue,
+    required ValueChanged<int> onChanged,
+  }) async {
+    final picked = await showDialog<int>(
+      context: context,
+      builder: (_) => _CustomMinutesDialog(
+        title: title,
+        initialValue: currentValue,
+      ),
+    );
+    if (picked != null && mounted) {
+      onChanged(picked);
+    }
+  }
+
   Widget _buildLuxuryDropdown({
+    required String title,
     required int value,
+    required bool enabled,
     required ValueChanged<int> onChanged,
   }) {
+    const presets = [0, 5, 15, 30, 60, 120, 360];
+    final clamped = value.clamp(0, 1440);
+    final options = List<int>.from(presets);
+    if (!options.contains(clamped)) {
+      options.add(clamped);
+      options.sort();
+    }
+
+    String formatLabel(int mins) {
+      if (mins == 0) return 'Disabled';
+      if (mins == 60) return '1 hour';
+      if (mins == 120) return '2 hours';
+      if (mins == 360) return '6 hours';
+      return '$mins min';
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surfaceElevated,
@@ -567,25 +676,109 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<int>(
-          value: value,
+          value: clamped,
           isExpanded: true,
           dropdownColor: AppColors.surfaceElevated,
           icon: Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary, size: 20),
           style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 13),
-          items: const [
-            DropdownMenuItem(value: 0, child: Text('Disabled')),
-            DropdownMenuItem(value: 5, child: Text('5 minutes')),
-            DropdownMenuItem(value: 15, child: Text('15 minutes')),
-            DropdownMenuItem(value: 30, child: Text('30 minutes')),
-            DropdownMenuItem(value: 60, child: Text('1 hour')),
-            DropdownMenuItem(value: 120, child: Text('2 hours')),
-            DropdownMenuItem(value: 360, child: Text('6 hours')),
+          items: [
+            ...options.map(
+              (m) => DropdownMenuItem<int>(
+                value: m,
+                child: Text(formatLabel(m)),
+              ),
+            ),
+            const DropdownMenuItem<int>(
+              value: -1,
+              child: Text('Custom (1–1440 min)...'),
+            ),
           ],
-          onChanged: (v) {
-            if (v != null) onChanged(v);
-          },
+          onChanged: !enabled
+              ? null
+              : (v) {
+                  if (v == null) return;
+                  if (v == -1) {
+                    _pickCustomMinutes(
+                      title: title,
+                      currentValue: clamped,
+                      onChanged: onChanged,
+                    );
+                  } else {
+                    onChanged(v);
+                  }
+                },
         ),
       ),
+    );
+  }
+}
+
+class _CustomMinutesDialog extends StatefulWidget {
+  final String title;
+  final int initialValue;
+
+  const _CustomMinutesDialog({
+    required this.title,
+    required this.initialValue,
+  });
+
+  @override
+  State<_CustomMinutesDialog> createState() => _CustomMinutesDialogState();
+}
+
+class _CustomMinutesDialogState extends State<_CustomMinutesDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.initialValue > 0 ? '${widget.initialValue}' : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: AppColors.surfaceElevated,
+      title: Text(
+        widget.title,
+        style: TextStyle(
+          color: AppColors.textPrimary,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      content: TextField(
+        controller: _controller,
+        keyboardType: TextInputType.number,
+        autofocus: true,
+        style: TextStyle(color: AppColors.textPrimary),
+        decoration: const InputDecoration(
+          labelText: 'Minutes (0 = Disabled, max 1440)',
+          hintText: 'e.g. 45',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final v = int.tryParse(_controller.text.trim());
+            if (v == null || v < 0 || v > 1440) return;
+            Navigator.pop(context, v);
+          },
+          child: const Text('Apply'),
+        ),
+      ],
     );
   }
 }

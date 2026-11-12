@@ -42,6 +42,16 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   ];
 
   void _showRenameDialog(BuildContext context, SmartDevice device) {
+    if (device.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Forbidden: Administrator privileges required to rename controller.'),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final controller = TextEditingController(text: device.name);
     showDialog(
       context: context,
@@ -68,19 +78,22 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
+            onPressed: () async {
               final newName = controller.text.trim();
+              final messenger = ScaffoldMessenger.of(context);
+              Navigator.pop(ctx);
               if (newName.isNotEmpty) {
-                ref.read(deviceManagerProvider.notifier).updateDeviceName(device.id, newName);
-                ScaffoldMessenger.of(context).showSnackBar(
+                final ok = await ref.read(deviceManagerProvider.notifier).updateDeviceName(device.id, newName);
+                messenger.showSnackBar(
                   SnackBar(
-                    content: Text('Device renamed to "$newName"'),
-                    backgroundColor: AppColors.success,
+                    content: Text(
+                      ok ? 'Device renamed to "$newName"' : 'Failed to update device name on controller',
+                    ),
+                    backgroundColor: ok ? AppColors.success : AppColors.danger,
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
               }
-              Navigator.pop(ctx);
             },
             child: const Text('Save', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
@@ -221,6 +234,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           children: [
             Text(
               device.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w800,
@@ -231,15 +246,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             Row(
               children: [
                 if (device.room.isNotEmpty) ...[
-                  Text(
-                    device.room,
-                    style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.accent),
+                  Flexible(
+                    child: Text(
+                      device.room,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.accent),
+                    ),
                   ),
                   Text(' • ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
                 ],
-                Text(
-                  device.ip,
-                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                Flexible(
+                  child: Text(
+                    device.ip,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                  ),
                 ),
                 if (device.isGuest) ...[
                   Text(' • ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
@@ -530,8 +553,10 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 const SizedBox(height: 14),
 
                 // Master Power Scene Buttons (Aurora Emerald & Nocturnal Violet)
-                _buildMasterPowerScenes(context, device, manager, isDark),
-                const SizedBox(height: 18),
+                if (device.relays.any((r) => r.enabled)) ...[
+                  _buildMasterPowerScenes(context, device, manager, isDark),
+                  const SizedBox(height: 18),
+                ],
 
                 // Active Hardware Flash Configuration Card
                 _buildHardwareConfigCard(context, device, manager, isDark),
@@ -818,7 +843,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Buzzer, 16x2 LCD, MQ-2 Calibration, Logs & System Diagnostics',
+                      'Buzzer, I2C LCD, Sensor Calibration, Logs & System Diagnostics',
                       style: TextStyle(
                         fontSize: 11,
                         color: AppColors.textSecondary,
@@ -932,136 +957,333 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           const SizedBox(height: 14),
 
           // 3 Expanded Gauges (Equal Symmetrical Sizing - Zero Blank Gaps!)
-          Row(
-            children: [
-              Expanded(
-                child: TelemetryGauge(
-                  label: 'Temperature',
-                  value: device.telemetry.temperature > 0 ? device.telemetry.temperature.toStringAsFixed(1) : '--',
-                  unit: '°C',
-                  percent: ((device.telemetry.temperature - 10) / 40).clamp(0.0, 1.0),
-                  color: AppColors.tempAmber,
-                  icon: Icons.thermostat_rounded,
-                  statusBadge: device.telemetry.temperature > 32 ? 'WARM' : 'COMFORT',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TelemetryGauge(
-                  label: 'Humidity',
-                  value: device.telemetry.humidity > 0 ? device.telemetry.humidity.toStringAsFixed(0) : '--',
-                  unit: '%',
-                  percent: (device.telemetry.humidity / 100).clamp(0.0, 1.0),
-                  color: AppColors.cyan,
-                  icon: Icons.water_drop_rounded,
-                  statusBadge: device.telemetry.humidity > 70 ? 'HUMID' : 'OPTIMAL',
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: TelemetryGauge(
-                  label: 'Air / Gas',
-                  value: '${device.telemetry.gasRaw}',
-                  unit: 'ADC',
-                  percent: (device.telemetry.gasRaw / 4095).clamp(0.0, 1.0),
-                  color: device.telemetry.gasAlarm ? AppColors.danger : AppColors.success,
-                  icon: Icons.local_fire_department_rounded,
-                  statusBadge: device.telemetry.gasAlarm ? 'ALARM' : 'SAFE',
-                ),
-              ),
-            ],
-          ),
-
-          // Extended Telemetry (Barometer, Lux, Motion, Water Temp, Tank)
-          if ((device.telemetry.pressureEnabled && device.telemetry.pressure > 300) || device.telemetry.luxEnabled || device.telemetry.motionEnabled || device.telemetry.probeEnabled) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                if (device.telemetry.pressureEnabled && device.telemetry.pressure > 300)
+          Builder(
+            builder: (context) {
+              final t = device.telemetry;
+              final gasMax = t.gasMax > 0 ? t.gasMax : (device.isEsp8266 ? 1023 : 4095);
+              return Row(
+                children: [
                   Expanded(
                     child: TelemetryGauge(
-                      label: 'Pressure',
-                      value: device.telemetry.pressure.toStringAsFixed(1),
-                      unit: 'hPa',
-                      percent: ((device.telemetry.pressure - 950) / 100).clamp(0.0, 1.0),
-                      color: AppColors.primary,
-                      icon: Icons.compress_rounded,
-                      statusBadge: 'BARO',
+                      label: 'Temperature',
+                      value: !t.dhtEnabled
+                          ? 'OFF'
+                          : (t.dhtFault
+                                ? 'ERR'
+                                : (t.temperature > 0 ? t.temperature.toStringAsFixed(1) : '--')),
+                      unit: (!t.dhtEnabled || t.dhtFault) ? '' : '°C',
+                      percent: (!t.dhtEnabled || t.dhtFault)
+                          ? 0.0
+                          : ((t.temperature - 10) / 40).clamp(0.0, 1.0),
+                      color: !t.dhtEnabled
+                          ? AppColors.textMuted
+                          : (t.dhtFault ? AppColors.danger : AppColors.tempAmber),
+                      icon: Icons.thermostat_rounded,
+                      statusBadge: !t.dhtEnabled
+                          ? 'DISABLED'
+                          : (t.dhtFault
+                                ? 'FAULT'
+                                : (t.temperature > 32 ? 'WARM' : 'COMFORT')),
                     ),
                   ),
-                if (device.telemetry.luxEnabled) ...[
-                  if (device.telemetry.pressureEnabled && device.telemetry.pressure > 300) const SizedBox(width: 10),
-                  Expanded(
-                    child: TelemetryGauge(
-                      label: 'Ambient Light',
-                      value: device.telemetry.lux.toStringAsFixed(0),
-                      unit: 'lx',
-                      percent: (device.telemetry.lux / 1000).clamp(0.0, 1.0),
-                      color: AppColors.accent,
-                      icon: Icons.light_mode_rounded,
-                      statusBadge: device.telemetry.lux > 200 ? 'BRIGHT' : 'DIM',
-                    ),
-                  ),
-                ],
-                if (device.telemetry.probeEnabled && device.telemetry.probeTemp > -55) ...[
                   const SizedBox(width: 10),
                   Expanded(
                     child: TelemetryGauge(
-                      label: 'Water Probe',
-                      value: device.telemetry.probeTemp.toStringAsFixed(1),
-                      unit: '°C',
-                      percent: ((device.telemetry.probeTemp - 10) / 50).clamp(0.0, 1.0),
-                      color: AppColors.cyan,
+                      label: 'Humidity',
+                      value: !t.dhtEnabled
+                          ? 'OFF'
+                          : (t.dhtFault
+                                ? 'ERR'
+                                : (t.humidity > 0 ? t.humidity.toStringAsFixed(0) : '--')),
+                      unit: (!t.dhtEnabled || t.dhtFault) ? '' : '%',
+                      percent: (!t.dhtEnabled || t.dhtFault)
+                          ? 0.0
+                          : (t.humidity / 100).clamp(0.0, 1.0),
+                      color: !t.dhtEnabled
+                          ? AppColors.textMuted
+                          : (t.dhtFault ? AppColors.danger : AppColors.cyan),
+                      icon: Icons.water_drop_rounded,
+                      statusBadge: !t.dhtEnabled
+                          ? 'DISABLED'
+                          : (t.dhtFault
+                                ? 'FAULT'
+                                : (t.humidity > 70 ? 'HUMID' : 'OPTIMAL')),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TelemetryGauge(
+                      label: 'Air / Gas',
+                      value: '${t.gasRaw}',
+                      unit: 'ADC',
+                      percent: (t.gasRaw / gasMax).clamp(0.0, 1.0),
+                      color: t.gasAlarm
+                          ? AppColors.danger
+                          : (t.gasWarming ? AppColors.warning : AppColors.success),
+                      icon: Icons.local_fire_department_rounded,
+                      statusBadge: t.gasAlarm
+                          ? 'ALARM'
+                          : (t.gasWarming ? 'WARMING' : 'SAFE'),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+
+          // Extended Telemetry (Multi-Instance Climate/Barometer/Light/Motion/Probe/MQ-2)
+          Builder(
+            builder: (context) {
+              final t = device.telemetry;
+              final gasMax = t.gasMax > 0 ? t.gasMax : (device.isEsp8266 ? 1023 : 4095);
+              final extCards = <Widget>[
+                if (t.pressureEnabled && t.pressure > 300)
+                  TelemetryGauge(
+                    label: 'Pressure',
+                    value: t.pressure.toStringAsFixed(1),
+                    unit: 'hPa',
+                    percent: ((t.pressure - 950) / 100).clamp(0.0, 1.0),
+                    color: AppColors.primary,
+                    icon: Icons.compress_rounded,
+                    statusBadge: 'BARO',
+                  ),
+                for (int i = 1; i < t.climates.length; i++) ...[
+                  if (t.climates[i].enabled) ...[
+                    TelemetryGauge(
+                      label: '${t.climates[i].displayName} Temp',
+                      value: t.climates[i].fault ? 'ERR' : t.climates[i].temperature.toStringAsFixed(1),
+                      unit: t.climates[i].fault ? '' : '°C',
+                      percent: t.climates[i].fault ? 0.0 : ((t.climates[i].temperature - 10) / 40).clamp(0.0, 1.0),
+                      color: t.climates[i].fault ? AppColors.danger : AppColors.tempAmber,
+                      icon: Icons.thermostat_rounded,
+                      statusBadge: t.climates[i].fault ? 'FAULT' : '${t.climates[i].humidity.toStringAsFixed(0)}%',
+                    ),
+                    if (t.climates[i].barometer && t.climates[i].pressure > 300)
+                      TelemetryGauge(
+                        label: '${t.climates[i].displayName} Baro',
+                        value: t.climates[i].pressure.toStringAsFixed(1),
+                        unit: 'hPa',
+                        percent: ((t.climates[i].pressure - 950) / 100).clamp(0.0, 1.0),
+                        color: AppColors.primary,
+                        icon: Icons.compress_rounded,
+                        statusBadge: 'BARO',
+                      ),
+                  ],
+                ],
+                for (int i = 1; i < t.mq2s.length; i++)
+                  if (t.mq2s[i].enabled)
+                    TelemetryGauge(
+                      label: t.mq2s[i].displayName,
+                      value: '${t.mq2s[i].raw}',
+                      unit: 'ADC',
+                      percent: (t.mq2s[i].raw / gasMax).clamp(0.0, 1.0),
+                      color: t.mq2s[i].alarm
+                          ? AppColors.danger
+                          : (t.mq2s[i].warming ? AppColors.warning : AppColors.success),
+                      icon: Icons.local_fire_department_rounded,
+                      statusBadge: t.mq2s[i].alarm
+                          ? 'ALARM'
+                          : (t.mq2s[i].warming ? 'WARMING' : 'SAFE'),
+                    ),
+                if (t.lights.isNotEmpty)
+                  for (final l in t.lights.where((x) => x.enabled))
+                    TelemetryGauge(
+                      label: t.lights.length > 1 || l.label.isNotEmpty ? l.displayName : 'Ambient Light',
+                      value: l.lux.toStringAsFixed(0),
+                      unit: 'lx',
+                      percent: (l.lux / 1000).clamp(0.0, 1.0),
+                      color: AppColors.accent,
+                      icon: Icons.light_mode_rounded,
+                      statusBadge: l.lux > 200 ? 'BRIGHT' : 'DIM',
+                    )
+                else if (t.luxEnabled)
+                  TelemetryGauge(
+                    label: 'Ambient Light',
+                    value: t.lux.toStringAsFixed(0),
+                    unit: 'lx',
+                    percent: (t.lux / 1000).clamp(0.0, 1.0),
+                    color: AppColors.accent,
+                    icon: Icons.light_mode_rounded,
+                    statusBadge: t.lux > 200 ? 'BRIGHT' : 'DIM',
+                  ),
+                if (t.motions.isNotEmpty)
+                  for (final m in t.motions.where((x) => x.enabled))
+                    TelemetryGauge(
+                      label: t.motions.length > 1 || m.label.isNotEmpty ? m.displayName : 'Motion PIR',
+                      value: m.detected ? 'ACTIVE' : 'CLEAR',
+                      unit: m.detected
+                          ? ''
+                          : (m.ageSeconds < 9999 ? '${m.ageSeconds}s' : 'IDLE'),
+                      percent: m.detected ? 1.0 : 0.15,
+                      color: m.detected ? AppColors.warning : AppColors.success,
+                      icon: Icons.directions_run_rounded,
+                      statusBadge: m.detected ? 'MOTION' : 'SECURE',
+                    )
+                else if (t.motionEnabled)
+                  TelemetryGauge(
+                    label: 'Motion PIR',
+                    value: t.motionDetected ? 'ACTIVE' : 'CLEAR',
+                    unit: t.motionDetected
+                        ? ''
+                        : (t.motionAgeSeconds < 9999
+                            ? '${t.motionAgeSeconds}s'
+                            : 'IDLE'),
+                    percent: t.motionDetected ? 1.0 : 0.15,
+                    color: t.motionDetected ? AppColors.warning : AppColors.success,
+                    icon: Icons.directions_run_rounded,
+                    statusBadge: t.motionDetected ? 'MOTION' : 'SECURE',
+                  ),
+                if (t.probes.isNotEmpty)
+                  for (final p in t.probes.where((x) => x.enabled && (x.temperature > -55 || x.fault)))
+                    TelemetryGauge(
+                      label: t.probes.length > 1 || p.label.isNotEmpty ? p.displayName : 'Water Probe',
+                      value: p.fault ? 'ERR' : p.temperature.toStringAsFixed(1),
+                      unit: p.fault ? '' : '°C',
+                      percent: p.fault ? 0.0 : ((p.temperature - 10) / 50).clamp(0.0, 1.0),
+                      color: p.fault ? AppColors.danger : AppColors.cyan,
                       icon: Icons.water_rounded,
-                      statusBadge: device.telemetry.probeFault ? 'FAULT' : 'TEMP',
-                    ),
+                      statusBadge: p.fault ? 'FAULT' : 'TEMP',
+                    )
+                else if (t.probeEnabled && (t.probeTemp > -55 || t.probeFault))
+                  TelemetryGauge(
+                    label: 'Water Probe',
+                    value: t.probeFault ? 'ERR' : t.probeTemp.toStringAsFixed(1),
+                    unit: t.probeFault ? '' : '°C',
+                    percent: t.probeFault ? 0.0 : ((t.probeTemp - 10) / 50).clamp(0.0, 1.0),
+                    color: t.probeFault ? AppColors.danger : AppColors.cyan,
+                    icon: Icons.water_rounded,
+                    statusBadge: t.probeFault ? 'FAULT' : 'TEMP',
                   ),
-                ],
-              ],
-            ),
-          ],
-          if (device.telemetry.tankEnabled) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.water_damage_rounded, size: 18, color: AppColors.cyan),
-                          const SizedBox(width: 8),
-                          Text('Overhead Water Tank', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+              ];
+              if (extCards.isEmpty) return const SizedBox.shrink();
+
+              final rows = <Widget>[];
+              for (int i = 0; i < extCards.length; i += 2) {
+                final chunk = extCards.sublist(i, (i + 2).clamp(0, extCards.length));
+                rows.add(
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Row(
+                      children: [
+                        Expanded(child: chunk[0]),
+                        if (chunk.length > 1) ...[
+                          const SizedBox(width: 10),
+                          Expanded(child: chunk[1]),
                         ],
-                      ),
-                      Text('${device.telemetry.tankLevelPct}% (${device.telemetry.distanceCm.toStringAsFixed(1)} cm)',
-                           style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.cyan)),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: LinearProgressIndicator(
-                      value: (device.telemetry.tankLevelPct / 100).clamp(0.0, 1.0),
-                      minHeight: 10,
-                      backgroundColor: isDark ? Colors.black26 : Colors.black12,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        device.telemetry.tankLevelPct < 20 ? AppColors.danger : (device.telemetry.tankLevelPct > 80 ? AppColors.success : AppColors.cyan),
-                      ),
+                      ],
                     ),
                   ),
-                ],
+                );
+              }
+              return Column(children: rows);
+            },
+          ),
+          ...() {
+            final t = device.telemetry;
+            final tanks = t.tanks.where((u) => u.enabled).toList();
+            if (tanks.isNotEmpty) {
+              return tanks.map((tank) {
+                final title = (tanks.length == 1 && tank.label.isEmpty)
+                    ? 'Overhead Water Tank'
+                    : tank.displayName;
+                return Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Icon(Icons.water_damage_rounded, size: 18, color: AppColors.cyan),
+                                  const SizedBox(width: 8),
+                                  Flexible(
+                                    child: Text(
+                                      title,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              '${tank.levelPct}% (${tank.distanceCm.toStringAsFixed(1)} cm)',
+                              style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.cyan),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: LinearProgressIndicator(
+                            value: (tank.levelPct / 100).clamp(0.0, 1.0),
+                            minHeight: 10,
+                            backgroundColor: isDark ? Colors.black26 : Colors.black12,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              tank.levelPct < 20 ? AppColors.danger : (tank.levelPct > 80 ? AppColors.success : AppColors.cyan),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }).toList();
+            }
+            if (!t.tankEnabled) return const <Widget>[];
+            return [
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.water_damage_rounded, size: 18, color: AppColors.cyan),
+                            const SizedBox(width: 8),
+                            Text('Overhead Water Tank', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
+                          ],
+                        ),
+                        Text('${t.tankLevelPct}% (${t.distanceCm.toStringAsFixed(1)} cm)',
+                             style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.cyan)),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: LinearProgressIndicator(
+                        value: (t.tankLevelPct / 100).clamp(0.0, 1.0),
+                        minHeight: 10,
+                        backgroundColor: isDark ? Colors.black26 : Colors.black12,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          t.tankLevelPct < 20 ? AppColors.danger : (t.tankLevelPct > 80 ? AppColors.success : AppColors.cyan),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ];
+          }(),
         ],
       ),
     );
@@ -1205,39 +1427,47 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [Color(0xFF6366F1), Color(0xFF818CF8)],
-                      ),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Icon(Icons.developer_board_rounded, color: Colors.white, size: 18),
-                  ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Active Hardware Configuration',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                          color: AppColors.textPrimary,
-                          letterSpacing: -0.2,
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6366F1), Color(0xFF818CF8)],
                         ),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      Text(
-                        'Stored in Controller Flash (LittleFS)',
-                        style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      child: const Icon(Icons.developer_board_rounded, color: Colors.white, size: 18),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Active Hardware Configuration',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 14,
+                              color: AppColors.textPrimary,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          Text(
+                            'Stored in Controller Flash (LittleFS)',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
               IconButton(
                 icon: Container(
@@ -1270,7 +1500,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           const SizedBox(height: 12),
 
           // Channel Matrix
-          ...device.relays.map((relay) {
+          if (device.relays.isEmpty)
+            Text(
+              device.numRelays == 0
+                  ? 'Sensor Node active (0 relays configured).'
+                  : 'Loading relay hardware configuration...',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
+            )
+          else
+            ...device.relays.map((relay) {
             final polarityStr = relay.trigger == 1 ? 'Active HIGH (3.3V)' : 'Active LOW (0V)';
             final bootStr = relay.boot == 0
                 ? 'Boot: Restore Last'
@@ -1319,12 +1557,16 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                         children: [
                           Row(
                             children: [
-                              Text(
-                                relay.name,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 13.5,
-                                  color: relay.enabled ? AppColors.textPrimary : AppColors.textSecondary,
+                              Flexible(
+                                child: Text(
+                                  relay.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13.5,
+                                    color: relay.enabled ? AppColors.textPrimary : AppColors.textSecondary,
+                                  ),
                                 ),
                               ),
                               if (!relay.enabled) ...[
@@ -1448,7 +1690,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         ),
         const SizedBox(height: 12),
         device.relays.isEmpty
-            ? Text('Loading channels...', style: TextStyle(color: AppColors.textMuted, fontSize: 12))
+            ? (device.numRelays == 0
+                  ? Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF182033) : const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: AppColors.cardBorder),
+                      ),
+                      child: Center(
+                        child: Text(
+                          'Sensor Node active (0 relay channels configured).',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                        ),
+                      ),
+                    )
+                  : Text('Loading channels...', style: TextStyle(color: AppColors.textMuted, fontSize: 12)))
             : enabledRelays.isEmpty
                 ? Container(
                     width: double.infinity,

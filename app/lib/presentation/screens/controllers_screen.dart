@@ -280,66 +280,68 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
             ),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter the local IP address assigned to the controller:',
-              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _ipController,
-              decoration: InputDecoration(
-                hintText: 'e.g. 192.168.29.103',
-                prefixIcon: const Icon(Icons.network_ping, size: 20),
-                filled: true,
-                fillColor: isDark
-                    ? const Color(0xFF1A2338)
-                    : const Color(0xFFF1F5F9),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Enter the local IP address assigned to the controller:',
+                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _ipController,
+                decoration: InputDecoration(
+                  hintText: 'e.g. 192.168.29.103',
+                  prefixIcon: const Icon(Icons.network_ping, size: 20),
+                  filled: true,
+                  fillColor: isDark
+                      ? const Color(0xFF1A2338)
+                      : const Color(0xFFF1F5F9),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                keyboardType: TextInputType.text,
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _userController,
+                decoration: InputDecoration(
+                  labelText: 'Device username',
+                  hintText: 'admin',
+                  prefixIcon: const Icon(Icons.person_outline, size: 20),
+                  filled: true,
+                  fillColor: isDark
+                      ? const Color(0xFF1A2338)
+                      : const Color(0xFFF1F5F9),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-              keyboardType: TextInputType.text,
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _userController,
-              decoration: InputDecoration(
-                labelText: 'Device username',
-                hintText: 'admin',
-                prefixIcon: const Icon(Icons.person_outline, size: 20),
-                filled: true,
-                fillColor: isDark
-                    ? const Color(0xFF1A2338)
-                    : const Color(0xFFF1F5F9),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
+              const SizedBox(height: 10),
+              TextField(
+                controller: _passController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  hintText: 'API Password (if configured)',
+                  prefixIcon: const Icon(Icons.lock_outline, size: 20),
+                  filled: true,
+                  fillColor: isDark
+                      ? const Color(0xFF1A2338)
+                      : const Color(0xFFF1F5F9),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: _passController,
-              obscureText: true,
-              decoration: InputDecoration(
-                hintText: 'API Password (if configured)',
-                prefixIcon: const Icon(Icons.lock_outline, size: 20),
-                filled: true,
-                fillColor: isDark
-                    ? const Color(0xFF1A2338)
-                    : const Color(0xFFF1F5F9),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -402,6 +404,18 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
   }
 
   void _showRenameDialog(BuildContext context, SmartDevice dev) {
+    if (dev.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Forbidden: Administrator privileges required to rename controller.',
+          ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final textController = TextEditingController(text: dev.name);
     final isDark = AppColors.isDark;
 
@@ -442,21 +456,26 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
             ),
           ),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               final newName = textController.text.trim();
+              final messenger = ScaffoldMessenger.of(context);
+              Navigator.pop(ctx);
               if (newName.isNotEmpty) {
-                ref
+                final ok = await ref
                     .read(deviceManagerProvider.notifier)
                     .updateDeviceName(dev.id, newName);
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   SnackBar(
-                    content: Text('Controller renamed to "$newName"'),
-                    backgroundColor: AppColors.success,
+                    content: Text(
+                      ok
+                          ? 'Controller renamed to "$newName"'
+                          : 'Failed to save controller name to device flash',
+                    ),
+                    backgroundColor: ok ? AppColors.success : AppColors.danger,
                     behavior: SnackBarBehavior.floating,
                   ),
                 );
               }
-              Navigator.pop(ctx);
             },
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
             child: const Text(
@@ -477,6 +496,18 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
   }
 
   void _confirmReboot(BuildContext context, SmartDevice dev) {
+    if (dev.isGuest) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Forbidden: Administrator privileges required to reboot controller.',
+          ),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final isDark = AppColors.isDark;
 
     showDialog(
@@ -1361,13 +1392,13 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
           ),
 
           // Live Telemetry Mini Pills (if available)
-          if (dev.telemetry.temperature > 0 ||
-              dev.telemetry.humidity > 0 ||
-              dev.telemetry.gasRaw > 0)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              child: Row(
-                children: [
+          Builder(
+            builder: (context) {
+              final t = dev.telemetry;
+              final pills = <Widget>[];
+              final showDht = t.dhtEnabled && !t.dhtError && (t.temperature != 0 || t.humidity > 0);
+              if (showDht) {
+                pills.add(
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -1390,7 +1421,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '${dev.telemetry.temperature.toStringAsFixed(1)} °C',
+                          '${t.temperature.toStringAsFixed(1)} °C',
                           style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -1400,7 +1431,8 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                );
+                pills.add(
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -1423,7 +1455,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '${dev.telemetry.humidity.toStringAsFixed(0)} %',
+                          '${t.humidity.toStringAsFixed(0)} %',
                           style: const TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
@@ -1433,24 +1465,22 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
+                );
+              }
+              if (t.gasRaw > 0 || t.gasAlarm) {
+                pills.add(
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color:
-                          (dev.telemetry.gasAlarm
-                                  ? AppColors.danger
-                                  : AppColors.success)
-                              .withValues(alpha: 0.12),
+                      color: (t.gasAlarm ? AppColors.danger : AppColors.success)
+                          .withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(
                         color:
-                            (dev.telemetry.gasAlarm
-                                    ? AppColors.danger
-                                    : AppColors.success)
+                            (t.gasAlarm ? AppColors.danger : AppColors.success)
                                 .withValues(alpha: 0.25),
                       ),
                     ),
@@ -1460,17 +1490,16 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                         Icon(
                           Icons.local_fire_department_rounded,
                           size: 14,
-                          color: dev.telemetry.gasAlarm
-                              ? AppColors.danger
-                              : AppColors.success,
+                          color:
+                              t.gasAlarm ? AppColors.danger : AppColors.success,
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '${dev.telemetry.gasRaw} ADC',
+                          '${t.gasRaw} ADC',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: dev.telemetry.gasAlarm
+                            color: t.gasAlarm
                                 ? AppColors.danger
                                 : AppColors.success,
                           ),
@@ -1478,9 +1507,166 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                       ],
                     ),
                   ),
-                ],
-              ),
-            ),
+                );
+              }
+              if (t.tankEnabled) {
+                pills.add(
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.cyan.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppColors.cyan.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.water_damage_rounded,
+                          size: 14,
+                          color: AppColors.cyan,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Tank ${t.tankLevelPct}%',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.cyan,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              if (t.luxEnabled) {
+                pills.add(
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppColors.warning.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.wb_sunny_rounded,
+                          size: 14,
+                          color: AppColors.warning,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${t.lux.toStringAsFixed(0)} lx',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              if (t.probeEnabled && !t.probeFault) {
+                pills.add(
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.device_thermostat_rounded,
+                          size: 14,
+                          color: AppColors.accent,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Probe ${t.probeTemp.toStringAsFixed(1)} °C',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              if (t.motionEnabled) {
+                final mColor = t.motionDetected
+                    ? AppColors.danger
+                    : AppColors.success;
+                pills.add(
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: mColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: mColor.withValues(alpha: 0.25),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.sensors_rounded,
+                          size: 14,
+                          color: mColor,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          t.motionDetected ? 'Motion' : 'Clear',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: mColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              if (pills.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: pills,
+                ),
+              );
+            },
+          ),
 
           // Relay Channel Micro-Grid / Badges
           Padding(
@@ -1492,7 +1678,9 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'RELAY CHANNELS ($activeRelays of ${enabledRelays.length} ACTIVE)',
+                      dev.relays.isEmpty && dev.numRelays == 0
+                          ? 'SENSOR NODE MODE (0 RELAYS)'
+                          : 'RELAY CHANNELS ($activeRelays of ${enabledRelays.length} ACTIVE)',
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
@@ -1513,14 +1701,16 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: dev.relays
-                      .map((r) => _buildChannelChip(dev, r, manager, isDark))
-                      .toList(),
-                ),
+                if (dev.relays.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: dev.relays
+                        .map((r) => _buildChannelChip(dev, r, manager, isDark))
+                        .toList(),
+                  ),
+                ],
               ],
             ),
           ),

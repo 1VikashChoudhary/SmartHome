@@ -173,6 +173,106 @@ void main() {
       expect(outJson['motion'], true);
       expect(outJson['probe_temp'], 28.4);
       expect(outJson['tank_level_pct'], 70);
+      expect(outJson['dht_enabled'], true);
+      expect(outJson['gas_max'], 4095);
+    });
+
+    test('SensorTelemetry preserves dht_enabled: false and ESP8266 gas_max: 1023', () {
+      final json = {
+        'temperature': 0.0,
+        'humidity': 0.0,
+        'dht_enabled': false,
+        'dht_fault': false,
+        'gas_raw': 512,
+        'gas_max': 1023,
+        'gas_threshold': 100,
+      };
+
+      final telemetry = SensorTelemetry.fromJson(json);
+      expect(telemetry.dhtEnabled, isFalse);
+      expect(telemetry.gasMax, 1023);
+      expect(telemetry.gasThreshold, 100);
+
+      final roundtrip = telemetry.toJson();
+      expect(roundtrip['dht_enabled'], isFalse);
+      expect(roundtrip['gas_max'], 1023);
+      expect(roundtrip['gas_threshold'], 100);
+    });
+
+    test('SensorTelemetry parses and roundtrips multi-instance sensor arrays cleanly', () {
+      final json = {
+        'temperature': 24.5,
+        'humidity': 55.0,
+        'dht_enabled': true,
+        'climates': [
+          {
+            'index': 0,
+            'enabled': true,
+            'type': 2,
+            'type_name': 'DHT22',
+            'label': 'Hall',
+            'temperature': 24.5,
+            'humidity': 55.0,
+          },
+          {
+            'index': 1,
+            'enabled': true,
+            'type': 3,
+            'type_name': 'BME280',
+            'label': '',
+            'temperature': 28.2,
+            'humidity': 42.0,
+            'pressure': 1012.4,
+            'barometer': true,
+          },
+        ],
+        'lights': [
+          {'index': 0, 'enabled': true, 'i2c_addr': 0x23, 'label': 'Window', 'lux': 420.0},
+          {'index': 1, 'enabled': true, 'i2c_addr': 0x5C, 'label': '', 'lux': 85.0},
+        ],
+        'motions': [
+          {'index': 0, 'enabled': true, 'type': 1, 'label': 'Entry', 'detected': true, 'age_s': 2},
+          {'index': 1, 'enabled': true, 'type': 2, 'label': '', 'detected': false, 'age_s': 120},
+        ],
+        'probes': [
+          {'index': 0, 'enabled': true, 'label': 'Boiler', 'temperature': 58.5, 'fault': false},
+        ],
+        'tanks': [
+          {'index': 0, 'enabled': true, 'type': 1, 'label': 'Roof', 'distance_cm': 45.0, 'level_pct': 78},
+        ],
+        'mq2s': [
+          {'index': 0, 'enabled': true, 'hw_allowed': true, 'label': 'Kitchen', 'raw': 320, 'alarm': false},
+          {'index': 1, 'enabled': true, 'hw_allowed': true, 'label': '', 'raw': 910, 'alarm': true},
+        ],
+      };
+
+      final telemetry = SensorTelemetry.fromJson(json);
+      expect(telemetry.climates.length, 2);
+      expect(telemetry.climates[0].displayName, 'Hall');
+      expect(telemetry.climates[1].displayName, 'Climate #2');
+      expect(telemetry.climates[1].pressure, 1012.4);
+
+      expect(telemetry.lights.length, 2);
+      expect(telemetry.lights[1].i2cAddr, 0x5C);
+      expect(telemetry.lights[1].displayName, 'Light #2');
+
+      expect(telemetry.motions.length, 2);
+      expect(telemetry.motions[0].detected, isTrue);
+      expect(telemetry.motions[1].displayName, 'Motion #2');
+
+      expect(telemetry.probes.length, 1);
+      expect(telemetry.probes[0].temperature, 58.5);
+
+      expect(telemetry.tanks.length, 1);
+      expect(telemetry.tanks[0].levelPct, 78);
+
+      expect(telemetry.mq2s.length, 2);
+      expect(telemetry.mq2s[1].alarm, isTrue);
+      expect(telemetry.mq2s[1].displayName, 'Gas #2');
+
+      final out = telemetry.toJson();
+      expect((out['climates'] as List).length, 2);
+      expect((out['mq2s'] as List).length, 2);
     });
   });
 
@@ -225,6 +325,7 @@ void main() {
       expect(json['id'], 1);
       expect(json['name'], 'Cooling Trigger');
       expect(json['sensor'], 0);
+      expect(json['s_idx'], 0);
       expect(json['cond'], 0);
       expect(json['th'], 28.5);
 
@@ -233,6 +334,31 @@ void main() {
       expect(restored.name, 'Cooling Trigger');
       expect(restored.threshold, 28.5);
       expect(restored.targetRelay, 2);
+    });
+
+    test('AutomationRule preserves sensorIndex and supports Motion sensor (6)', () {
+      final rule = AutomationRule.fromJson({
+        'id': 4,
+        'en': true,
+        'name': 'Hallway Motion',
+        'sensor': 6,
+        's_idx': 2,
+        'cond': 0,
+        'th': 1.0,
+        'hyst': 0.0,
+        'action': 0,
+        'relay': 1,
+      });
+
+      expect(rule.sensor, 6);
+      expect(rule.sensorIndex, 2);
+      expect(rule.unit, '');
+      expect(rule.sensorLabel, 'Motion / Occupancy #3');
+      expect(rule.toJson()['s_idx'], 2);
+
+      final updated = rule.copyWith(sensorIndex: 3);
+      expect(updated.sensorIndex, 3);
+      expect(updated.sensorLabel, 'Motion / Occupancy #4');
     });
   });
 

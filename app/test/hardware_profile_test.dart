@@ -166,7 +166,7 @@ void main() {
       final in8266 = HardwareProfile.inputPinsFor(true);
       expect(in8266, contains(13));
       expect(in8266, contains(16));
-      expect(in8266, contains(17)); // A0
+      expect(in8266, isNot(contains(17))); // A0 is analog-only, not digital GPIO
 
       final adc8266 = HardwareProfile.adc1PinsFor(true);
       expect(adc8266, equals([17]));
@@ -177,13 +177,120 @@ void main() {
       expect(HardwareProfile.inputOnlyPinsFor(true), equals([17]));
       expect(HardwareProfile.inputOnlyPinsFor(false), equals([34, 35, 36, 39]));
 
-      expect(HardwareProfile.allPhysicalPinsFor(true).length, equals(12));
+      expect(HardwareProfile.allPhysicalPinsFor(true).length, equals(10));
+      expect(HardwareProfile.allPhysicalPinsFor(true), isNot(contains(1)));
+      expect(HardwareProfile.allPhysicalPinsFor(true), isNot(contains(3)));
       expect(HardwareProfile.allPhysicalPinsFor(false).length, equals(24));
 
       expect(HardwareProfile.pinLabel(12, true), contains('D6'));
       expect(HardwareProfile.pinLabel(14, true), contains('D5'));
       expect(HardwareProfile.pinLabel(17, true), contains('A0'));
       expect(HardwareProfile.pinLabel(255, true), equals('None / Disabled'));
+    });
+
+    test('Multi-instance HardwareProfile JSON serialization roundtrip preserves all slots and I2C addresses', () {
+      const profile = HardwareProfile(
+        boardName: 'SmartHome Custom Multi',
+        numRelays: 2,
+        channels: [
+          ChannelHardwareConfig(relayPin: 16, switchPin: 13),
+          ChannelHardwareConfig(relayPin: 17, switchPin: 14),
+        ],
+        climates: [
+          ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4, label: 'Hall'),
+          ClimateSensorSlotConfig(type: ClimateSensorType.bme280, pin: 255, i2cAddr: 0x77, label: 'Attic'),
+          ClimateSensorSlotConfig(type: ClimateSensorType.sht31, pin: 255, i2cAddr: 0x45, label: 'Outdoor'),
+        ],
+        lights: [
+          LightSensorSlotConfig(type: LightSensorType.bh1750, i2cAddr: 0x23, label: 'Window'),
+          LightSensorSlotConfig(type: LightSensorType.bh1750, i2cAddr: 0x5C, label: 'Porch'),
+        ],
+        motions: [
+          MotionSensorSlotConfig(type: MotionSensorType.pir, pin: 32, label: 'Door'),
+          MotionSensorSlotConfig(type: MotionSensorType.radar, pin: 33, label: 'Lobby'),
+        ],
+        probes: [
+          ProbeSensorSlotConfig(type: ProbeSensorType.ds18b20, pin: 15, label: 'Solar'),
+          ProbeSensorSlotConfig(type: ProbeSensorType.ds18b20, pin: 19, label: 'Sump'),
+        ],
+        ultrasonics: [
+          UltrasonicSensorSlotConfig(type: UltrasonicSensorType.hcsr04p, trigPin: 18, echoPin: 36, tankDepthCm: 200, tankAirGapCm: 15, label: 'Main Tank'),
+          UltrasonicSensorSlotConfig(type: UltrasonicSensorType.jsnsr04t, trigPin: 23, echoPin: 39, tankDepthCm: 120, tankAirGapCm: 10, label: 'Sump Tank'),
+        ],
+        mq2Sensors: [
+          Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35, label: 'Kitchen'),
+          Mq2SensorSlotConfig(enabled: true, analogPin: 255, digitalPin: 25, label: 'Garage'),
+        ],
+        sensorLimits: SensorLimitsConfig(
+          relays: 8,
+          climates: 4,
+          lights: 2,
+          motions: 6,
+          probes: 4,
+          ultrasonics: 4,
+          mq2s: 4,
+        ),
+        lcdEnabled: true,
+        lcdI2cAddr: 0x27,
+        i2cSdaPin: 21,
+        i2cSclPin: 22,
+        btnMultiPin: 0,
+      );
+
+      expect(profile.hasAnyI2cSensor, isTrue);
+      expect(profile.dhtType, equals(ClimateSensorType.dht22));
+      expect(profile.dhtPin, equals(4));
+
+      final restored = HardwareProfile.fromJson(profile.toJson());
+      expect(restored.climates.length, equals(3));
+      expect(restored.climates[1].type, equals(ClimateSensorType.bme280));
+      expect(restored.climates[1].i2cAddr, equals(0x77));
+      expect(restored.climates[2].label, equals('Outdoor'));
+
+      expect(restored.lights.length, equals(2));
+      expect(restored.lights[1].i2cAddr, equals(0x5C));
+      expect(restored.lights[1].label, equals('Porch'));
+
+      expect(restored.motions.length, equals(2));
+      expect(restored.motions[1].type, equals(MotionSensorType.radar));
+      expect(restored.motions[1].pin, equals(33));
+
+      expect(restored.probes.length, equals(2));
+      expect(restored.probes[1].pin, equals(19));
+
+      expect(restored.ultrasonics.length, equals(2));
+      expect(restored.ultrasonics[1].type, equals(UltrasonicSensorType.jsnsr04t));
+      expect(restored.ultrasonics[1].tankDepthCm, equals(120));
+
+      expect(restored.mq2Sensors.length, equals(2));
+      expect(restored.mq2Sensors[1].analogPin, equals(255));
+      expect(restored.mq2Sensors[1].digitalPin, equals(25));
+      expect(restored.mq2Sensors[1].label, equals('Garage'));
+    });
+
+    test('Legacy scalar JSON profile hydrates multi-sensor slots cleanly and respects disabled sensors', () {
+      final legacy = HardwareProfile.fromJson({
+        'board_name': 'Legacy Node',
+        'num_relays': 0,
+        'channels': [],
+        'dht': {'type': 0, 'pin': 255},
+        'light': {'type': 1},
+        'motion': {'type': 1, 'pin': 14},
+        'probe': {'type': 0, 'pin': 255},
+        'ultrasonic': {'type': 1, 'trig_pin': 12, 'echo_pin': 13, 'tank_depth': 180, 'air_gap': 20},
+        'mq2': {'enabled': false, 'analog_pin': 255, 'digital_pin': 255},
+      });
+
+      expect(legacy.climates, isEmpty);
+      expect(legacy.lights.length, equals(1));
+      expect(legacy.lights.first.type, equals(LightSensorType.bh1750));
+      expect(legacy.lights.first.i2cAddr, equals(0x23));
+      expect(legacy.motions.length, equals(1));
+      expect(legacy.motions.first.pin, equals(14));
+      expect(legacy.probes, isEmpty);
+      expect(legacy.ultrasonics.length, equals(1));
+      expect(legacy.ultrasonics.first.tankDepthCm, equals(180));
+      expect(legacy.mq2Sensors, isEmpty);
     });
   });
 }

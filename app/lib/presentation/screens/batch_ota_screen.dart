@@ -52,6 +52,8 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   // authoritative capacity check too.
   static const int _minimumFirmwareBytes = 10 * 1024;
   static const int _maximumFirmwareBytes = 0x1E0000;
+  // ESP8266 4M1M / 4M2M OTA slot safely caps around ~1 MB (~1,044,464 bytes).
+  static const int _maximumEsp8266FirmwareBytes = 1044464;
   static const Duration _rebootVerificationTimeout = Duration(seconds: 45);
   static const Duration _rebootPollInterval = Duration(seconds: 2);
 
@@ -133,6 +135,9 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
     if (bytes.length > _maximumFirmwareBytes) {
       return 'This image is larger than this controller’s OTA application partition.';
     }
+    if (name.contains('8266') && bytes.length > _maximumEsp8266FirmwareBytes) {
+      return 'This ESP8266 firmware image exceeds the 1 MB OTA flash slot.';
+    }
     if (bytes.length < 2 ||
         bytes[0] != 0xE9 ||
         bytes[1] == 0 ||
@@ -154,6 +159,9 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
       final targets = devices.where((d) => d.id == _selectedDeviceId).toList();
       if (targets.isNotEmpty) {
         final dev = targets.first;
+        if (dev.isEsp8266 && bytes.length > _maximumEsp8266FirmwareBytes) {
+          return 'This image exceeds ${dev.name}’s ESP8266 (~1 MB) OTA slot.';
+        }
         if (dev.isEsp8266 && name.contains('esp32') && !name.contains('esp8266')) {
           return 'The selected binary appears to be for ESP32, but target is ${dev.name} (ESP8266).';
         }
@@ -199,6 +207,43 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
         ),
       );
       return;
+    }
+
+    for (final dev in targetDevices) {
+      if (dev.isEsp8266 &&
+          _firmwareBytes!.length > _maximumEsp8266FirmwareBytes) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Selected binary exceeds ${dev.name} (ESP8266) 1 MB OTA limit.',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+        return;
+      }
+      if (dev.isEsp8266 && isEsp32Binary) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Selected binary is for ESP32, but target is ${dev.name} (ESP8266).',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+        return;
+      }
+      if (!dev.isEsp8266 && isEsp8266Binary) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Selected binary is for ESP8266, but target is ${dev.name} (ESP32).',
+            ),
+            backgroundColor: AppColors.danger,
+          ),
+        );
+        return;
+      }
     }
 
     final confirm = await showDialog<bool>(
@@ -404,6 +449,9 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceManagerProvider);
+    final validSelectedId = devices.any((d) => d.id == _selectedDeviceId)
+        ? _selectedDeviceId
+        : null;
 
     return Scaffold(
       appBar: AppBar(title: Text('Firmware OTA Manager')),
@@ -515,7 +563,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                 ),
                 SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
-                  initialValue: _selectedDeviceId,
+                  initialValue: validSelectedId,
                   isExpanded: true,
                   dropdownColor: AppColors.surfaceElevated,
                   decoration: const InputDecoration(
@@ -559,13 +607,18 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        _uploadStatusText,
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
+                      Expanded(
+                        child: Text(
+                          _uploadStatusText,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
                       ),
+                      const SizedBox(width: 8),
                       Text(
                         '${(_uploadProgress * 100).toStringAsFixed(0)}%',
                         style: TextStyle(
@@ -588,9 +641,9 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                     Divider(color: AppColors.cardBorder),
                     ...devices
                         .where(
-                          (d) => _selectedDeviceId == null
+                          (d) => validSelectedId == null
                               ? true
-                              : d.id == _selectedDeviceId,
+                              : d.id == validSelectedId,
                         )
                         .map((d) {
                           final status = _deviceFlashStatus[d.id] ?? 'Waiting';
@@ -603,23 +656,33 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  d.name,
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 13,
+                                Flexible(
+                                  child: Text(
+                                    d.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 13,
+                                    ),
                                   ),
                                 ),
-                                Text(
-                                  status,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                    color: isSuccess
-                                        ? AppColors.success
-                                        : (isFailed
-                                              ? AppColors.danger
-                                              : AppColors.accent),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    status,
+                                    textAlign: TextAlign.end,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: isSuccess
+                                          ? AppColors.success
+                                          : (isFailed
+                                                ? AppColors.danger
+                                                : AppColors.accent),
+                                    ),
                                   ),
                                 ),
                               ],

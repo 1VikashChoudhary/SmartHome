@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/automation_rule.dart';
@@ -883,24 +884,57 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     SmartDevice dev, [
     AutomationRule? existing,
   ]) {
+    if (dev.isGuest) return;
     final nameController = TextEditingController(
       text: existing?.name ?? 'Auto Rule ${_rules.length + 1}',
     );
     final hysteresisController = TextEditingController(
       text: (existing?.hysteresis ?? 0.5).toString(),
     );
-    var sensor = existing?.sensor ?? 0;
-    var condition = existing?.condition ?? 0;
+    var sensor = (existing?.sensor ?? 0).clamp(0, 6);
+    var sensorIndex = existing?.sensorIndex ?? 0;
+    var condition = (existing?.condition ?? 0).clamp(0, 1);
     var threshold = existing?.threshold ?? 30.0;
-    var relay = existing?.targetRelay ?? 0;
-    var action = existing?.action ?? 0;
+    final rawRelay = existing?.targetRelay ?? (dev.relays.isEmpty ? 255 : 0);
+    var relay = dev.relays.isEmpty
+        ? 255
+        : (rawRelay == 255 || (rawRelay >= 0 && rawRelay < dev.relays.length)
+              ? rawRelay
+              : 0);
+    var action = (existing?.action ?? 0).clamp(0, 1);
+
+    List<String> slotLabelsFor(int sensorType) {
+      final t = dev.telemetry;
+      switch (sensorType) {
+        case 0:
+        case 1:
+          return t.climates.map((c) => c.displayName).toList();
+        case 2:
+          return t.mq2s.map((g) => g.displayName).toList();
+        case 3:
+          return t.lights.map((l) => l.displayName).toList();
+        case 4:
+          return t.probes.map((p) => p.displayName).toList();
+        case 5:
+          return t.tanks.map((u) => u.displayName).toList();
+        case 6:
+          return t.motions.map((m) => m.displayName).toList();
+        default:
+          return const [];
+      }
+    }
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => Container(
+        builder: (sheetContext, setSheetState) {
+          final slotLabels = slotLabelsFor(sensor);
+          final slotCount = math.max(slotLabels.length, sensorIndex + 1);
+          final clampedSensorIdx = sensorIndex.clamp(0, slotCount - 1);
+
+          return Container(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(sheetContext).size.height * 0.9,
           ),
@@ -958,11 +992,13 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                     DropdownMenuItem(value: 3, child: Text('Ambient Light (Lux)')),
                     DropdownMenuItem(value: 4, child: Text('Water Temp Probe (°C)')),
                     DropdownMenuItem(value: 5, child: Text('Water Tank Level (%)')),
+                    DropdownMenuItem(value: 6, child: Text('Motion / Occupancy (1=Motion, 0=Clear)')),
                   ],
                   onChanged: (value) {
                     if (value == null) return;
                     setSheetState(() {
                       sensor = value;
+                      sensorIndex = 0;
                       switch (value) {
                         case 0:
                           threshold = 30.0;
@@ -988,10 +1024,38 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           threshold = 20.0;
                           hysteresisController.text = '3';
                           break;
+                        case 6:
+                          threshold = condition == 1 ? 0.0 : 1.0;
+                          hysteresisController.text = '0';
+                          break;
                       }
                     });
                   },
                 ),
+                if (slotCount > 1) ...[
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    key: ValueKey('rule_sidx_${sensor}_$clampedSensorIdx'),
+                    initialValue: clampedSensorIdx,
+                    decoration: const InputDecoration(
+                      labelText: 'Sensor Instance',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: List.generate(
+                      slotCount,
+                      (idx) => DropdownMenuItem(
+                        value: idx,
+                        child: Text(
+                          idx < slotLabels.length
+                              ? slotLabels[idx]
+                              : 'Sensor #${idx + 1}',
+                        ),
+                      ),
+                    ),
+                    onChanged: (value) =>
+                        setSheetState(() => sensorIndex = value ?? sensorIndex),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   initialValue: condition,
@@ -1009,8 +1073,12 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                       child: Text('Falls to / below threshold (≤)'),
                     ),
                   ],
-                  onChanged: (value) =>
-                      setSheetState(() => condition = value ?? condition),
+                  onChanged: (value) => setSheetState(() {
+                    condition = value ?? condition;
+                    if (sensor == 6) {
+                      threshold = condition == 1 ? 0.0 : 1.0;
+                    }
+                  }),
                 ),
                 const SizedBox(height: 16),
                 Builder(
@@ -1052,15 +1120,23 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                       maxVal = 100.0;
                       divisionsVal = 100;
                       decimals = 0;
+                    } else if (sensor == 6) {
+                      unitStr = '';
+                      maxVal = 1.0;
+                      divisionsVal = 1;
+                      decimals = 0;
                     }
 
                     final clampedTh = threshold.clamp(0.0, maxVal);
+                    final thLabel = sensor == 6
+                        ? 'Motion Threshold: ${clampedTh >= 0.5 ? "1 (Detected)" : "0 (Clear)"}'
+                        : 'Threshold: ${clampedTh.toStringAsFixed(decimals)} $unitStr';
 
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Threshold: ${clampedTh.toStringAsFixed(decimals)} $unitStr',
+                          thLabel,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             color: AppColors.textPrimary,
@@ -1149,6 +1225,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         );
                         return;
                       }
+                      final maxThreshold = sensor == 0
+                          ? 60.0
+                          : (sensor == 1 || sensor == 5
+                                ? 100.0
+                                : (sensor == 2
+                                      ? (dev.telemetry.gasMax > 0
+                                            ? dev.telemetry.gasMax.toDouble()
+                                            : (dev.isEsp8266 ? 1023.0 : 4095.0))
+                                      : (sensor == 3
+                                            ? 2000.0
+                                            : (sensor == 6 ? 1.0 : 100.0))));
                       final rule = AutomationRule(
                         id: existing?.id ?? 0,
                         enabled: existing?.enabled ?? true,
@@ -1156,8 +1243,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                             ? 'Auto Rule'
                             : nameController.text.trim(),
                         sensor: sensor,
+                        sensorIndex: clampedSensorIdx,
                         condition: condition,
-                        threshold: threshold,
+                        threshold: threshold.clamp(0.0, maxThreshold),
                         hysteresis: hysteresis,
                         targetRelay: relay,
                         action: action,
@@ -1190,7 +1278,8 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
               ],
             ),
           ),
-        ),
+        );
+        },
       ),
     );
   }
@@ -1201,11 +1290,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     ScheduledAlarm? existing,
     int initialMode = 0,
   }) {
-    var mode = existing?.mode ?? initialMode;
-    var scheduleType = existing?.type ?? 1;
-    var dayOfWeek = existing?.dayOfWeek ?? 1;
-    var action = existing?.action ?? 0;
-    var relay = existing?.targetRelay ?? 0;
+    if (dev.isGuest) return;
+    var mode = (existing?.mode ?? initialMode).clamp(0, 1);
+    var scheduleType = (existing?.type ?? 1).clamp(0, 4);
+    var dayOfWeek = (existing?.dayOfWeek ?? 1).clamp(0, 6);
+    var action = (dev.relays.isEmpty && existing == null)
+        ? 3
+        : (existing?.action ?? 0).clamp(0, 5);
+    final rawRelay = existing?.targetRelay ?? (dev.relays.isEmpty ? 255 : 0);
+    var relay = dev.relays.isEmpty
+        ? 255
+        : ((rawRelay >= 0 && rawRelay < dev.relays.length) ? rawRelay : 0);
     var time = TimeOfDay(
       hour: existing?.hour ?? 8,
       minute: existing?.minute ?? 0,
@@ -1412,29 +1507,52 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                       action = value ?? action;
                       if (action > 2) {
                         relay = 255;
-                      } else if (relay == 255) {
+                      } else if (relay == 255 && dev.relays.isNotEmpty) {
                         relay = 0;
                       }
                     }),
                   ),
                   if (actionNeedsRelay) ...[
                     const SizedBox(height: 12),
-                    DropdownButtonFormField<int>(
-                      initialValue: relay,
-                      decoration: const InputDecoration(
-                        labelText: 'Target relay',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: List.generate(
-                        dev.relays.length,
-                        (index) => DropdownMenuItem(
-                          value: index,
-                          child: Text(_relayLabel(dev, index)),
+                    if (dev.relays.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.warning.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: AppColors.warning.withValues(alpha: 0.45),
+                          ),
                         ),
+                        child: const Text(
+                          'No relay channels on this Sensor Node. Choose "Sound buzzer" or "Turn ALL relays ON/OFF".',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppColors.warning,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<int>(
+                        initialValue: (relay >= 0 && relay < dev.relays.length)
+                            ? relay
+                            : 0,
+                        decoration: const InputDecoration(
+                          labelText: 'Target relay',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: List.generate(
+                          dev.relays.length,
+                          (index) => DropdownMenuItem(
+                            value: index,
+                            child: Text(_relayLabel(dev, index)),
+                          ),
+                        ),
+                        onChanged: (value) =>
+                            setSheetState(() => relay = value ?? relay),
                       ),
-                      onChanged: (value) =>
-                          setSheetState(() => relay = value ?? relay),
-                    ),
                   ],
                   const SizedBox(height: 22),
                   SizedBox(
@@ -1445,6 +1563,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         foregroundColor: Colors.white,
                       ),
                       onPressed: () async {
+                        if (actionNeedsRelay && dev.relays.isEmpty) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Sensor Node has no relays. Select "Sound buzzer" or "Turn ALL relays ON/OFF".',
+                              ),
+                              backgroundColor: AppColors.warning,
+                            ),
+                          );
+                          return;
+                        }
                         final hours =
                             int.tryParse(hoursController.text.trim()) ?? -1;
                         final minutes =
@@ -1622,8 +1751,8 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
           ),
         ),
       ),
-      // Only show Floating Action Button when there ARE active rules (NO MORE DUPLICATE BUTTONS IN EMPTY STATE!)
-      floatingActionButton: (dev != null && hasItemsInCurrentTab)
+      // Only show Floating Action Button when there ARE active rules and Admin access
+      floatingActionButton: (dev != null && !dev.isGuest && hasItemsInCurrentTab)
           ? FloatingActionButton.extended(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
@@ -1686,14 +1815,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                                   value: d.id,
                                   child: Row(
                                     children: [
-                                      Text(
-                                        d.name,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13,
-                                          color: AppColors.textPrimary,
+                                      Flexible(
+                                        child: Text(
+                                          d.name,
+                                          maxLines: 1,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 13,
+                                            color: AppColors.textPrimary,
+                                          ),
+                                          overflow: TextOverflow.ellipsis,
                                         ),
-                                        overflow: TextOverflow.ellipsis,
                                       ),
                                       if (d.room.isNotEmpty) ...[
                                         const SizedBox(width: 6),
@@ -1722,6 +1854,45 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                     ),
                   ),
                 ),
+
+                if (dev.isGuest)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 9,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(
+                            Icons.visibility_outlined,
+                            size: 16,
+                            color: AppColors.warning,
+                          ),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'View only: Administrator credentials required to create, toggle, or delete rules & timers.',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: AppColors.warning,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Tab Content
                 Expanded(
@@ -1797,7 +1968,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   'Create Sensor Rule',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
-                onPressed: () => _showRuleEditor(context, dev),
+                onPressed: dev.isGuest
+                    ? null
+                    : () => _showRuleEditor(context, dev),
               ),
             ],
           ),
@@ -1814,28 +1987,64 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
 
         Color sColor = AppColors.tempAmber;
         IconData sIcon = Icons.thermostat;
-        String liveSensorValue =
-            '${dev.telemetry.temperature.toStringAsFixed(1)} °C';
+        final sIdx = rule.sensorIndex;
+        final tel = dev.telemetry;
+        final tempVal = (sIdx >= 0 && sIdx < tel.climates.length)
+            ? tel.climates[sIdx].temperature
+            : (sIdx == 0 ? tel.temperature : null);
+        String liveSensorValue = tempVal != null
+            ? '${tempVal.toStringAsFixed(1)} °C'
+            : 'N/A';
         if (rule.sensor == 1) {
           sColor = AppColors.humCyan;
           sIcon = Icons.water_drop;
-          liveSensorValue = '${dev.telemetry.humidity.toStringAsFixed(1)} %';
+          final humVal = (sIdx >= 0 && sIdx < tel.climates.length)
+              ? tel.climates[sIdx].humidity
+              : (sIdx == 0 ? tel.humidity : null);
+          liveSensorValue = humVal != null
+              ? '${humVal.toStringAsFixed(1)} %'
+              : 'N/A';
         } else if (rule.sensor == 2) {
           sColor = AppColors.danger;
           sIcon = Icons.warning;
-          liveSensorValue = '${dev.telemetry.gasRaw} ADC';
+          final gasVal = (sIdx >= 0 && sIdx < tel.mq2s.length)
+              ? tel.mq2s[sIdx].raw
+              : (sIdx == 0 ? tel.gasRaw : null);
+          liveSensorValue = gasVal != null ? '$gasVal ADC' : 'N/A';
         } else if (rule.sensor == 3) {
           sColor = Colors.amber;
           sIcon = Icons.wb_sunny;
-          liveSensorValue = '${dev.telemetry.lux.toStringAsFixed(1)} lx';
+          final luxVal = (sIdx >= 0 && sIdx < tel.lights.length)
+              ? tel.lights[sIdx].lux
+              : (sIdx == 0 ? tel.lux : null);
+          liveSensorValue = luxVal != null
+              ? '${luxVal.toStringAsFixed(1)} lx'
+              : 'N/A';
         } else if (rule.sensor == 4) {
           sColor = Colors.cyan;
           sIcon = Icons.device_thermostat;
-          liveSensorValue = '${dev.telemetry.probeTemp.toStringAsFixed(1)} °C';
+          final probeVal = (sIdx >= 0 && sIdx < tel.probes.length)
+              ? tel.probes[sIdx].temperature
+              : (sIdx == 0 ? tel.probeTemp : null);
+          liveSensorValue = probeVal != null
+              ? '${probeVal.toStringAsFixed(1)} °C'
+              : 'N/A';
         } else if (rule.sensor == 5) {
           sColor = Colors.blue;
           sIcon = Icons.waves;
-          liveSensorValue = '${dev.telemetry.tankLevelPct} %';
+          final tankVal = (sIdx >= 0 && sIdx < tel.tanks.length)
+              ? tel.tanks[sIdx].levelPct
+              : (sIdx == 0 ? tel.tankLevelPct : null);
+          liveSensorValue = tankVal != null ? '$tankVal %' : 'N/A';
+        } else if (rule.sensor == 6) {
+          sColor = AppColors.warning;
+          sIcon = Icons.directions_run;
+          final motionDet = (sIdx >= 0 && sIdx < tel.motions.length)
+              ? tel.motions[sIdx].detected
+              : (sIdx == 0 ? tel.motionDetected : null);
+          liveSensorValue = motionDet == null
+              ? 'N/A'
+              : (motionDet ? 'MOTION' : 'CLEAR');
         }
 
         final isTriggered =
@@ -1927,7 +2136,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            'IF ${rule.sensorLabel} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed(rule.sensor == 2 ? 0 : 1)}${rule.unit}  •  Live: $liveSensorValue',
+                            'IF ${rule.sensorLabel} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed((rule.sensor == 2 || rule.sensor == 6) ? 0 : 1)}${rule.unit}  •  Live: $liveSensorValue',
                             style: TextStyle(
                               fontSize: 12,
                               color: AppColors.textSecondary,
@@ -1939,7 +2148,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                     Switch(
                       value: rule.enabled,
                       activeThumbColor: AppColors.success,
-                      onChanged: (v) => _toggleRule(dev, rule, v),
+                      onChanged: dev.isGuest
+                          ? null
+                          : (v) => _toggleRule(dev, rule, v),
                     ),
                   ],
                 ),
@@ -1949,25 +2160,31 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          rule.action == 0 ? Icons.power : Icons.power_off,
-                          size: 16,
-                          color: rule.action == 0
-                              ? AppColors.success
-                              : AppColors.danger,
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          'THEN ${rule.actionLabel}: $rName',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12,
-                            color: AppColors.textPrimary,
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(
+                            rule.action == 0 ? Icons.power : Icons.power_off,
+                            size: 16,
+                            color: rule.action == 0
+                                ? AppColors.success
+                                : AppColors.danger,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              'THEN ${rule.actionLabel}: $rName',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     Row(
                       mainAxisSize: MainAxisSize.min,
@@ -1975,16 +2192,22 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         IconButton(
                           tooltip: 'Edit rule',
                           icon: const Icon(Icons.edit_outlined, size: 20),
-                          onPressed: () => _showRuleEditor(context, dev, rule),
+                          onPressed: dev.isGuest
+                              ? null
+                              : () => _showRuleEditor(context, dev, rule),
                         ),
                         IconButton(
                           tooltip: 'Delete rule',
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.delete_outline,
                             size: 20,
-                            color: AppColors.danger,
+                            color: dev.isGuest
+                                ? AppColors.textMuted
+                                : AppColors.danger,
                           ),
-                          onPressed: () => _deleteRule(dev, rule),
+                          onPressed: dev.isGuest
+                              ? null
+                              : () => _deleteRule(dev, rule),
                         ),
                       ],
                     ),
@@ -2060,7 +2283,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   'Add Hardware Timer',
                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
-                onPressed: () => _showTimerEditor(context, dev),
+                onPressed: dev.isGuest
+                    ? null
+                    : () => _showTimerEditor(context, dev),
               ),
             ],
           ),
@@ -2175,21 +2400,27 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 Switch(
                   value: a.enabled,
                   activeThumbColor: AppColors.success,
-                  onChanged: (v) => _toggleAlarm(dev, a, v),
+                  onChanged: dev.isGuest
+                      ? null
+                      : (v) => _toggleAlarm(dev, a, v),
                 ),
                 IconButton(
                   tooltip: 'Edit timer',
                   icon: const Icon(Icons.edit_outlined, size: 20),
-                  onPressed: () => _showTimerEditor(context, dev, existing: a),
+                  onPressed: dev.isGuest
+                      ? null
+                      : () => _showTimerEditor(context, dev, existing: a),
                 ),
                 IconButton(
                   tooltip: 'Delete timer',
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.delete_outline,
-                    color: AppColors.danger,
+                    color: dev.isGuest
+                        ? AppColors.textMuted
+                        : AppColors.danger,
                     size: 20,
                   ),
-                  onPressed: () => _deleteAlarm(dev, a),
+                  onPressed: dev.isGuest ? null : () => _deleteAlarm(dev, a),
                 ),
               ],
             ),

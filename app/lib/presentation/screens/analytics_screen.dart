@@ -152,52 +152,57 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     return null;
   }
 
-  Widget _deviceSelector(List<SmartDevice> devices) => _surface(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'VIEW',
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w800,
-            color: AppColors.textMuted,
-            letterSpacing: 0.7,
-          ),
-        ),
-        const SizedBox(height: 6),
-        DropdownButton<String?>(
-          value: _selectedDeviceId,
-          isExpanded: true,
-          underline: const SizedBox.shrink(),
-          items: [
-            const DropdownMenuItem<String?>(
-              value: null,
-              child: Text('All devices overview'),
+  Widget _deviceSelector(List<SmartDevice> devices) {
+    final validSelectedId = devices.any((d) => d.id == _selectedDeviceId)
+        ? _selectedDeviceId
+        : null;
+    return _surface(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'VIEW',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textMuted,
+              letterSpacing: 0.7,
             ),
-            ...devices.map(
-              (device) => DropdownMenuItem<String?>(
-                value: device.id,
-                child: Row(
-                  children: [
-                    _statusDot(device),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${device.name} · ${device.room}',
-                        overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          DropdownButton<String?>(
+            value: validSelectedId,
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('All devices overview'),
+              ),
+              ...devices.map(
+                (device) => DropdownMenuItem<String?>(
+                  value: device.id,
+                  child: Row(
+                    children: [
+                      _statusDot(device),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '${device.name} · ${device.room}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
-          onChanged: (value) => _selectDevice(value),
-        ),
-      ],
-    ),
-  );
+            ],
+            onChanged: (value) => _selectDevice(value),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _allDevices(List<SmartDevice> devices) {
     if (devices.isEmpty) {
@@ -236,7 +241,109 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   }
 
   Widget _deviceOverviewCard(SmartDevice device) {
-    final showClimate = device.isOnline && !device.telemetry.dhtFault;
+    final telemetry = device.telemetry;
+    final enabledRelays = device.relays.where((r) => r.enabled).toList();
+    final chips = <Widget>[];
+    if (device.isOnline) {
+      if (!telemetry.dhtEnabled) {
+        chips.add(
+          _valueChip(
+            Icons.thermostat_outlined,
+            'Climate disabled',
+            AppColors.textMuted,
+          ),
+        );
+      } else if (telemetry.dhtFault) {
+        chips.add(
+          _valueChip(
+            Icons.sensors_off_rounded,
+            'DHT Fault',
+            AppColors.danger,
+          ),
+        );
+      } else {
+        chips.add(
+          _valueChip(
+            Icons.thermostat_rounded,
+            '${telemetry.temperature.toStringAsFixed(1)} °C',
+            AppColors.tempAmber,
+          ),
+        );
+        chips.add(
+          _valueChip(
+            Icons.water_drop_rounded,
+            '${telemetry.humidity.toStringAsFixed(0)} %',
+            AppColors.cyan,
+          ),
+        );
+      }
+
+      if (telemetry.gasWarming) {
+        chips.add(
+          _valueChip(
+            Icons.hourglass_top_rounded,
+            'MQ-2 warming',
+            AppColors.warning,
+          ),
+        );
+      } else {
+        chips.add(
+          _valueChip(
+            Icons.local_fire_department_rounded,
+            '${telemetry.gasRaw} ADC',
+            telemetry.gasAlarm ? AppColors.danger : AppColors.success,
+          ),
+        );
+      }
+
+      if (telemetry.pressureEnabled && telemetry.pressure > 300) {
+        chips.add(
+          _valueChip(
+            Icons.compress_rounded,
+            '${telemetry.pressure.toStringAsFixed(1)} hPa',
+            AppColors.primary,
+          ),
+        );
+      }
+      if (telemetry.luxEnabled) {
+        chips.add(
+          _valueChip(
+            Icons.light_mode_rounded,
+            '${telemetry.lux.toStringAsFixed(0)} lx',
+            AppColors.accent,
+          ),
+        );
+      }
+      if (telemetry.motionEnabled) {
+        chips.add(
+          _valueChip(
+            Icons.directions_run_rounded,
+            telemetry.motionDetected ? 'Motion' : 'Clear',
+            telemetry.motionDetected ? AppColors.warning : AppColors.textSecondary,
+          ),
+        );
+      }
+      if (telemetry.tankEnabled) {
+        chips.add(
+          _valueChip(
+            Icons.water_damage_rounded,
+            'Tank ${telemetry.tankLevelPct}%',
+            AppColors.cyan,
+          ),
+        );
+      }
+
+      chips.add(
+        _valueChip(
+          enabledRelays.isEmpty ? Icons.sensors_rounded : Icons.power_rounded,
+          enabledRelays.isEmpty
+              ? 'Sensor Node'
+              : '${enabledRelays.where((r) => r.state).length}/${enabledRelays.length} active',
+          AppColors.primary,
+        ),
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -268,45 +375,13 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
             'No current reading available',
             style: TextStyle(color: AppColors.textMuted, fontSize: 13),
           )
-        else if (device.telemetry.dhtFault)
-          Text(
-            'DHT22 sensor fault',
-            style: TextStyle(
-              color: AppColors.danger,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-            ),
-          )
         else
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: [
-              _valueChip(
-                Icons.thermostat_rounded,
-                '${device.telemetry.temperature.toStringAsFixed(1)} °C',
-                AppColors.tempAmber,
-              ),
-              _valueChip(
-                Icons.water_drop_rounded,
-                '${device.telemetry.humidity.toStringAsFixed(0)} %',
-                AppColors.cyan,
-              ),
-              _valueChip(
-                Icons.local_fire_department_rounded,
-                '${device.telemetry.gasRaw} ADC',
-                device.telemetry.gasAlarm
-                    ? AppColors.danger
-                    : AppColors.success,
-              ),
-              _valueChip(
-                Icons.power_rounded,
-                '${device.relays.where((r) => r.state).length}/${device.relays.length} active',
-                AppColors.primary,
-              ),
-            ],
+            children: chips,
           ),
-        if (showClimate && device.telemetry.gasAlarm) ...[
+        if (device.isOnline && telemetry.gasAlarm) ...[
           const SizedBox(height: 8),
           Text(
             'Gas/smoke alert active',
@@ -374,7 +449,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           AppColors.tempAmber,
         ),
         const SizedBox(height: 8),
-        if (telemetry.dhtFault)
+        if (!telemetry.dhtEnabled)
+          _surface(
+            child: _notice(
+              Icons.thermostat_outlined,
+              'Climate sensor disabled',
+              'DHT temperature and humidity monitoring is disabled in Hardware Profile.',
+              AppColors.textMuted,
+            ),
+          )
+        else if (telemetry.dhtFault)
           _surface(
             child: _notice(
               Icons.sensors_off_rounded,
@@ -463,7 +547,8 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                       ],
                     ),
                     if (telemetry.gasAlarm ||
-                        (!telemetry.dhtFault &&
+                        (telemetry.dhtEnabled &&
+                            !telemetry.dhtFault &&
                             telemetry.tempThreshold > 0 &&
                             telemetry.temperature >=
                                 telemetry.tempThreshold)) ...[
@@ -509,6 +594,113 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                   ],
                 ),
         ),
+        if ((telemetry.pressureEnabled && telemetry.pressure > 300) ||
+            telemetry.climates.length > 1 ||
+            telemetry.mq2s.length > 1 ||
+            telemetry.luxEnabled ||
+            telemetry.motionEnabled ||
+            telemetry.probeEnabled ||
+            telemetry.tankEnabled ||
+            telemetry.lights.isNotEmpty ||
+            telemetry.motions.isNotEmpty ||
+            telemetry.probes.isNotEmpty ||
+            telemetry.tanks.isNotEmpty) ...[
+          const SizedBox(height: 14),
+          _sectionTitle(
+            Icons.sensors_rounded,
+            'Extended Sensors',
+            AppColors.cyan,
+          ),
+          const SizedBox(height: 8),
+          _surface(
+            child: Wrap(
+              spacing: 22,
+              runSpacing: 16,
+              children: [
+                if (telemetry.pressureEnabled && telemetry.pressure > 300)
+                  _detail(
+                    'Barometric Pressure',
+                    '${telemetry.pressure.toStringAsFixed(1)} hPa',
+                  ),
+                for (int i = 1; i < telemetry.climates.length; i++)
+                  if (telemetry.climates[i].enabled)
+                    _detail(
+                      telemetry.climates[i].displayName,
+                      telemetry.climates[i].fault
+                          ? 'Fault / Disconnected'
+                          : '${telemetry.climates[i].temperature.toStringAsFixed(1)} °C • ${telemetry.climates[i].humidity.toStringAsFixed(0)} %'
+                              '${telemetry.climates[i].barometer && telemetry.climates[i].pressure > 300 ? " • ${telemetry.climates[i].pressure.toStringAsFixed(1)} hPa" : ""}',
+                    ),
+                for (int i = 1; i < telemetry.mq2s.length; i++)
+                  if (telemetry.mq2s[i].enabled)
+                    _detail(
+                      telemetry.mq2s[i].displayName,
+                      '${telemetry.mq2s[i].raw} ADC (${telemetry.mq2s[i].alarm ? "ALERT" : "Normal"})',
+                    ),
+                if (telemetry.lights.isNotEmpty)
+                  for (final l in telemetry.lights.where((x) => x.enabled))
+                    _detail(
+                      telemetry.lights.length > 1 || l.label.isNotEmpty
+                          ? l.displayName
+                          : 'Ambient Light',
+                      '${l.lux.toStringAsFixed(0)} lx',
+                    )
+                else if (telemetry.luxEnabled)
+                  _detail(
+                    'Ambient Light',
+                    '${telemetry.lux.toStringAsFixed(0)} lx',
+                  ),
+                if (telemetry.motions.isNotEmpty)
+                  for (final m in telemetry.motions.where((x) => x.enabled))
+                    _detail(
+                      telemetry.motions.length > 1 || m.label.isNotEmpty
+                          ? m.displayName
+                          : 'Motion / PIR',
+                      m.detected
+                          ? 'MOTION DETECTED'
+                          : 'Clear (${m.ageSeconds}s ago)',
+                    )
+                else if (telemetry.motionEnabled)
+                  _detail(
+                    'Motion / PIR',
+                    telemetry.motionDetected
+                        ? 'MOTION DETECTED'
+                        : 'Clear (${telemetry.motionAgeSeconds}s ago)',
+                  ),
+                if (telemetry.probes.isNotEmpty)
+                  for (final p in telemetry.probes.where((x) => x.enabled))
+                    _detail(
+                      telemetry.probes.length > 1 || p.label.isNotEmpty
+                          ? p.displayName
+                          : 'Water Probe',
+                      p.fault || p.temperature <= -55
+                          ? 'Fault / Disconnected'
+                          : '${p.temperature.toStringAsFixed(1)} °C',
+                    )
+                else if (telemetry.probeEnabled)
+                  _detail(
+                    'Water Probe',
+                    telemetry.probeFault || telemetry.probeTemp <= -55
+                        ? 'Fault / Disconnected'
+                        : '${telemetry.probeTemp.toStringAsFixed(1)} °C',
+                  ),
+                if (telemetry.tanks.isNotEmpty)
+                  for (final u in telemetry.tanks.where((x) => x.enabled))
+                    _detail(
+                      telemetry.tanks.length > 1 || u.label.isNotEmpty
+                          ? u.displayName
+                          : 'Water Tank Level',
+                      '${u.levelPct}% (${u.distanceCm.toStringAsFixed(1)} cm)',
+                    )
+                else if (telemetry.tankEnabled)
+                  _detail(
+                    'Water Tank Level',
+                    '${telemetry.tankLevelPct}% (${telemetry.distanceCm.toStringAsFixed(1)} cm)',
+                  ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 14),
         _sectionTitle(
           Icons.memory_rounded,
@@ -544,7 +736,9 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         _surface(
           child: device.relays.isEmpty
               ? Text(
-                  'Relay status has not been reported by this controller.',
+                  device.numRelays == 0
+                      ? 'Sensor Node active (0 relays configured).'
+                      : 'Relay status has not been reported by this controller.',
                   style: TextStyle(color: AppColors.textMuted),
                 )
               : Column(
@@ -555,12 +749,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                           child: Row(
                             children: [
                               Icon(
-                                relay.state
-                                    ? Icons.power_rounded
-                                    : Icons.power_off_rounded,
-                                color: relay.state
-                                    ? AppColors.success
-                                    : AppColors.textMuted,
+                                !relay.enabled
+                                    ? Icons.block_rounded
+                                    : (relay.state
+                                          ? Icons.power_rounded
+                                          : Icons.power_off_rounded),
+                                color: !relay.enabled
+                                    ? AppColors.textMuted
+                                    : (relay.state
+                                          ? AppColors.success
+                                          : AppColors.textMuted),
                                 size: 19,
                               ),
                               const SizedBox(width: 10),
@@ -569,17 +767,23 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                                   relay.name,
                                   style: TextStyle(
                                     fontWeight: FontWeight.w700,
-                                    color: AppColors.textPrimary,
+                                    color: relay.enabled
+                                        ? AppColors.textPrimary
+                                        : AppColors.textMuted,
                                   ),
                                 ),
                               ),
                               Text(
-                                relay.state ? 'ON' : 'OFF',
+                                !relay.enabled
+                                    ? 'DISABLED'
+                                    : (relay.state ? 'ON' : 'OFF'),
                                 style: TextStyle(
                                   fontWeight: FontWeight.w800,
-                                  color: relay.state
-                                      ? AppColors.success
-                                      : AppColors.textSecondary,
+                                  color: !relay.enabled
+                                      ? AppColors.textMuted
+                                      : (relay.state
+                                            ? AppColors.success
+                                            : AppColors.textSecondary),
                                 ),
                               ),
                             ],

@@ -70,6 +70,7 @@ class DeviceWebSocketClient {
 
       _subscription = _channel!.stream.listen(
         (message) {
+          if (_isDisposed) return;
           try {
             final decoded = jsonDecode(message as String);
             if (decoded is Map) {
@@ -105,7 +106,9 @@ class DeviceWebSocketClient {
   void _handleDisconnect() {
     if (_isConnected) {
       _isConnected = false;
-      onConnectionChange(false);
+      if (!_isDisposed) {
+        onConnectionChange(false);
+      }
     }
     _disconnectInternal();
     if (!_isDisposed && !_authFailed) {

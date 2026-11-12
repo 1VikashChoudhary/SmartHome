@@ -41,7 +41,7 @@ class LuxurySegmentedSelector<T> extends StatelessWidget {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 curve: Curves.easeInOut,
-                padding: const EdgeInsets.symmetric(vertical: 10),
+                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                 decoration: BoxDecoration(
                   color: isSelected
                       ? (isDark ? AppColors.primary : Colors.white)
@@ -72,14 +72,19 @@ class LuxurySegmentedSelector<T> extends StatelessWidget {
                       ),
                       const SizedBox(width: 5),
                     ],
-                    Text(
-                      label,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                        color: isSelected
-                            ? (isDark ? Colors.white : AppColors.primary)
-                            : AppColors.textSecondary,
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                          color: isSelected
+                              ? (isDark ? Colors.white : AppColors.primary)
+                              : AppColors.textSecondary,
+                        ),
                       ),
                     ),
                   ],

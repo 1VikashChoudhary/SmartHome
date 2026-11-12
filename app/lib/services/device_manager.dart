@@ -98,11 +98,16 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   Timer? _periodicSyncTimer;
   Timer? _countdownTickerTimer;
   bool _foregroundSyncEnabled = true;
+  bool _disposed = false;
+
+  bool get _isAlive => !_disposed && ref.mounted;
 
   @override
   List<SmartDevice> build() {
+    _disposed = false;
     ApiClient.onUnauthorized = _handleUnauthorizedHost;
     ref.onDispose(() {
+      _disposed = true;
       _periodicSyncTimer?.cancel();
       _periodicSyncTimer = null;
       _countdownTickerTimer?.cancel();
@@ -121,6 +126,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _handleUnauthorizedHost(String host) {
+    if (!_isAlive) return;
     final clean = sanitizeHost(host).toLowerCase();
     final idx = state.indexWhere((d) {
       final devHost = sanitizeHost(d.ip).split(':').first.toLowerCase();
@@ -132,6 +138,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _handleDeviceAuthError(String deviceId, {bool promptUser = true}) {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -155,11 +162,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void requestLoginPrompt(String deviceId) {
+    if (!_isAlive) return;
     ref.read(authPromptProvider.notifier).prompt(deviceId);
   }
 
   Future<void> _init() async {
     final saved = await _storage.loadDevices();
+    if (!_isAlive) return;
     for (final device in saved) {
       ApiClient.registerDeviceUsername(device.ip, device.authUsername);
     }
@@ -170,6 +179,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     // live Dashboard/Controllers data without the former 1-second flood.
     if (_foregroundSyncEnabled && saved.isNotEmpty) {
       await startForegroundSync();
+      if (!_isAlive) return;
     }
 
     // Perform auto-discovery only if no devices exist yet.
@@ -180,17 +190,20 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Run network scan on demand to discover new ESPs or update IPs
   Future<void> scanForDevices() async {
+    if (!_isAlive) return;
     if (ref.read(isScanningProvider)) return;
     ref.read(isScanningProvider.notifier).setScanning(true);
 
     try {
       await _discovery.discoverAll(
         onDeviceFound: (discovered) {
-          _handleDiscoveredDevice(discovered);
+          if (_isAlive) _handleDiscoveredDevice(discovered);
         },
       );
     } finally {
-      ref.read(isScanningProvider.notifier).setScanning(false);
+      if (_isAlive) {
+        ref.read(isScanningProvider.notifier).setScanning(false);
+      }
     }
   }
 
@@ -198,10 +211,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// contains relay state, so this deliberately avoids a second `/api/relays`
   /// request per device.
   Future<void> refreshAllDevices() async {
+    if (!_isAlive) return;
     final devices = state.where((dev) => dev.ip.isNotEmpty).toList();
     // Two requests at a time keeps a large installation responsive without
     // creating a Wi-Fi burst or overwhelming the phone radio.
     for (var start = 0; start < devices.length; start += 2) {
+      if (!_isAlive) return;
       final end = (start + 2).clamp(0, devices.length).toInt();
       await Future.wait(devices.sublist(start, end).map(_refreshDeviceStatus));
     }
@@ -213,17 +228,20 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String? username,
     String? password,
   }) async {
+    if (!_isAlive) return false;
     final ip = sanitizeHost(rawIp);
     if (ip.isEmpty) return false;
 
     final client = ApiClient(defaultUsername: username);
     final statusJson = await client.fetchStatus(ip, password: password);
+    if (!_isAlive) return false;
     if (statusJson != null) {
       final dev = SmartDevice.fromStatus(statusJson, ip);
       _handleDiscoveredDevice(dev, username: username, password: password);
       return true;
     }
     final discoveryDev = await client.probeDiscovery(ip);
+    if (!_isAlive) return false;
     if (discoveryDev != null) {
       _handleDiscoveredDevice(
         discoveryDev,
@@ -240,6 +258,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String? username,
     String? password,
   }) {
+    if (!_isAlive) return;
     final existingIdx = state.indexWhere(
       (d) =>
           (d.mac.isNotEmpty && d.mac == discovered.mac) ||
@@ -305,6 +324,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// app is in the foreground. The ESP remains the automation authority; this
   /// stream only keeps the companion UI current.
   Future<void> startForegroundSync({int intervalSeconds = 10}) async {
+    if (!_isAlive) return;
     _foregroundSyncEnabled = true;
     final interval = intervalSeconds.clamp(5, 60).toInt();
     for (final dev in state) {
@@ -316,7 +336,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     }
     _periodicSyncTimer?.cancel();
     _periodicSyncTimer = Timer.periodic(Duration(seconds: interval), (_) {
-      if (!_foregroundSyncEnabled) return;
+      if (!_isAlive || !_foregroundSyncEnabled) return;
       for (final dev in state) {
         if (dev.ip.isNotEmpty &&
             !dev.needsAuth &&
@@ -330,6 +350,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _replaceForegroundStream(SmartDevice dev) {
+    if (!_isAlive) return;
     _wsClients.remove(dev.id)?.dispose();
     if (!dev.needsAuth) {
       _startStatusStream(dev);
@@ -337,7 +358,10 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _startStatusStream(SmartDevice dev, {int intervalSeconds = 10}) {
-    if (dev.ip.isEmpty || dev.needsAuth || _wsClients.containsKey(dev.id)) {
+    if (!_isAlive ||
+        dev.ip.isEmpty ||
+        dev.needsAuth ||
+        _wsClients.containsKey(dev.id)) {
       return;
     }
 
@@ -370,6 +394,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _handleConnectionChange(String deviceId, bool connected) {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -389,6 +414,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _setDeviceOnlineState(String deviceId, bool isOnline) {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx >= 0 && state[idx].isOnline != isOnline) {
       final updated = state[idx].copyWith(isOnline: isOnline);
@@ -399,6 +425,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _handleWsData(String deviceId, Map<String, dynamic> data) {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -430,7 +457,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       if (data['type'] == 'relay') {
         final rId = (data['id'] as num?)?.toInt();
         final rState = data['state'] as bool?;
-        if (rId != null && rState != null && rId < current.relays.length) {
+        if (rId != null && rState != null && rId >= 0 && rId < current.relays.length) {
           final rList = List<RelayChannel>.from(current.relays);
           final relay = rList[rId];
           final bool shouldCancelTimer = relay.timerActive && (
@@ -457,7 +484,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final tActive = data['timer_active'] as bool? ?? false;
         final tTarget = data['timer_target'] as bool? ?? false;
         final tRemaining = (data['timer_remaining'] as num?)?.toInt() ?? 0;
-        if (rId != null && rId < current.relays.length) {
+        if (rId != null && rId >= 0 && rId < current.relays.length) {
           final rList = List<RelayChannel>.from(current.relays);
           rList[rId] = rList[rId].copyWith(
             timerActive: tActive,
@@ -523,6 +550,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
     final tempKey = '${finalDev.id}:temperature';
     final isHighTemp =
+        finalDev.telemetry.dhtEnabled &&
         !finalDev.telemetry.dhtFault &&
         finalDev.telemetry.tempThreshold > 0 &&
         finalDev.telemetry.temperature >= finalDev.telemetry.tempThreshold;
@@ -543,16 +571,21 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   Future<void> _refreshDeviceStatus(SmartDevice dev) async {
+    if (!_isAlive) return;
     if (!_refreshingDeviceIds.add(dev.id)) return;
     try {
       if (dev.authLocked) {
         final disc = await _api.probeDiscovery(dev.ip);
+        if (!_isAlive) return;
         if (disc != null && !disc.authRequired) {
           final json = await _api.fetchStatus(
             dev.ip,
             password: dev.authPassword,
           );
+          if (!_isAlive) return;
           if (json != null) {
+            final curIdx = state.indexWhere((d) => d.id == dev.id);
+            if (curIdx < 0) return;
             _handleWsData(dev.id, json);
             final latestIdx = state.indexWhere((d) => d.id == dev.id);
             if (_foregroundSyncEnabled && latestIdx >= 0) {
@@ -564,11 +597,21 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       }
 
       final json = await _api.fetchStatus(dev.ip, password: dev.authPassword);
+      if (!_isAlive) return;
+      final postStatusIdx = state.indexWhere((d) => d.id == dev.id);
+      if (postStatusIdx < 0 || state[postStatusIdx].authLocked) {
+        return;
+      }
       if (json != null) {
         _handleWsData(dev.id, json);
       } else {
         // Check if device is still reachable via /api/discovery
         final disc = await _api.probeDiscovery(dev.ip);
+        if (!_isAlive) return;
+        final postDiscIdx = state.indexWhere((d) => d.id == dev.id);
+        if (postDiscIdx < 0 || state[postDiscIdx].authLocked) {
+          return;
+        }
         if (disc != null) {
           if (disc.authRequired) {
             _handleDeviceAuthError(dev.id, promptUser: true);
@@ -579,6 +622,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
               dev.ip,
               password: dev.authPassword,
             );
+            if (!_isAlive) return;
+            final postRetryIdx = state.indexWhere((d) => d.id == dev.id);
+            if (postRetryIdx < 0 || state[postRetryIdx].authLocked) {
+              return;
+            }
             if (retryJson != null) {
               _handleWsData(dev.id, retryJson);
             }
@@ -596,6 +644,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Optimistic Relay Toggle
   Future<void> toggleRelay(String deviceId, int relayIndex) async {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -604,7 +653,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       _handleDeviceAuthError(dev.id, promptUser: true);
       return;
     }
-    if (relayIndex >= dev.relays.length) return;
+    if (relayIndex < 0 || relayIndex >= dev.relays.length) return;
 
     final oldState = dev.relays[relayIndex].state;
     final newState = !oldState;
@@ -634,13 +683,14 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       newState ? 'on' : 'off',
       password: dev.authPassword,
     );
+    if (!_isAlive) return;
     if (!ok) {
       // Revert if API call fails (preserving any authLocked state updated during the call)
       final currentIdx = state.indexWhere((d) => d.id == deviceId);
       if (currentIdx >= 0) {
         final latest = state[currentIdx];
         final revRelays = List<RelayChannel>.from(latest.relays);
-        if (relayIndex < revRelays.length) {
+        if (relayIndex >= 0 && relayIndex < revRelays.length) {
           revRelays[relayIndex] = revRelays[relayIndex].copyWith(
             state: oldState,
           );
@@ -659,6 +709,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String action,
     int durationSeconds,
   ) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
 
@@ -675,12 +726,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       durationSeconds,
       password: dev.authPassword,
     );
+    if (!_isAlive) return ok;
     if (ok) {
       final currentIdx = state.indexWhere((d) => d.id == deviceId);
       if (currentIdx >= 0) {
         final currentDev = state[currentIdx];
         final rList = List<RelayChannel>.from(currentDev.relays);
-        if (relayIndex < rList.length) {
+        if (relayIndex >= 0 && relayIndex < rList.length) {
           rList[relayIndex] = rList[relayIndex].copyWith(
             timerActive: true,
             timerTarget: action == 'on',
@@ -699,6 +751,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Cancel quick timer
   Future<bool> cancelTimer(String deviceId, int relayIndex) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
 
@@ -712,12 +765,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       relayIndex,
       password: dev.authPassword,
     );
+    if (!_isAlive) return ok;
     if (ok) {
       final currentIdx = state.indexWhere((d) => d.id == deviceId);
       if (currentIdx >= 0) {
         final currentDev = state[currentIdx];
         final rList = List<RelayChannel>.from(currentDev.relays);
-        if (relayIndex < rList.length) {
+        if (relayIndex >= 0 && relayIndex < rList.length) {
           rList[relayIndex] = rList[relayIndex].copyWith(
             timerActive: false,
             timerRemaining: 0,
@@ -734,6 +788,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   void _checkAndStartCountdownTicker() {
+    if (!_isAlive) return;
     final hasActiveTimers = state.any((d) => d.relays.any((r) => r.timerActive && r.timerRemaining > 0));
     if (!hasActiveTimers) {
       _countdownTickerTimer?.cancel();
@@ -743,6 +798,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (_countdownTickerTimer != null && _countdownTickerTimer!.isActive) return;
 
     _countdownTickerTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_isAlive) {
+        _countdownTickerTimer?.cancel();
+        _countdownTickerTimer = null;
+        return;
+      }
       bool anyActive = false;
       bool stateChanged = false;
 
@@ -787,6 +847,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Master ON / OFF for all relays on a device
   Future<void> setAllRelays(String deviceId, String action) async {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -797,22 +858,31 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     }
     final oldRelays = List<RelayChannel>.from(dev.relays);
     final targetState = action == 'on';
-    final rList = dev.relays
-        .map((r) => r.copyWith(state: targetState))
-        .toList();
+    final rList = dev.relays.map((r) {
+      if (targetState && !r.enabled) return r;
+      final bool cancelTimer = r.timerActive && (targetState == r.timerTarget);
+      return r.copyWith(
+        state: targetState,
+        timerActive: cancelTimer ? false : r.timerActive,
+        timerRemaining: cancelTimer ? 0 : r.timerRemaining,
+      );
+    }).toList();
     final updated = dev.copyWith(relays: rList, isOnline: true);
     final newList = List<SmartDevice>.from(state);
     newList[idx] = updated;
     state = newList;
+    _checkAndStartCountdownTicker();
 
     final ok = await _api.setAllRelays(
       dev.ip,
       action,
       password: dev.authPassword,
     );
+    if (!_isAlive) return;
     if (ok) {
       _setDeviceOnlineState(deviceId, true);
       Future.delayed(const Duration(milliseconds: 700), () {
+        if (!_isAlive) return;
         final currentIdx = state.indexWhere((d) => d.id == deviceId);
         if (currentIdx >= 0) {
           _refreshDeviceStatus(state[currentIdx]);
@@ -830,6 +900,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Assign device to room
   Future<void> assignRoom(String deviceId, String roomName) async {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
@@ -843,6 +914,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Update custom device name (persists to both ESP32 flash and local phone storage)
   Future<bool> updateDeviceName(String deviceId, String newName) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
 
@@ -867,6 +939,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     required String username,
     required String? password,
   }) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
 
@@ -885,8 +958,10 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     newList[idx] = updated;
     state = newList;
     await _storage.saveDevices(newList);
+    if (!_isAlive) return false;
 
     final statusJson = await _api.fetchStatus(dev.ip, password: cleanPass);
+    if (!_isAlive) return statusJson != null;
     if (statusJson != null) {
       _handleWsData(dev.id, statusJson);
       final latestIdx = state.indexWhere((d) => d.id == deviceId);
@@ -903,27 +978,35 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Log out from a controller, clearing stored credentials and closing active sessions
   Future<void> logoutDevice(String deviceId) async {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return;
 
     final dev = state[idx];
     _wsClients.remove(dev.id)?.dispose();
 
-    ApiClient.registerDeviceUsername(dev.ip, '');
-    final updated = dev.copyWith(
+    ApiClient.unregisterDevice(dev.ip);
+    await _storage.deleteDeviceCredentials(deviceId);
+    if (!_isAlive) return;
+
+    final curIdx = state.indexWhere((d) => d.id == deviceId);
+    if (curIdx < 0) return;
+    final current = state[curIdx];
+    final updated = current.copyWith(
       authPassword: null,
       clearAuthPassword: true,
       authLocked: true,
       authRole: 'admin',
     );
     final newList = List<SmartDevice>.from(state);
-    newList[idx] = updated;
+    newList[curIdx] = updated;
     state = newList;
     await _storage.saveDevices(newList);
   }
 
   /// Refresh a specific device status & relays
   Future<void> refreshDevice(String deviceId) async {
+    if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx >= 0) {
       await _refreshDeviceStatus(state[idx]);
@@ -932,6 +1015,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Reboot device
   Future<bool> rebootDevice(String deviceId) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -940,6 +1024,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Fetch live hardware relay configuration directly from ESP32 flash
   Future<List<RelayChannel>?> fetchDeviceRelays(String deviceId) async {
+    if (!_isAlive) return null;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
@@ -951,11 +1036,19 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     for (int i = 0; i < rawList.length; i++) {
       updatedRelays.add(RelayChannel.fromJson(i, rawList[i]));
     }
+    if (!_isAlive) return updatedRelays;
+
+    final curIdx = state.indexWhere((d) => d.id == deviceId);
+    if (curIdx < 0) return updatedRelays;
 
     // Merge into state
-    final updatedDev = dev.copyWith(relays: updatedRelays, isOnline: true);
+    final updatedDev = state[curIdx].copyWith(
+      relays: updatedRelays,
+      numRelays: updatedRelays.length,
+      isOnline: true,
+    );
     final newList = List<SmartDevice>.from(state);
-    newList[idx] = updatedDev;
+    newList[curIdx] = updatedDev;
     state = newList;
     _storage.saveDevices(newList);
 
@@ -964,6 +1057,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Fetch system configuration (LCD, Sensor calibration, MQTT, Buzzer) from ESP32
   Future<Map<String, dynamic>?> fetchDeviceConfig(String deviceId) async {
+    if (!_isAlive) return null;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
@@ -978,6 +1072,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     required String ssid,
     required String password,
   }) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -993,6 +1088,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String deviceId,
     Map<String, dynamic> config,
   ) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1005,6 +1101,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     int relayIndex,
     Map<String, dynamic> config,
   ) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1015,15 +1112,21 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       payload,
       password: dev.authPassword,
     );
+    if (!_isAlive) return ok;
     if (ok) {
       await fetchDeviceRelays(deviceId);
-      await _refreshDeviceStatus(dev);
+      if (!_isAlive) return ok;
+      final latestIdx = state.indexWhere((d) => d.id == deviceId);
+      if (latestIdx >= 0) {
+        await _refreshDeviceStatus(state[latestIdx]);
+      }
     }
     return ok;
   }
 
   /// Fetch Alarms
   Future<List<ScheduledAlarm>> fetchDeviceAlarms(String deviceId) async {
+    if (!_isAlive) return [];
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return [];
     final dev = state[idx];
@@ -1034,6 +1137,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Save Alarm
   Future<bool> saveDeviceAlarm(String deviceId, ScheduledAlarm alarm) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1050,6 +1154,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     int alarmId,
     bool enabled,
   ) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1063,6 +1168,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Delete Alarm
   Future<bool> deleteDeviceAlarm(String deviceId, int alarmId) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1076,6 +1182,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     bool? enabled,
     int? volume,
   }) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1093,6 +1200,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// Calibrate Sensors
   Future<bool> calibrateSensors(
     String deviceId, {
+    int? sensorIndex,
     double? tempOffset,
     double? humOffset,
     double? tempAlarm,
@@ -1100,10 +1208,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     bool? mq2Enabled,
     bool? calibrateMq2,
   }) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
     final payload = <String, dynamic>{};
+    if (sensorIndex != null) payload['sensor_index'] = sensorIndex;
     if (tempOffset != null) payload['temp_offset'] = tempOffset;
     if (humOffset != null) payload['hum_offset'] = humOffset;
     if (tempAlarm != null) payload['temp_alarm'] = tempAlarm;
@@ -1130,6 +1240,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String? dimEnd,
     int? dimBrightness,
   }) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1152,6 +1263,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Fetch Logs
   Future<List<SystemLogEntry>> fetchDeviceLogs(String deviceId) async {
+    if (!_isAlive) return [];
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return [];
     final dev = state[idx];
@@ -1162,6 +1274,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Clear Logs
   Future<bool> clearDeviceLogs(String deviceId) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1170,6 +1283,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Fetch Diagnostics
   Future<DeviceDiagnostics?> fetchDeviceDiagnostics(String deviceId) async {
+    if (!_isAlive) return null;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
@@ -1180,6 +1294,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Factory Reset
   Future<bool> factoryReset(String deviceId) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1188,6 +1303,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Export Backup
   Future<String?> exportBackup(String deviceId) async {
+    if (!_isAlive) return null;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
@@ -1200,6 +1316,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Restore Backup
   Future<bool> restoreBackup(String deviceId, String backupJson) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1209,10 +1326,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       password: dev.authPassword,
       username: dev.authUsername,
     );
+    if (!_isAlive) return ok;
     if (ok) {
       // Wait for the ESP32 1000ms deferred reboot + boot sequence, then re-sync
       Future.delayed(const Duration(milliseconds: 4500), () async {
+        if (!_isAlive) return;
         await refreshDevice(deviceId);
+        if (!_isAlive) return;
         await fetchDeviceRelays(deviceId);
       });
     }
@@ -1224,6 +1344,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String deviceId,
     Map<String, dynamic> config,
   ) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
@@ -1233,28 +1354,33 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       password: dev.authPassword,
       username: dev.authUsername,
     );
+    if (!_isAlive) return ok;
     if (ok) {
+      final curIdx = state.indexWhere((d) => d.id == deviceId);
+      if (curIdx < 0) return ok;
+      final current = state[curIdx];
       final newName = config['device_name']?.toString().trim();
       final newHost = config['hostname']?.toString().trim();
       final newUser = config['web_user']?.toString().trim();
       final newPass = config['web_pass']?.toString();
 
-      final updated = dev.copyWith(
-        name: (newName != null && newName.isNotEmpty) ? newName : dev.name,
+      final updated = current.copyWith(
+        name: (newName != null && newName.isNotEmpty) ? newName : current.name,
         hostname: (newHost != null && newHost.isNotEmpty)
             ? newHost
-            : dev.hostname,
+            : current.hostname,
         authUsername: (newUser != null && newUser.isNotEmpty)
             ? newUser
-            : dev.authUsername,
+            : current.authUsername,
         authPassword: (newPass != null && newPass.isNotEmpty)
             ? newPass
-            : dev.authPassword,
+            : current.authPassword,
       );
       final list = List<SmartDevice>.from(state);
-      list[idx] = updated;
+      list[curIdx] = updated;
       state = list;
       await _storage.saveDevices(list);
+      if (!_isAlive) return ok;
       ApiClient.registerDeviceUsername(updated.ip, updated.authUsername);
       if (config.containsKey('web_user') || config.containsKey('web_pass')) {
         _replaceForegroundStream(updated);
@@ -1265,8 +1391,19 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Remove device
   Future<void> removeDevice(String deviceId) async {
+    if (!_isAlive) return;
+    final existingIdx = state.indexWhere((d) => d.id == deviceId);
+    final removed = existingIdx >= 0 ? state[existingIdx] : null;
+
     _wsClients[deviceId]?.dispose();
     _wsClients.remove(deviceId);
+    _activeAlertKeys.removeWhere((k) => k.startsWith('$deviceId:'));
+
+    if (removed != null && removed.ip.isNotEmpty) {
+      ApiClient.unregisterDevice(removed.ip);
+    }
+    await _storage.deleteDeviceCredentials(deviceId);
+    if (!_isAlive) return;
 
     final newList = state.where((d) => d.id != deviceId).toList();
     state = newList;
@@ -1276,6 +1413,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// Pre-register a device that was just provisioned in SoftAP mode so its room,
   /// custom name, and admin credentials are automatically linked when it joins LAN.
   Future<void> registerProvisionedDevice(SmartDevice provisioned) async {
+    if (!_isAlive) return;
     final existingIdx = state.indexWhere(
       (d) =>
           (d.mac.isNotEmpty && d.mac == provisioned.mac) ||
@@ -1300,6 +1438,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Export the full Multi-Controller Hub configuration to a single JSON string.
   Future<String> exportHubBackupJson({bool includeCredentials = true}) async {
+    if (!_isAlive) return '';
     return await _storage.exportHubBackupJson(
       state,
       includeCredentials: includeCredentials,
@@ -1308,8 +1447,9 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   /// Import and restore a Multi-Controller Hub configuration from JSON.
   Future<bool> importHubBackupJson(String rawJson) async {
+    if (!_isAlive) return false;
     final restored = await _storage.importHubBackupJson(rawJson);
-    if (restored == null) return false;
+    if (!_isAlive || restored == null) return false;
 
     for (final client in _wsClients.values) {
       client.dispose();

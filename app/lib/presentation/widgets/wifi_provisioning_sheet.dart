@@ -225,8 +225,9 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
       _statusStepText = null;
     });
 
+    final messenger = ScaffoldMessenger.of(context);
     Navigator.pop(context, true);
-    ScaffoldMessenger.of(context).showSnackBar(
+    messenger.showSnackBar(
       SnackBar(
         content: Text(
           '$devName configured for "$ssid" ($_selectedRoom)! Scanning LAN...',
@@ -537,6 +538,8 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
                             Expanded(
                               child: Text(
                                 ssid,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontWeight: isSelected
                                       ? FontWeight.w800

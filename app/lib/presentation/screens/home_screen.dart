@@ -70,11 +70,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       for (final r in enabledRelays) {
         if (r.state) totalActiveRelays++;
       }
-      if (dev.isOnline && dev.telemetry.temperature > 0 && !dev.telemetry.dhtError) {
+      if (dev.isOnline &&
+          dev.telemetry.dhtEnabled &&
+          !dev.telemetry.dhtError &&
+          (dev.telemetry.temperature != 0 || dev.telemetry.humidity > 0)) {
         tempSum += dev.telemetry.temperature;
         tempCount++;
       }
-      if (dev.isOnline && dev.telemetry.humidity > 0 && !dev.telemetry.dhtError) {
+      if (dev.isOnline &&
+          dev.telemetry.dhtEnabled &&
+          dev.telemetry.humidity > 0 &&
+          !dev.telemetry.dhtError) {
         humSum += dev.telemetry.humidity;
         humCount++;
       }
@@ -389,7 +395,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           borderColor: const Color(0xFF34D399).withValues(alpha: isDark ? 0.45 : 0.3),
                           onTap: () {
                             for (final d in devices) {
-                              if (!d.needsAuth) manager.setAllRelays(d.id, 'on');
+                              if (!d.needsAuth &&
+                                  d.numRelays > 0 &&
+                                  (d.relays.isEmpty ||
+                                      d.relays.any((r) => r.enabled))) {
+                                manager.setAllRelays(d.id, 'on');
+                              }
                             }
                           },
                         ),
@@ -409,7 +420,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           borderColor: const Color(0xFFA78BFA).withValues(alpha: isDark ? 0.4 : 0.3),
                           onTap: () {
                             for (final d in devices) {
-                              if (!d.needsAuth) manager.setAllRelays(d.id, 'off');
+                              if (!d.needsAuth &&
+                                  d.numRelays > 0 &&
+                                  (d.relays.isEmpty ||
+                                      d.relays.any((r) => r.enabled))) {
+                                manager.setAllRelays(d.id, 'off');
+                              }
                             }
                           },
                         ),
@@ -858,7 +874,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                  ] else if (dev.isOnline && dev.telemetry.temperature > 0) ...[
+                  ] else if (dev.isOnline &&
+                      dev.telemetry.dhtEnabled &&
+                      !dev.telemetry.dhtError &&
+                      (dev.telemetry.temperature != 0 || dev.telemetry.humidity > 0)) ...[
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
@@ -963,6 +982,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           () {
             final visibleRelays = dev.relays.where((r) => r.enabled).toList();
             if (dev.relays.isEmpty) {
+              if (dev.numRelays == 0) {
+                return GestureDetector(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: dev.id)),
+                  ),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.cardBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.sensors_rounded, size: 18, color: AppColors.cyan),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Sensor Node active (0 relay channels configured). Tap to inspect telemetry & profile.',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              if (dev.needsAuth) {
+                return const SizedBox.shrink();
+              }
               return Text('Loading channels...', style: TextStyle(color: AppColors.textMuted, fontSize: 12));
             }
             if (visibleRelays.isEmpty) {

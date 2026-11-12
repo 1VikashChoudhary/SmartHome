@@ -83,6 +83,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           : _userController.text.trim(),
       password: _passController.text.isNotEmpty ? _passController.text : null,
     );
+    if (!mounted) return;
     setState(() => _isManualAdding = false);
 
     if (mounted) {

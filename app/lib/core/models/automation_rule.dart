@@ -2,11 +2,12 @@ class AutomationRule {
   final int id;
   final bool enabled;
   final String name;
-  final int sensor; // 0: Temp, 1: Hum, 2: Gas
+  final int sensor; // 0: Temp, 1: Hum, 2: Gas, 3: Lux, 4: Probe, 5: Tank, 6: Motion
+  final int sensorIndex; // 0-based index within the sensor group (s_idx)
   final int condition; // 0: Above (>=), 1: Below (<=)
   final double threshold;
   final double hysteresis;
-  final int targetRelay; // 0..4
+  final int targetRelay; // 0..7 or 255 (All)
   final int action; // 0: ON, 1: OFF
   final bool triggered;
 
@@ -15,6 +16,7 @@ class AutomationRule {
     required this.enabled,
     required this.name,
     required this.sensor,
+    this.sensorIndex = 0,
     required this.condition,
     required this.threshold,
     required this.hysteresis,
@@ -29,6 +31,10 @@ class AutomationRule {
       enabled: json['en'] as bool? ?? true,
       name: json['name'] as String? ?? 'Rule',
       sensor: (json['sensor'] as num?)?.toInt() ?? 0,
+      sensorIndex:
+          (json['s_idx'] as num?)?.toInt() ??
+          (json['sensor_index'] as num?)?.toInt() ??
+          0,
       condition: (json['cond'] as num?)?.toInt() ?? 0,
       threshold: (json['th'] as num?)?.toDouble() ?? 0.0,
       hysteresis: (json['hyst'] as num?)?.toDouble() ?? 0.5,
@@ -43,6 +49,7 @@ class AutomationRule {
     'en': enabled,
     'name': name,
     'sensor': sensor,
+    's_idx': sensorIndex,
     'cond': condition,
     'th': threshold,
     'hyst': hysteresis,
@@ -51,21 +58,24 @@ class AutomationRule {
   };
 
   String get sensorLabel {
+    final idxSuffix = sensorIndex > 0 ? ' #${sensorIndex + 1}' : '';
     switch (sensor) {
       case 0:
-        return 'Temperature';
+        return 'Temperature$idxSuffix';
       case 1:
-        return 'Humidity';
+        return 'Humidity$idxSuffix';
       case 2:
-        return 'Gas Sensor';
+        return 'Gas Sensor$idxSuffix';
       case 3:
-        return 'Ambient Light';
+        return 'Ambient Light$idxSuffix';
       case 4:
-        return 'Water Temp Probe';
+        return 'Water Temp Probe$idxSuffix';
       case 5:
-        return 'Water Tank Level';
+        return 'Water Tank Level$idxSuffix';
+      case 6:
+        return 'Motion / Occupancy$idxSuffix';
       default:
-        return 'Unknown';
+        return 'Unknown$idxSuffix';
     }
   }
 
@@ -83,6 +93,8 @@ class AutomationRule {
         return 'ADC';
       case 3:
         return 'lx';
+      case 6:
+        return '';
       default:
         return '';
     }
@@ -95,6 +107,7 @@ class AutomationRule {
     bool? enabled,
     String? name,
     int? sensor,
+    int? sensorIndex,
     int? condition,
     double? threshold,
     double? hysteresis,
@@ -107,6 +120,7 @@ class AutomationRule {
       enabled: enabled ?? this.enabled,
       name: name ?? this.name,
       sensor: sensor ?? this.sensor,
+      sensorIndex: sensorIndex ?? this.sensorIndex,
       condition: condition ?? this.condition,
       threshold: threshold ?? this.threshold,
       hysteresis: hysteresis ?? this.hysteresis,

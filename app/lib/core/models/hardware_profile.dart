@@ -29,6 +29,24 @@ enum ClimateSensorType {
   final String label;
   const ClimateSensorType(this.value, this.label);
 
+  bool get isI2c => value >= 3;
+
+  List<int> get allowedI2cAddrs {
+    switch (this) {
+      case ClimateSensorType.bme280:
+        return const [0x76, 0x77];
+      case ClimateSensorType.aht20:
+        return const [0x38];
+      case ClimateSensorType.sht31:
+        return const [0x44, 0x45];
+      default:
+        return const [];
+    }
+  }
+
+  int get defaultI2cAddr =>
+      allowedI2cAddrs.isNotEmpty ? allowedI2cAddrs.first : 0;
+
   static ClimateSensorType fromValue(int val) {
     return ClimateSensorType.values.firstWhere(
       (m) => m.value == val,
@@ -160,31 +178,331 @@ class ChannelHardwareConfig {
   }
 }
 
+class ClimateSensorSlotConfig {
+  final ClimateSensorType type;
+  final int pin;
+  final int i2cAddr;
+  final String label;
+
+  const ClimateSensorSlotConfig({
+    this.type = ClimateSensorType.dht22,
+    this.pin = 4,
+    this.i2cAddr = 0,
+    this.label = '',
+  });
+
+  factory ClimateSensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    final type = ClimateSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0);
+    final rawAddr = (json['i2c_addr'] as num?)?.toInt() ?? 0;
+    return ClimateSensorSlotConfig(
+      type: type,
+      pin: (json['pin'] as num?)?.toInt() ?? 255,
+      i2cAddr: type.isI2c
+          ? (rawAddr > 0 ? rawAddr : type.defaultI2cAddr)
+          : 0,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'pin': pin,
+    'i2c_addr': type.isI2c ? (i2cAddr > 0 ? i2cAddr : type.defaultI2cAddr) : 0,
+    'label': label,
+  };
+
+  ClimateSensorSlotConfig copyWith({
+    ClimateSensorType? type,
+    int? pin,
+    int? i2cAddr,
+    String? label,
+  }) {
+    return ClimateSensorSlotConfig(
+      type: type ?? this.type,
+      pin: pin ?? this.pin,
+      i2cAddr: i2cAddr ?? this.i2cAddr,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class LightSensorSlotConfig {
+  final LightSensorType type;
+  final int i2cAddr;
+  final String label;
+
+  const LightSensorSlotConfig({
+    this.type = LightSensorType.bh1750,
+    this.i2cAddr = 0x23,
+    this.label = '',
+  });
+
+  factory LightSensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    final type = LightSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0);
+    final rawAddr = (json['i2c_addr'] as num?)?.toInt() ?? 0;
+    return LightSensorSlotConfig(
+      type: type,
+      i2cAddr: rawAddr > 0 ? rawAddr : 0x23,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'i2c_addr': type == LightSensorType.bh1750 ? (i2cAddr > 0 ? i2cAddr : 0x23) : 0,
+    'label': label,
+  };
+
+  LightSensorSlotConfig copyWith({
+    LightSensorType? type,
+    int? i2cAddr,
+    String? label,
+  }) {
+    return LightSensorSlotConfig(
+      type: type ?? this.type,
+      i2cAddr: i2cAddr ?? this.i2cAddr,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class MotionSensorSlotConfig {
+  final MotionSensorType type;
+  final int pin;
+  final String label;
+
+  const MotionSensorSlotConfig({
+    this.type = MotionSensorType.pir,
+    this.pin = 32,
+    this.label = '',
+  });
+
+  factory MotionSensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    return MotionSensorSlotConfig(
+      type: MotionSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0),
+      pin: (json['pin'] as num?)?.toInt() ?? 255,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'pin': pin,
+    'label': label,
+  };
+
+  MotionSensorSlotConfig copyWith({
+    MotionSensorType? type,
+    int? pin,
+    String? label,
+  }) {
+    return MotionSensorSlotConfig(
+      type: type ?? this.type,
+      pin: pin ?? this.pin,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class ProbeSensorSlotConfig {
+  final ProbeSensorType type;
+  final int pin;
+  final String label;
+
+  const ProbeSensorSlotConfig({
+    this.type = ProbeSensorType.ds18b20,
+    this.pin = 15,
+    this.label = '',
+  });
+
+  factory ProbeSensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    return ProbeSensorSlotConfig(
+      type: ProbeSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0),
+      pin: (json['pin'] as num?)?.toInt() ?? 255,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'pin': pin,
+    'label': label,
+  };
+
+  ProbeSensorSlotConfig copyWith({
+    ProbeSensorType? type,
+    int? pin,
+    String? label,
+  }) {
+    return ProbeSensorSlotConfig(
+      type: type ?? this.type,
+      pin: pin ?? this.pin,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class UltrasonicSensorSlotConfig {
+  final UltrasonicSensorType type;
+  final int trigPin;
+  final int echoPin;
+  final int tankDepthCm;
+  final int tankAirGapCm;
+  final String label;
+
+  const UltrasonicSensorSlotConfig({
+    this.type = UltrasonicSensorType.hcsr04p,
+    this.trigPin = 15,
+    this.echoPin = 35,
+    this.tankDepthCm = 150,
+    this.tankAirGapCm = 15,
+    this.label = '',
+  });
+
+  factory UltrasonicSensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    return UltrasonicSensorSlotConfig(
+      type: UltrasonicSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0),
+      trigPin: (json['trig_pin'] as num?)?.toInt() ?? 255,
+      echoPin: (json['echo_pin'] as num?)?.toInt() ?? 255,
+      tankDepthCm: (json['tank_depth'] as num?)?.toInt() ?? 150,
+      tankAirGapCm: (json['air_gap'] as num?)?.toInt() ?? 15,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'type': type.value,
+    'trig_pin': trigPin,
+    'echo_pin': echoPin,
+    'tank_depth': tankDepthCm,
+    'air_gap': tankAirGapCm,
+    'label': label,
+  };
+
+  UltrasonicSensorSlotConfig copyWith({
+    UltrasonicSensorType? type,
+    int? trigPin,
+    int? echoPin,
+    int? tankDepthCm,
+    int? tankAirGapCm,
+    String? label,
+  }) {
+    return UltrasonicSensorSlotConfig(
+      type: type ?? this.type,
+      trigPin: trigPin ?? this.trigPin,
+      echoPin: echoPin ?? this.echoPin,
+      tankDepthCm: tankDepthCm ?? this.tankDepthCm,
+      tankAirGapCm: tankAirGapCm ?? this.tankAirGapCm,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class Mq2SensorSlotConfig {
+  final bool enabled;
+  final int analogPin;
+  final int digitalPin;
+  final String label;
+
+  const Mq2SensorSlotConfig({
+    this.enabled = true,
+    this.analogPin = 34,
+    this.digitalPin = 35,
+    this.label = '',
+  });
+
+  factory Mq2SensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    return Mq2SensorSlotConfig(
+      enabled: json['enabled'] as bool? ?? true,
+      analogPin: (json['analog_pin'] as num?)?.toInt() ?? 255,
+      digitalPin: (json['digital_pin'] as num?)?.toInt() ?? 255,
+      label: json['label'] as String? ?? '',
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'analog_pin': analogPin,
+    'digital_pin': digitalPin,
+    'label': label,
+  };
+
+  Mq2SensorSlotConfig copyWith({
+    bool? enabled,
+    int? analogPin,
+    int? digitalPin,
+    String? label,
+  }) {
+    return Mq2SensorSlotConfig(
+      enabled: enabled ?? this.enabled,
+      analogPin: analogPin ?? this.analogPin,
+      digitalPin: digitalPin ?? this.digitalPin,
+      label: label ?? this.label,
+    );
+  }
+}
+
+class SensorLimitsConfig {
+  final int relays;
+  final int climates;
+  final int lights;
+  final int motions;
+  final int probes;
+  final int ultrasonics;
+  final int mq2s;
+
+  const SensorLimitsConfig({
+    this.relays = 8,
+    this.climates = 4,
+    this.lights = 2,
+    this.motions = 6,
+    this.probes = 4,
+    this.ultrasonics = 4,
+    this.mq2s = 4,
+  });
+
+  factory SensorLimitsConfig.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const SensorLimitsConfig();
+    return SensorLimitsConfig(
+      relays: (json['relays'] as num?)?.toInt() ?? 8,
+      climates: (json['climates'] as num?)?.toInt() ?? 4,
+      lights: (json['lights'] as num?)?.toInt() ?? 2,
+      motions: (json['motions'] as num?)?.toInt() ?? 6,
+      probes: (json['probes'] as num?)?.toInt() ?? 4,
+      ultrasonics: (json['ultrasonics'] as num?)?.toInt() ?? 4,
+      mq2s: (json['mq2s'] as num?)?.toInt() ?? 4,
+    );
+  }
+}
+
 class HardwareProfile {
   final String boardName;
   final int numRelays;
   final List<ChannelHardwareConfig> channels;
 
-  final ClimateSensorType dhtType;
-  final int dhtPin;
+  final ClimateSensorType _dhtType;
+  final int _dhtPin;
+  final LightSensorType _lightType;
+  final MotionSensorType _motionType;
+  final int _motionPin;
+  final ProbeSensorType _probeType;
+  final int _probePin;
+  final UltrasonicSensorType _ultrasonicType;
+  final int _trigPin;
+  final int _echoPin;
+  final int _tankDepthCm;
+  final int _tankAirGapCm;
+  final bool _mq2Enabled;
+  final int _mq2AnalogPin;
+  final int _mq2DigitalPin;
 
-  final LightSensorType lightType;
-
-  final MotionSensorType motionType;
-  final int motionPin;
-
-  final ProbeSensorType probeType;
-  final int probePin;
-
-  final UltrasonicSensorType ultrasonicType;
-  final int trigPin;
-  final int echoPin;
-  final int tankDepthCm;
-  final int tankAirGapCm;
-
-  final bool mq2Enabled;
-  final int mq2AnalogPin;
-  final int mq2DigitalPin;
+  final List<ClimateSensorSlotConfig>? _climates;
+  final List<LightSensorSlotConfig>? _lights;
+  final List<MotionSensorSlotConfig>? _motions;
+  final List<ProbeSensorSlotConfig>? _probes;
+  final List<UltrasonicSensorSlotConfig>? _ultrasonics;
+  final List<Mq2SensorSlotConfig>? _mq2Sensors;
+  final SensorLimitsConfig sensorLimits;
 
   final bool buzzerEnabled;
   final int buzzerPin;
@@ -202,21 +520,28 @@ class HardwareProfile {
     required this.boardName,
     required this.numRelays,
     required this.channels,
-    this.dhtType = ClimateSensorType.dht22,
-    this.dhtPin = 4,
-    this.lightType = LightSensorType.none,
-    this.motionType = MotionSensorType.none,
-    this.motionPin = 32,
-    this.probeType = ProbeSensorType.none,
-    this.probePin = 15,
-    this.ultrasonicType = UltrasonicSensorType.none,
-    this.trigPin = 15,
-    this.echoPin = 35,
-    this.tankDepthCm = 150,
-    this.tankAirGapCm = 15,
-    this.mq2Enabled = true,
-    this.mq2AnalogPin = 34,
-    this.mq2DigitalPin = 35,
+    this._dhtType = ClimateSensorType.dht22,
+    this._dhtPin = 4,
+    this._lightType = LightSensorType.none,
+    this._motionType = MotionSensorType.none,
+    this._motionPin = 32,
+    this._probeType = ProbeSensorType.none,
+    this._probePin = 15,
+    this._ultrasonicType = UltrasonicSensorType.none,
+    this._trigPin = 15,
+    this._echoPin = 35,
+    this._tankDepthCm = 150,
+    this._tankAirGapCm = 15,
+    this._mq2Enabled = true,
+    this._mq2AnalogPin = 34,
+    this._mq2DigitalPin = 35,
+    this._climates,
+    this._lights,
+    this._motions,
+    this._probes,
+    this._ultrasonics,
+    this._mq2Sensors,
+    this.sensorLimits = const SensorLimitsConfig(),
     this.buzzerEnabled = true,
     this.buzzerPin = 5,
     this.lcdEnabled = true,
@@ -228,11 +553,151 @@ class HardwareProfile {
     this.btnMultiPin = 33,
   });
 
+  List<ClimateSensorSlotConfig> get climates =>
+      _climates ??
+      (_dhtType == ClimateSensorType.none
+          ? const []
+          : [
+              ClimateSensorSlotConfig(
+                type: _dhtType,
+                pin: _dhtPin,
+                i2cAddr: _dhtType.defaultI2cAddr,
+              ),
+            ]);
+
+  List<LightSensorSlotConfig> get lights =>
+      _lights ??
+      (_lightType == LightSensorType.none
+          ? const []
+          : [LightSensorSlotConfig(type: _lightType, i2cAddr: 0x23)]);
+
+  List<MotionSensorSlotConfig> get motions =>
+      _motions ??
+      (_motionType == MotionSensorType.none
+          ? const []
+          : [MotionSensorSlotConfig(type: _motionType, pin: _motionPin)]);
+
+  List<ProbeSensorSlotConfig> get probes =>
+      _probes ??
+      (_probeType == ProbeSensorType.none
+          ? const []
+          : [ProbeSensorSlotConfig(type: _probeType, pin: _probePin)]);
+
+  List<UltrasonicSensorSlotConfig> get ultrasonics =>
+      _ultrasonics ??
+      (_ultrasonicType == UltrasonicSensorType.none
+          ? const []
+          : [
+              UltrasonicSensorSlotConfig(
+                type: _ultrasonicType,
+                trigPin: _trigPin,
+                echoPin: _echoPin,
+                tankDepthCm: _tankDepthCm,
+                tankAirGapCm: _tankAirGapCm,
+              ),
+            ]);
+
+  List<Mq2SensorSlotConfig> get mq2Sensors =>
+      _mq2Sensors ??
+      ((!_mq2Enabled && _mq2AnalogPin == 255 && _mq2DigitalPin == 255)
+          ? const []
+          : [
+              Mq2SensorSlotConfig(
+                enabled: _mq2Enabled,
+                analogPin: _mq2AnalogPin,
+                digitalPin: _mq2DigitalPin,
+              ),
+            ]);
+
+  ClimateSensorType get dhtType =>
+      _climates != null
+          ? (_climates.isNotEmpty ? _climates.first.type : ClimateSensorType.none)
+          : _dhtType;
+  int get dhtPin =>
+      _climates != null
+          ? (_climates.isNotEmpty ? _climates.first.pin : 255)
+          : _dhtPin;
+
+  LightSensorType get lightType =>
+      _lights != null
+          ? (_lights.isNotEmpty ? _lights.first.type : LightSensorType.none)
+          : _lightType;
+
+  MotionSensorType get motionType =>
+      _motions != null
+          ? (_motions.isNotEmpty ? _motions.first.type : MotionSensorType.none)
+          : _motionType;
+  int get motionPin =>
+      _motions != null
+          ? (_motions.isNotEmpty ? _motions.first.pin : 255)
+          : _motionPin;
+
+  ProbeSensorType get probeType =>
+      _probes != null
+          ? (_probes.isNotEmpty ? _probes.first.type : ProbeSensorType.none)
+          : _probeType;
+  int get probePin =>
+      _probes != null
+          ? (_probes.isNotEmpty ? _probes.first.pin : 255)
+          : _probePin;
+
+  UltrasonicSensorType get ultrasonicType =>
+      _ultrasonics != null
+          ? (_ultrasonics.isNotEmpty
+                ? _ultrasonics.first.type
+                : UltrasonicSensorType.none)
+          : _ultrasonicType;
+  int get trigPin =>
+      _ultrasonics != null
+          ? (_ultrasonics.isNotEmpty ? _ultrasonics.first.trigPin : 255)
+          : _trigPin;
+  int get echoPin =>
+      _ultrasonics != null
+          ? (_ultrasonics.isNotEmpty ? _ultrasonics.first.echoPin : 255)
+          : _echoPin;
+  int get tankDepthCm =>
+      _ultrasonics != null
+          ? (_ultrasonics.isNotEmpty ? _ultrasonics.first.tankDepthCm : 150)
+          : _tankDepthCm;
+  int get tankAirGapCm =>
+      _ultrasonics != null
+          ? (_ultrasonics.isNotEmpty ? _ultrasonics.first.tankAirGapCm : 15)
+          : _tankAirGapCm;
+
+  bool get mq2Enabled =>
+      _mq2Sensors != null
+          ? _mq2Sensors.any((g) => g.enabled)
+          : _mq2Enabled;
+  int get mq2AnalogPin =>
+      _mq2Sensors != null
+          ? (_mq2Sensors.isNotEmpty ? _mq2Sensors.first.analogPin : 255)
+          : _mq2AnalogPin;
+  int get mq2DigitalPin =>
+      _mq2Sensors != null
+          ? (_mq2Sensors.isNotEmpty ? _mq2Sensors.first.digitalPin : 255)
+          : _mq2DigitalPin;
+
+  bool get hasAnyI2cSensor =>
+      climates.any((c) => c.type.isI2c) ||
+      lights.any((l) => l.type != LightSensorType.none);
+
   factory HardwareProfile.fromJson(Map<String, dynamic> json) {
     final rawChannels = json['channels'] as List<dynamic>? ?? [];
     final channels = rawChannels
         .map((c) => ChannelHardwareConfig.fromJson(Map<String, dynamic>.from(c as Map)))
         .toList();
+
+    List<T>? parseSlotList<T>(
+      String key,
+      T Function(Map<String, dynamic>) builder,
+    ) {
+      final raw = json[key];
+      if (raw is! List) return null;
+      return raw
+          .whereType<Map>()
+          .map((e) => builder(Map<String, dynamic>.from(e)))
+          .toList();
+    }
 
     final dht = json['dht'] as Map<String, dynamic>?;
     final light = json['light'] as Map<String, dynamic>?;
@@ -242,6 +707,14 @@ class HardwareProfile {
     final mq2 = json['mq2'] as Map<String, dynamic>?;
     final buzzer = json['buzzer'] as Map<String, dynamic>?;
     final lcd = json['lcd'] as Map<String, dynamic>?;
+    final caps = json['pin_capabilities'] as Map<String, dynamic>?;
+
+    final parsedClimates = parseSlotList('climates', ClimateSensorSlotConfig.fromJson);
+    final parsedLights = parseSlotList('lights', LightSensorSlotConfig.fromJson);
+    final parsedMotions = parseSlotList('motions', MotionSensorSlotConfig.fromJson);
+    final parsedProbes = parseSlotList('probes', ProbeSensorSlotConfig.fromJson);
+    final parsedUltrasonics = parseSlotList('ultrasonics', UltrasonicSensorSlotConfig.fromJson);
+    final parsedMq2s = parseSlotList('mq2_sensors', Mq2SensorSlotConfig.fromJson);
 
     return HardwareProfile(
       boardName: json['board_name'] as String? ?? 'Custom',
@@ -262,6 +735,15 @@ class HardwareProfile {
       mq2Enabled: mq2?['enabled'] as bool? ?? true,
       mq2AnalogPin: (mq2?['analog_pin'] as num?)?.toInt() ?? 34,
       mq2DigitalPin: (mq2?['digital_pin'] as num?)?.toInt() ?? 35,
+      climates: parsedClimates,
+      lights: parsedLights,
+      motions: parsedMotions,
+      probes: parsedProbes,
+      ultrasonics: parsedUltrasonics,
+      mq2Sensors: parsedMq2s,
+      sensorLimits: SensorLimitsConfig.fromJson(
+        caps?['sensor_limits'] as Map<String, dynamic>?,
+      ),
       buzzerEnabled: buzzer?['enabled'] as bool? ?? true,
       buzzerPin: (buzzer?['pin'] as num?)?.toInt() ?? 5,
       lcdEnabled: lcd?['enabled'] as bool? ?? true,
@@ -274,51 +756,68 @@ class HardwareProfile {
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'board_name': boardName,
-    'num_relays': numRelays,
-    'channels': channels.map((c) => c.toJson()).toList(),
-    'dht': {
-      'type': dhtType.value,
-      'pin': dhtPin,
-    },
-    'light': {
-      'type': lightType.value,
-    },
-    'motion': {
-      'type': motionType.value,
-      'pin': motionPin,
-    },
-    'probe': {
-      'type': probeType.value,
-      'pin': probePin,
-    },
-    'ultrasonic': {
-      'type': ultrasonicType.value,
-      'trig_pin': trigPin,
-      'echo_pin': echoPin,
-      'tank_depth': tankDepthCm,
-      'air_gap': tankAirGapCm,
-    },
-    'mq2': {
-      'enabled': mq2Enabled,
-      'analog_pin': mq2AnalogPin,
-      'digital_pin': mq2DigitalPin,
-    },
-    'buzzer': {
-      'enabled': buzzerEnabled,
-      'pin': buzzerPin,
-    },
-    'lcd': {
-      'enabled': lcdEnabled,
-      'i2c_addr': lcdI2cAddr,
-      'cols': lcdCols,
-      'rows': lcdRows,
-      'sda_pin': i2cSdaPin,
-      'scl_pin': i2cSclPin,
-    },
-    'btn_multi_pin': btnMultiPin,
-  };
+  Map<String, dynamic> toJson() {
+    final cList = climates;
+    final lList = lights;
+    final mList = motions;
+    final pList = probes;
+    final uList = ultrasonics;
+    final gList = mq2Sensors;
+    return {
+      'board_name': boardName,
+      'num_relays': numRelays,
+      'channels': channels.map((c) => c.toJson()).toList(),
+      'climates': cList.map((e) => e.toJson()).toList(),
+      'lights': lList.map((e) => e.toJson()).toList(),
+      'motions': mList.map((e) => e.toJson()).toList(),
+      'probes': pList.map((e) => e.toJson()).toList(),
+      'ultrasonics': uList.map((e) => e.toJson()).toList(),
+      'mq2_sensors': gList.map((e) => e.toJson()).toList(),
+      'dht': {
+        'type': dhtType.value,
+        'pin': dhtPin,
+        if (cList.isNotEmpty && cList.first.type.isI2c)
+          'i2c_addr': cList.first.i2cAddr,
+      },
+      'light': {
+        'type': lightType.value,
+        if (lList.isNotEmpty) 'i2c_addr': lList.first.i2cAddr,
+      },
+      'motion': {
+        'type': motionType.value,
+        'pin': motionPin,
+      },
+      'probe': {
+        'type': probeType.value,
+        'pin': probePin,
+      },
+      'ultrasonic': {
+        'type': ultrasonicType.value,
+        'trig_pin': trigPin,
+        'echo_pin': echoPin,
+        'tank_depth': tankDepthCm,
+        'air_gap': tankAirGapCm,
+      },
+      'mq2': {
+        'enabled': mq2Enabled,
+        'analog_pin': mq2AnalogPin,
+        'digital_pin': mq2DigitalPin,
+      },
+      'buzzer': {
+        'enabled': buzzerEnabled,
+        'pin': buzzerPin,
+      },
+      'lcd': {
+        'enabled': lcdEnabled,
+        'i2c_addr': lcdI2cAddr,
+        'cols': lcdCols,
+        'rows': lcdRows,
+        'sda_pin': i2cSdaPin,
+        'scl_pin': i2cSclPin,
+      },
+      'btn_multi_pin': btnMultiPin,
+    };
+  }
 
   HardwareProfile copyWith({
     String? boardName,
@@ -339,6 +838,13 @@ class HardwareProfile {
     bool? mq2Enabled,
     int? mq2AnalogPin,
     int? mq2DigitalPin,
+    List<ClimateSensorSlotConfig>? climates,
+    List<LightSensorSlotConfig>? lights,
+    List<MotionSensorSlotConfig>? motions,
+    List<ProbeSensorSlotConfig>? probes,
+    List<UltrasonicSensorSlotConfig>? ultrasonics,
+    List<Mq2SensorSlotConfig>? mq2Sensors,
+    SensorLimitsConfig? sensorLimits,
     bool? buzzerEnabled,
     int? buzzerPin,
     bool? lcdEnabled,
@@ -349,6 +855,65 @@ class HardwareProfile {
     int? i2cSclPin,
     int? btnMultiPin,
   }) {
+    final nextClimates = climates ??
+        (dhtType != null || dhtPin != null
+            ? [
+                ClimateSensorSlotConfig(
+                  type: dhtType ?? this.dhtType,
+                  pin: dhtPin ?? this.dhtPin,
+                  i2cAddr: (dhtType ?? this.dhtType).defaultI2cAddr,
+                ),
+              ]
+            : _climates);
+    final nextLights = lights ??
+        (lightType != null
+            ? [LightSensorSlotConfig(type: lightType, i2cAddr: 0x23)]
+            : _lights);
+    final nextMotions = motions ??
+        (motionType != null || motionPin != null
+            ? [
+                MotionSensorSlotConfig(
+                  type: motionType ?? this.motionType,
+                  pin: motionPin ?? this.motionPin,
+                ),
+              ]
+            : _motions);
+    final nextProbes = probes ??
+        (probeType != null || probePin != null
+            ? [
+                ProbeSensorSlotConfig(
+                  type: probeType ?? this.probeType,
+                  pin: probePin ?? this.probePin,
+                ),
+              ]
+            : _probes);
+    final nextUltrasonics = ultrasonics ??
+        (ultrasonicType != null ||
+                trigPin != null ||
+                echoPin != null ||
+                tankDepthCm != null ||
+                tankAirGapCm != null
+            ? [
+                UltrasonicSensorSlotConfig(
+                  type: ultrasonicType ?? this.ultrasonicType,
+                  trigPin: trigPin ?? this.trigPin,
+                  echoPin: echoPin ?? this.echoPin,
+                  tankDepthCm: tankDepthCm ?? this.tankDepthCm,
+                  tankAirGapCm: tankAirGapCm ?? this.tankAirGapCm,
+                ),
+              ]
+            : _ultrasonics);
+    final nextMq2s = mq2Sensors ??
+        (mq2Enabled != null || mq2AnalogPin != null || mq2DigitalPin != null
+            ? [
+                Mq2SensorSlotConfig(
+                  enabled: mq2Enabled ?? this.mq2Enabled,
+                  analogPin: mq2AnalogPin ?? this.mq2AnalogPin,
+                  digitalPin: mq2DigitalPin ?? this.mq2DigitalPin,
+                ),
+              ]
+            : _mq2Sensors);
+
     return HardwareProfile(
       boardName: boardName ?? this.boardName,
       numRelays: numRelays ?? this.numRelays,
@@ -368,6 +933,13 @@ class HardwareProfile {
       mq2Enabled: mq2Enabled ?? this.mq2Enabled,
       mq2AnalogPin: mq2AnalogPin ?? this.mq2AnalogPin,
       mq2DigitalPin: mq2DigitalPin ?? this.mq2DigitalPin,
+      climates: nextClimates,
+      lights: nextLights,
+      motions: nextMotions,
+      probes: nextProbes,
+      ultrasonics: nextUltrasonics,
+      mq2Sensors: nextMq2s,
+      sensorLimits: sensorLimits ?? this.sensorLimits,
       buzzerEnabled: buzzerEnabled ?? this.buzzerEnabled,
       buzzerPin: buzzerPin ?? this.buzzerPin,
       lcdEnabled: lcdEnabled ?? this.lcdEnabled,
@@ -420,7 +992,7 @@ class HardwareProfile {
   ];
 
   static const List<int> safeInputPinsESP8266 = [
-    0, 2, 4, 5, 12, 13, 14, 15, 16, 17
+    0, 2, 4, 5, 12, 13, 14, 15, 16
   ];
 
   static const List<int> strappingPinsESP32 = [0, 2, 12, 15];
@@ -452,7 +1024,7 @@ class HardwareProfile {
 
   static List<int> allPhysicalPinsFor(bool isEsp8266) =>
       isEsp8266
-          ? [0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17]
+          ? [0, 2, 4, 5, 12, 13, 14, 15, 16, 17]
           : [0, 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33, 34, 35, 36, 39];
 
   static String pinLabel(int pin, bool isEsp8266) {

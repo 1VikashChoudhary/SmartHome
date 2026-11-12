@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../models/smart_device.dart';
 import '../models/hardware_profile.dart';
 import 'network_utils.dart';
@@ -92,6 +93,23 @@ class ApiClient {
     )] = (username == null || username.trim().isEmpty)
         ? 'admin'
         : username.trim();
+  }
+
+  static void unregisterDevice(String ipOrHost) {
+    final host = sanitizeHost(ipOrHost);
+    if (host.isEmpty) return;
+    final parts = host.split(':');
+    final port = parts.length > 1 ? int.tryParse(parts.last) ?? 80 : 80;
+    _usernameByHost.remove(_hostKey(parts.first, port));
+  }
+
+  @visibleForTesting
+  static bool hasRegisteredUsername(String ipOrHost) {
+    final host = sanitizeHost(ipOrHost);
+    if (host.isEmpty) return false;
+    final parts = host.split(':');
+    final port = parts.length > 1 ? int.tryParse(parts.last) ?? 80 : 80;
+    return _usernameByHost.containsKey(_hostKey(parts.first, port));
   }
 
   static String _hostKey(String host, int port) =>

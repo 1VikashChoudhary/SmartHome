@@ -194,7 +194,7 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onPressed: _isMuting
+              onPressed: (_isMuting || _isShuttingOff)
                   ? null
                   : () async {
                       setState(() => _isMuting = true);
@@ -237,7 +237,7 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
-              onPressed: _isShuttingOff
+              onPressed: (_isMuting || _isShuttingOff)
                   ? null
                   : () async {
                       setState(() => _isShuttingOff = true);
@@ -247,8 +247,9 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                       );
                       await manager.setAllRelays(widget.deviceId, 'off');
                       if (!context.mounted) return;
+                      final messenger = ScaffoldMessenger.maybeOf(context);
                       Navigator.pop(context);
-                      ScaffoldMessenger.of(context).showSnackBar(
+                      messenger?.showSnackBar(
                         const SnackBar(
                           content: Text(
                             'Emergency All OFF executed and buzzer muted.',
@@ -274,7 +275,9 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
             ),
             const SizedBox(height: 4),
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: (_isMuting || _isShuttingOff)
+                  ? null
+                  : () => Navigator.pop(context),
               child: Text(
                 'Dismiss Alert',
                 style: TextStyle(
