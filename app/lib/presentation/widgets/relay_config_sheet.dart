@@ -728,6 +728,7 @@ class _CustomMinutesDialog extends StatefulWidget {
 
 class _CustomMinutesDialogState extends State<_CustomMinutesDialog> {
   late final TextEditingController _controller;
+  String? _errorText;
 
   @override
   void initState() {
@@ -741,6 +742,15 @@ class _CustomMinutesDialogState extends State<_CustomMinutesDialog> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  void _submit() {
+    final v = int.tryParse(_controller.text.trim());
+    if (v == null || v < 0 || v > 1440) {
+      setState(() => _errorText = 'Enter between 0 and 1440 minutes.');
+      return;
+    }
+    Navigator.pop(context, v);
   }
 
   @override
@@ -760,9 +770,11 @@ class _CustomMinutesDialogState extends State<_CustomMinutesDialog> {
         keyboardType: TextInputType.number,
         autofocus: true,
         style: TextStyle(color: AppColors.textPrimary),
-        decoration: const InputDecoration(
+        onSubmitted: (_) => _submit(),
+        decoration: InputDecoration(
           labelText: 'Minutes (0 = Disabled, max 1440)',
           hintText: 'e.g. 45',
+          errorText: _errorText,
         ),
       ),
       actions: [
@@ -771,11 +783,7 @@ class _CustomMinutesDialogState extends State<_CustomMinutesDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
-            final v = int.tryParse(_controller.text.trim());
-            if (v == null || v < 0 || v > 1440) return;
-            Navigator.pop(context, v);
-          },
+          onPressed: _submit,
           child: const Text('Apply'),
         ),
       ],

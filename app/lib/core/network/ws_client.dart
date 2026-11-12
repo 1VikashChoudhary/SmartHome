@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'network_utils.dart';
 
@@ -18,6 +19,9 @@ class DeviceWebSocketClient {
   bool _isDisposed = false;
   bool _isConnected = false;
   bool _authFailed = false;
+  int _reconnectAttempts = 0;
+
+  bool get isConnected => _isConnected;
 
   DeviceWebSocketClient({
     required this.ip,
@@ -31,6 +35,8 @@ class DeviceWebSocketClient {
 
   void connect() {
     if (_isDisposed || _authFailed) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _disconnectInternal();
 
     try {
@@ -39,11 +45,16 @@ class DeviceWebSocketClient {
       final user = (authUsername != null && authUsername!.trim().isNotEmpty)
           ? authUsername!.trim()
           : 'admin';
+      final hasPasswordlessUser =
+          !hasAuth && user.toLowerCase() != 'admin';
+      final includeAuth = hasAuth || hasPasswordlessUser;
       final endpoint = Uri.parse('ws://$cleanHost');
       // Uri encodes reserved characters in user/password safely. Constructing
       // a ws URL with string interpolation breaks credentials such as `@`.
       final uri = endpoint.replace(
-        userInfo: hasAuth ? '$user:${authPassword!}' : '',
+        userInfo: hasAuth
+            ? '$user:${authPassword!}'
+            : (hasPasswordlessUser ? '$user:' : ''),
         path: '/ws',
       );
       _channel = WebSocketChannel.connect(uri);
@@ -52,14 +63,12 @@ class DeviceWebSocketClient {
         'type': 'subscribe',
         'stream': 'status',
         'interval_ms': statusIntervalSeconds.clamp(5, 60) * 1000,
-        if (hasAuth) 'user': user,
-        if (hasAuth) 'pass': authPassword,
+        if (includeAuth) 'user': user,
+        if (includeAuth) 'pass': authPassword ?? '',
       });
 
       // The ESP does not stream status until an active screen explicitly asks
-      // for it. Include credentials in the subscribe frame so WebSocketManager
-      // can verify against WebServerManager's SHA-256 credentials.
-      _channel!.sink.add(subscribePayload);
+      // for it. Send once after handshake completion to avoid duplicate frames.
       _channel!.ready.then((_) {
         if (!_isDisposed && !_authFailed && _channel != null) {
           try {
@@ -86,6 +95,7 @@ class DeviceWebSocketClient {
                 onAuthError?.call();
                 return;
               }
+              _reconnectAttempts = 0;
               if (!_isConnected) {
                 _isConnected = true;
                 onConnectionChange(true);
@@ -113,7 +123,9 @@ class DeviceWebSocketClient {
     _disconnectInternal();
     if (!_isDisposed && !_authFailed) {
       _reconnectTimer?.cancel();
-      _reconnectTimer = Timer(const Duration(seconds: 2), () => connect());
+      final delaySec = math.min(30, 2 * (1 << _reconnectAttempts.clamp(0, 4)));
+      _reconnectAttempts++;
+      _reconnectTimer = Timer(Duration(seconds: delaySec), () => connect());
     }
   }
 

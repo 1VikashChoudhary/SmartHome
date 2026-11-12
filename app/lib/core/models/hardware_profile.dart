@@ -50,7 +50,7 @@ enum ClimateSensorType {
   static ClimateSensorType fromValue(int val) {
     return ClimateSensorType.values.firstWhere(
       (m) => m.value == val,
-      orElse: () => ClimateSensorType.dht22,
+      orElse: () => ClimateSensorType.none,
     );
   }
 }
@@ -855,64 +855,120 @@ class HardwareProfile {
     int? i2cSclPin,
     int? btnMultiPin,
   }) {
+    final curClimates = this.climates;
     final nextClimates = climates ??
         (dhtType != null || dhtPin != null
-            ? [
-                ClimateSensorSlotConfig(
-                  type: dhtType ?? this.dhtType,
-                  pin: dhtPin ?? this.dhtPin,
-                  i2cAddr: (dhtType ?? this.dhtType).defaultI2cAddr,
-                ),
-              ]
-            : _climates);
+            ? (curClimates.isEmpty
+                ? [
+                    ClimateSensorSlotConfig(
+                      type: dhtType ?? this.dhtType,
+                      pin: dhtPin ?? this.dhtPin,
+                      i2cAddr: (dhtType ?? this.dhtType).defaultI2cAddr,
+                    ),
+                  ]
+                : [
+                    curClimates.first.copyWith(
+                      type: dhtType,
+                      pin: dhtPin,
+                      i2cAddr: dhtType?.defaultI2cAddr,
+                    ),
+                    ...curClimates.skip(1),
+                  ])
+            : curClimates);
+    final curLights = this.lights;
     final nextLights = lights ??
         (lightType != null
-            ? [LightSensorSlotConfig(type: lightType, i2cAddr: 0x23)]
-            : _lights);
+            ? (curLights.isEmpty
+                ? [LightSensorSlotConfig(type: lightType, i2cAddr: 0x23)]
+                : [
+                    curLights.first.copyWith(type: lightType),
+                    ...curLights.skip(1),
+                  ])
+            : curLights);
+    final curMotions = this.motions;
     final nextMotions = motions ??
         (motionType != null || motionPin != null
-            ? [
-                MotionSensorSlotConfig(
-                  type: motionType ?? this.motionType,
-                  pin: motionPin ?? this.motionPin,
-                ),
-              ]
-            : _motions);
+            ? (curMotions.isEmpty
+                ? [
+                    MotionSensorSlotConfig(
+                      type: motionType ?? this.motionType,
+                      pin: motionPin ?? this.motionPin,
+                    ),
+                  ]
+                : [
+                    curMotions.first.copyWith(
+                      type: motionType,
+                      pin: motionPin,
+                    ),
+                    ...curMotions.skip(1),
+                  ])
+            : curMotions);
+    final curProbes = this.probes;
     final nextProbes = probes ??
         (probeType != null || probePin != null
-            ? [
-                ProbeSensorSlotConfig(
-                  type: probeType ?? this.probeType,
-                  pin: probePin ?? this.probePin,
-                ),
-              ]
-            : _probes);
+            ? (curProbes.isEmpty
+                ? [
+                    ProbeSensorSlotConfig(
+                      type: probeType ?? this.probeType,
+                      pin: probePin ?? this.probePin,
+                    ),
+                  ]
+                : [
+                    curProbes.first.copyWith(
+                      type: probeType,
+                      pin: probePin,
+                    ),
+                    ...curProbes.skip(1),
+                  ])
+            : curProbes);
+    final curUltrasonics = this.ultrasonics;
     final nextUltrasonics = ultrasonics ??
         (ultrasonicType != null ||
                 trigPin != null ||
                 echoPin != null ||
                 tankDepthCm != null ||
                 tankAirGapCm != null
-            ? [
-                UltrasonicSensorSlotConfig(
-                  type: ultrasonicType ?? this.ultrasonicType,
-                  trigPin: trigPin ?? this.trigPin,
-                  echoPin: echoPin ?? this.echoPin,
-                  tankDepthCm: tankDepthCm ?? this.tankDepthCm,
-                  tankAirGapCm: tankAirGapCm ?? this.tankAirGapCm,
-                ),
-              ]
-            : _ultrasonics);
+            ? (curUltrasonics.isEmpty
+                ? [
+                    UltrasonicSensorSlotConfig(
+                      type: ultrasonicType ?? this.ultrasonicType,
+                      trigPin: trigPin ?? this.trigPin,
+                      echoPin: echoPin ?? this.echoPin,
+                      tankDepthCm: tankDepthCm ?? this.tankDepthCm,
+                      tankAirGapCm: tankAirGapCm ?? this.tankAirGapCm,
+                    ),
+                  ]
+                : [
+                    curUltrasonics.first.copyWith(
+                      type: ultrasonicType,
+                      trigPin: trigPin,
+                      echoPin: echoPin,
+                      tankDepthCm: tankDepthCm,
+                      tankAirGapCm: tankAirGapCm,
+                    ),
+                    ...curUltrasonics.skip(1),
+                  ])
+            : curUltrasonics);
+    final curMq2s = this.mq2Sensors;
     final nextMq2s = mq2Sensors ??
         (mq2Enabled != null || mq2AnalogPin != null || mq2DigitalPin != null
-            ? [
-                Mq2SensorSlotConfig(
-                  enabled: mq2Enabled ?? this.mq2Enabled,
-                  analogPin: mq2AnalogPin ?? this.mq2AnalogPin,
-                  digitalPin: mq2DigitalPin ?? this.mq2DigitalPin,
-                ),
-              ]
-            : _mq2Sensors);
+            ? (curMq2s.isEmpty
+                ? [
+                    Mq2SensorSlotConfig(
+                      enabled: mq2Enabled ?? this.mq2Enabled,
+                      analogPin: mq2AnalogPin ?? this.mq2AnalogPin,
+                      digitalPin: mq2DigitalPin ?? this.mq2DigitalPin,
+                    ),
+                  ]
+                : [
+                    curMq2s.first.copyWith(
+                      enabled: mq2Enabled,
+                      analogPin: mq2AnalogPin,
+                      digitalPin: mq2DigitalPin,
+                    ),
+                    ...curMq2s.skip(1),
+                  ])
+            : curMq2s);
 
     return HardwareProfile(
       boardName: boardName ?? this.boardName,

@@ -210,9 +210,19 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// Refresh all devices once. `/api/status` is authoritative and already
   /// contains relay state, so this deliberately avoids a second `/api/relays`
   /// request per device.
-  Future<void> refreshAllDevices() async {
+  Future<void> refreshAllDevices({
+    bool skipHealthyWs = false,
+    int staleSeconds = 25,
+  }) async {
     if (!_isAlive) return;
-    final devices = state.where((dev) => dev.ip.isNotEmpty).toList();
+    final now = DateTime.now();
+    final devices = state.where((dev) {
+      if (dev.ip.isEmpty) return false;
+      if (!skipHealthyWs) return true;
+      final wsConnected = _wsClients[dev.id]?.isConnected ?? false;
+      if (!wsConnected) return true;
+      return now.difference(dev.lastSeen).inSeconds >= staleSeconds;
+    }).toList();
     // Two requests at a time keeps a large installation responsive without
     // creating a Wi-Fi burst or overwhelming the phone radio.
     for (var start = 0; start < devices.length; start += 2) {
@@ -268,18 +278,44 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (existingIdx >= 0) {
       // Existing device: update IP (self-healing migration) and online status
       final old = state[existingIdx];
-      final effectivePass = password ?? old.authPassword;
+      if (old.ip.isNotEmpty && old.ip != discovered.ip) {
+        ApiClient.unregisterDevice(old.ip);
+      }
+      final cleanProvidedPass =
+          (password != null && password.isNotEmpty) ? password : null;
+      final effectivePass = cleanProvidedPass ?? old.authPassword;
+      final effectiveUser =
+          (username != null && username.trim().isNotEmpty)
+              ? username.trim()
+              : (old.authUsername ?? 'admin');
+      final hasUsablePass = effectivePass != null && effectivePass.isNotEmpty;
+      final explicitGuestNoPass =
+          username != null &&
+          username.trim().isNotEmpty &&
+          username.trim().toLowerCase() != 'admin';
+      final isStoredGuestNoPass =
+          !old.authLocked &&
+          old.isGuest &&
+          effectiveUser.toLowerCase() != 'admin';
       final missingCredentials =
           discovered.authRequired &&
-          (effectivePass == null || effectivePass.isEmpty);
+          !hasUsablePass &&
+          !explicitGuestNoPass &&
+          !isStoredGuestNoPass;
+      final shouldUnlock =
+          !discovered.authRequired ||
+          cleanProvidedPass != null ||
+          explicitGuestNoPass;
       final updated = old.copyWith(
         ip: discovered.ip,
         isOnline: true,
         lastSeen: DateTime.now(),
         authRequired: discovered.authRequired,
-        authLocked: missingCredentials ? true : old.authLocked,
+        authLocked: missingCredentials
+            ? true
+            : (shouldUnlock ? false : old.authLocked),
         authPassword: effectivePass,
-        authUsername: username ?? old.authUsername,
+        authUsername: effectiveUser,
       );
 
       final newList = List<SmartDevice>.from(state);
@@ -297,13 +333,22 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       }
     } else {
       // New device: add to list
+      final cleanPass =
+          (password != null && password.isNotEmpty) ? password : null;
+      final effectiveUser =
+          (username != null && username.trim().isNotEmpty)
+              ? username.trim()
+              : 'admin';
+      final isGuestNoPass =
+          cleanPass == null && effectiveUser.toLowerCase() != 'admin';
       final missingCredentials =
-          discovered.authRequired && (password == null || password.isEmpty);
+          discovered.authRequired && cleanPass == null && !isGuestNoPass;
       final devToAdd = discovered.copyWith(
         authRequired: discovered.authRequired,
         authLocked: missingCredentials,
-        authPassword: password,
-        authUsername: username ?? 'admin',
+        authPassword: cleanPass,
+        authUsername: effectiveUser,
+        authRole: isGuestNoPass ? 'guest' : discovered.authRole,
         room: 'Living Room',
       );
       final newList = [...state, devToAdd];
@@ -327,6 +372,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (!_isAlive) return;
     _foregroundSyncEnabled = true;
     final interval = intervalSeconds.clamp(5, 60).toInt();
+    _checkAndStartCountdownTicker();
     for (final dev in state) {
       if (dev.ip.isNotEmpty &&
           !dev.needsAuth &&
@@ -344,7 +390,10 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           _startStatusStream(dev, intervalSeconds: interval);
         }
       }
-      refreshAllDevices();
+      refreshAllDevices(
+        skipHealthyWs: true,
+        staleSeconds: interval * 2 + 5,
+      );
     });
     await refreshAllDevices();
   }
@@ -499,6 +548,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         }
         return;
       }
+
+      // Non-status typed frames (e.g. toast, pong) must not fall through
+      // into SmartDevice.fromStatus, which would overwrite telemetry/relays.
+      if (data['type'] != 'status') {
+        return;
+      }
     }
 
     // Full status broadcast
@@ -527,11 +582,15 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       }
     }
 
+    final hasExplicitRole =
+        data['auth_role'] != null &&
+        data['auth_role'].toString().trim().isNotEmpty;
     final finalDev = updated.copyWith(
       id: current.id,
       mac: current.mac.isNotEmpty ? current.mac : updated.mac,
       authRequired: updated.authRequired,
       authLocked: false,
+      authRole: hasExplicitRole ? updated.authRole : current.authRole,
       authPassword: current.authPassword,
       authUsername: current.authUsername,
       relays: mergedRelays,
@@ -574,13 +633,14 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (!_isAlive) return;
     if (!_refreshingDeviceIds.add(dev.id)) return;
     try {
-      if (dev.authLocked) {
+      if (dev.needsAuth) {
         final disc = await _api.probeDiscovery(dev.ip);
         if (!_isAlive) return;
         if (disc != null && !disc.authRequired) {
           final json = await _api.fetchStatus(
             dev.ip,
             password: dev.authPassword,
+            username: dev.authUsername,
           );
           if (!_isAlive) return;
           if (json != null) {
@@ -596,10 +656,14 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         return;
       }
 
-      final json = await _api.fetchStatus(dev.ip, password: dev.authPassword);
+      final json = await _api.fetchStatus(
+        dev.ip,
+        password: dev.authPassword,
+        username: dev.authUsername,
+      );
       if (!_isAlive) return;
       final postStatusIdx = state.indexWhere((d) => d.id == dev.id);
-      if (postStatusIdx < 0 || state[postStatusIdx].authLocked) {
+      if (postStatusIdx < 0 || state[postStatusIdx].needsAuth) {
         return;
       }
       if (json != null) {
@@ -609,7 +673,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final disc = await _api.probeDiscovery(dev.ip);
         if (!_isAlive) return;
         final postDiscIdx = state.indexWhere((d) => d.id == dev.id);
-        if (postDiscIdx < 0 || state[postDiscIdx].authLocked) {
+        if (postDiscIdx < 0 || state[postDiscIdx].needsAuth) {
           return;
         }
         if (disc != null) {
@@ -621,10 +685,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
             final retryJson = await _api.fetchStatus(
               dev.ip,
               password: dev.authPassword,
+              username: dev.authUsername,
             );
             if (!_isAlive) return;
             final postRetryIdx = state.indexWhere((d) => d.id == dev.id);
-            if (postRetryIdx < 0 || state[postRetryIdx].authLocked) {
+            if (postRetryIdx < 0 || state[postRetryIdx].needsAuth) {
               return;
             }
             if (retryJson != null) {
@@ -691,9 +756,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final latest = state[currentIdx];
         final revRelays = List<RelayChannel>.from(latest.relays);
         if (relayIndex >= 0 && relayIndex < revRelays.length) {
-          revRelays[relayIndex] = revRelays[relayIndex].copyWith(
-            state: oldState,
-          );
+        revRelays[relayIndex] = revRelays[relayIndex].copyWith(
+          state: oldState,
+          timerActive: targetRelay.timerActive,
+          timerTarget: targetRelay.timerTarget,
+          timerRemaining: targetRelay.timerRemaining,
+        );
         }
         final revList = List<SmartDevice>.from(state);
         revList[currentIdx] = latest.copyWith(relays: revRelays);
@@ -947,32 +1015,46 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final cleanUser = username.trim().isEmpty ? 'admin' : username.trim();
     final cleanPass = (password == null || password.isEmpty) ? null : password;
 
-    ApiClient.registerDeviceUsername(dev.ip, cleanUser);
-    final updated = dev.copyWith(
-      authUsername: cleanUser,
-      authPassword: cleanPass,
-      clearAuthPassword: cleanPass == null,
-      authLocked: false,
+    // Verify credentials against the controller before unlocking or persisting them
+    final statusJson = await _api.fetchStatus(
+      dev.ip,
+      password: cleanPass,
+      username: cleanUser,
+      skipUnauthorizedCallback: true,
     );
-    final newList = List<SmartDevice>.from(state);
-    newList[idx] = updated;
-    state = newList;
-    await _storage.saveDevices(newList);
-    if (!_isAlive) return false;
-
-    final statusJson = await _api.fetchStatus(dev.ip, password: cleanPass);
     if (!_isAlive) return statusJson != null;
+
+    final curIdx = state.indexWhere((d) => d.id == deviceId);
+    if (curIdx < 0) return statusJson != null;
+    final current = state[curIdx];
+
     if (statusJson != null) {
-      _handleWsData(dev.id, statusJson);
+      ApiClient.registerDeviceUsername(current.ip, cleanUser);
+      final isGuestUser = cleanUser.toLowerCase() != 'admin';
+      final updated = current.copyWith(
+        authUsername: cleanUser,
+        authPassword: cleanPass,
+        clearAuthPassword: cleanPass == null,
+        authLocked: false,
+        authRole: (statusJson['auth_role'] as String?) ??
+            (isGuestUser ? 'guest' : current.authRole),
+      );
+      final newList = List<SmartDevice>.from(state);
+      newList[curIdx] = updated;
+      state = newList;
+      _handleWsData(current.id, statusJson);
       final latestIdx = state.indexWhere((d) => d.id == deviceId);
-      if (_foregroundSyncEnabled && latestIdx >= 0) {
-        _replaceForegroundStream(state[latestIdx]);
+      if (latestIdx >= 0) {
+        await _storage.saveDevices(state);
+        if (_isAlive && _foregroundSyncEnabled) {
+          _replaceForegroundStream(state[latestIdx]);
+        }
       }
       return true;
     }
 
-    // Credentials rejected or unreachable
-    _handleDeviceAuthError(dev.id, promptUser: false);
+    // Credentials rejected or unreachable: keep device locked without persisting bad password
+    _handleDeviceAuthError(current.id, promptUser: false);
     return false;
   }
 

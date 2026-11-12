@@ -13,6 +13,13 @@ class DeviceStorageService {
 
   // Secure storage for sensitive credentials (AES-256 on Android, Keychain on iOS)
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
+  static Future<void> _saveQueue = Future<void>.value();
+
+  Future<void> _enqueueWrite(Future<void> Function() op) {
+    final next = _saveQueue.catchError((_) {}).then((_) => op());
+    _saveQueue = next;
+    return next;
+  }
 
   Future<List<SmartDevice>> loadDevices() async {
     final prefs = await SharedPreferences.getInstance();
@@ -20,35 +27,45 @@ class DeviceStorageService {
     if (jsonStr == null || jsonStr.isEmpty) return [];
 
     try {
-      final List decoded = jsonDecode(jsonStr);
+      final dynamic decoded = jsonDecode(jsonStr);
+      if (decoded is! List) return [];
       final devices = decoded
-          .map((e) => SmartDevice.fromStorageJson(e as Map<String, dynamic>))
+          .whereType<Map>()
+          .map((e) => SmartDevice.fromStorageJson(Map<String, dynamic>.from(e)))
           .toList();
 
       bool needsMigrationResave = false;
 
-      // Restore passwords from secure storage with seamless legacy migration
+      // Restore passwords and usernames from secure storage (supports passwordless guest logins)
       for (int i = 0; i < devices.length; i++) {
         final securePass = await _secureStorage.read(
           key: _keyPassPrefix + devices[i].id,
         );
+        final secureUser = await _secureStorage.read(
+          key: _keyUserPrefix + devices[i].id,
+        );
+        final effectiveUser = (secureUser != null && secureUser.isNotEmpty)
+            ? secureUser
+            : devices[i].authUsername;
 
         if (securePass != null && securePass.isNotEmpty) {
-          final secureUser = await _secureStorage.read(
-            key: _keyUserPrefix + devices[i].id,
-          );
           devices[i] = devices[i].copyWith(
             authPassword: securePass,
-            authUsername: secureUser ?? devices[i].authUsername ?? 'admin',
+            authUsername: effectiveUser ?? 'admin',
           );
-        } else if (devices[i].authPassword != null &&
-            devices[i].authPassword!.isNotEmpty) {
-          // Legacy migration: password existed in SharedPreferences JSON, migrate to secure storage
-          await _secureStorage.write(
-            key: _keyPassPrefix + devices[i].id,
-            value: devices[i].authPassword!,
-          );
-          needsMigrationResave = true;
+        } else {
+          if (effectiveUser != null && effectiveUser.isNotEmpty) {
+            devices[i] = devices[i].copyWith(authUsername: effectiveUser);
+          }
+          if (devices[i].authPassword != null &&
+              devices[i].authPassword!.isNotEmpty) {
+            // Legacy migration: password existed in SharedPreferences JSON, migrate to secure storage
+            await _secureStorage.write(
+              key: _keyPassPrefix + devices[i].id,
+              value: devices[i].authPassword!,
+            );
+            needsMigrationResave = true;
+          }
         }
       }
 
@@ -63,33 +80,40 @@ class DeviceStorageService {
     }
   }
 
-  Future<void> saveDevices(List<SmartDevice> devices) async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> saveDevices(List<SmartDevice> devices) {
+    return _enqueueWrite(() async {
+      final prefs = await SharedPreferences.getInstance();
 
-    // Save passwords to secure storage, strip from plaintext JSON
-    for (final device in devices) {
-      if (device.authPassword != null && device.authPassword!.isNotEmpty) {
-        await _secureStorage.write(
-          key: _keyPassPrefix + device.id,
-          value: device.authPassword!,
-        );
+      // Save or clear credentials in secure storage, strip from plaintext JSON
+      for (final device in devices) {
+        if (device.authPassword != null && device.authPassword!.isNotEmpty) {
+          await _secureStorage.write(
+            key: _keyPassPrefix + device.id,
+            value: device.authPassword!,
+          );
+        } else {
+          await _secureStorage.delete(key: _keyPassPrefix + device.id);
+        }
+        if (device.authUsername != null &&
+            device.authUsername!.trim().isNotEmpty) {
+          await _secureStorage.write(
+            key: _keyUserPrefix + device.id,
+            value: device.authUsername!.trim(),
+          );
+        } else {
+          await _secureStorage.delete(key: _keyUserPrefix + device.id);
+        }
       }
-      if (device.authUsername != null && device.authUsername!.isNotEmpty) {
-        await _secureStorage.write(
-          key: _keyUserPrefix + device.id,
-          value: device.authUsername!,
-        );
-      }
-    }
 
-    // Store device metadata WITHOUT passwords in SharedPreferences
-    final list = devices.map((d) {
-      final json = d.toStorageJson();
-      json.remove('auth_password'); // Strip password from plaintext storage
-      json.remove('auth_username');
-      return json;
-    }).toList();
-    await prefs.setString(_keyDevices, jsonEncode(list));
+      // Store device metadata WITHOUT passwords in SharedPreferences
+      final list = devices.map((d) {
+        final json = d.toStorageJson();
+        json.remove('auth_password'); // Strip password from plaintext storage
+        json.remove('auth_username');
+        return json;
+      }).toList();
+      await prefs.setString(_keyDevices, jsonEncode(list));
+    });
   }
 
   Future<List<String>> loadRooms() async {
@@ -147,6 +171,7 @@ class DeviceStorageService {
       final json = d.toStorageJson();
       if (!includeCredentials) {
         json.remove('auth_password');
+        json.remove('auth_username');
       }
       return json;
     }).toList();
@@ -171,6 +196,9 @@ class DeviceStorageService {
       final dynamic decoded = jsonDecode(rawJson);
       if (decoded is! Map) return null;
       final map = Map<String, dynamic>.from(decoded);
+      if (map.containsKey('type') && map['type'] != 'smarthome_pro_hub_backup') {
+        return null;
+      }
 
       final rawDevices = map['devices'];
       if (rawDevices is! List) return null;

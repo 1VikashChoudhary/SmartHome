@@ -41,7 +41,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     'Garage',
   ];
 
-  void _showRenameDialog(BuildContext context, SmartDevice device) {
+  Future<void> _showRenameDialog(BuildContext context, SmartDevice device) async {
     if (device.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -53,53 +53,57 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       return;
     }
     final controller = TextEditingController(text: device.name);
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: Text('Rename Device', style: TextStyle(color: AppColors.textPrimary)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: TextStyle(color: AppColors.textPrimary),
-          decoration: InputDecoration(
-            labelText: 'Device Name',
-            labelStyle: TextStyle(color: AppColors.textSecondary),
-            hintText: 'e.g. Living Room Controller',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+    try {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: Text('Rename Device', style: TextStyle(color: AppColors.textPrimary)),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            style: TextStyle(color: AppColors.textPrimary),
+            decoration: InputDecoration(
+              labelText: 'Device Name',
+              labelStyle: TextStyle(color: AppColors.textSecondary),
+              hintText: 'e.g. Living Room Controller',
             ),
-            onPressed: () async {
-              final newName = controller.text.trim();
-              final messenger = ScaffoldMessenger.of(context);
-              Navigator.pop(ctx);
-              if (newName.isNotEmpty) {
-                final ok = await ref.read(deviceManagerProvider.notifier).updateDeviceName(device.id, newName);
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok ? 'Device renamed to "$newName"' : 'Failed to update device name on controller',
-                    ),
-                    backgroundColor: ok ? AppColors.success : AppColors.danger,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-            },
-            child: const Text('Save', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('Cancel', style: TextStyle(color: AppColors.textSecondary)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                final newName = controller.text.trim();
+                final messenger = ScaffoldMessenger.of(context);
+                Navigator.pop(ctx);
+                if (newName.isNotEmpty) {
+                  final ok = await ref.read(deviceManagerProvider.notifier).updateDeviceName(device.id, newName);
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        ok ? 'Device renamed to "$newName"' : 'Failed to update device name on controller',
+                      ),
+                      backgroundColor: ok ? AppColors.success : AppColors.danger,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              child: const Text('Save', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   void _showRoomPicker(BuildContext context, SmartDevice device) {
@@ -181,13 +185,20 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               backgroundColor: AppColors.danger,
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              ref.read(deviceManagerProvider.notifier).rebootDevice(device.id);
-              ScaffoldMessenger.of(context).showSnackBar(
+              final messenger = ScaffoldMessenger.of(context);
+              final ok = await ref
+                  .read(deviceManagerProvider.notifier)
+                  .rebootDevice(device.id);
+              messenger.showSnackBar(
                 SnackBar(
-                  content: Text('Reboot command dispatched to ${device.name}...'),
-                  backgroundColor: AppColors.danger,
+                  content: Text(
+                    ok
+                        ? 'Reboot initiated for ${device.name}. Reconnecting shortly...'
+                        : 'Failed to dispatch reboot command to ${device.name}',
+                  ),
+                  backgroundColor: ok ? AppColors.warning : AppColors.danger,
                 ),
               );
             },
@@ -346,7 +357,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               ),
               child: const Icon(Icons.more_vert_rounded, size: 18),
             ),
-            onSelected: (val) {
+            onSelected: (val) async {
               if (val == 'tools') {
                 DeviceToolsSheet.show(context, device, manager);
               } else if (val == 'auth') {
@@ -415,9 +426,42 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   MaterialPageRoute(builder: (_) => BatchOtaScreen(preselectedDeviceId: device.id)),
                 );
               } else if (val == 'delete') {
-                manager.removeDevice(device.id);
-                if (Navigator.canPop(context)) {
-                  Navigator.pop(context);
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: AppColors.surface,
+                    title: Text(
+                      'Remove Device?',
+                      style: TextStyle(color: AppColors.danger),
+                    ),
+                    content: Text(
+                      'Remove "${device.name}" from your registered controllers list?',
+                      style: TextStyle(color: AppColors.textSecondary),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: Text(
+                          'Cancel',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.danger,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text('Remove'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) {
+                  await manager.removeDevice(device.id);
+                  if (context.mounted && Navigator.canPop(context)) {
+                    Navigator.pop(context);
+                  }
                 }
               }
             },

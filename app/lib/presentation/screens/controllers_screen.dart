@@ -403,7 +403,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
     );
   }
 
-  void _showRenameDialog(BuildContext context, SmartDevice dev) {
+  Future<void> _showRenameDialog(BuildContext context, SmartDevice dev) async {
     if (dev.isGuest) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -419,76 +419,83 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
     final textController = TextEditingController(text: dev.name);
     final isDark = AppColors.isDark;
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF131A2B) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(
-          'Rename Controller',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        content: TextField(
-          controller: textController,
-          decoration: InputDecoration(
-            labelText: 'Controller Name',
-            filled: true,
-            fillColor: isDark
-                ? const Color(0xFF1A2338)
-                : const Color(0xFFF1F5F9),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
+    try {
+      await showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF131A2B) : Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            'Rename Controller',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
             ),
           ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: Text(
-              'Cancel',
-              style: TextStyle(color: AppColors.textSecondary),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final newName = textController.text.trim();
-              final messenger = ScaffoldMessenger.of(context);
-              Navigator.pop(ctx);
-              if (newName.isNotEmpty) {
-                final ok = await ref
-                    .read(deviceManagerProvider.notifier)
-                    .updateDeviceName(dev.id, newName);
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok
-                          ? 'Controller renamed to "$newName"'
-                          : 'Failed to save controller name to device flash',
-                    ),
-                    backgroundColor: ok ? AppColors.success : AppColors.danger,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-            child: const Text(
-              'Save',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+          content: TextField(
+            controller: textController,
+            decoration: InputDecoration(
+              labelText: 'Controller Name',
+              filled: true,
+              fillColor: isDark
+                  ? const Color(0xFF1A2338)
+                  : const Color(0xFFF1F5F9),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
               ),
             ),
+            autofocus: true,
           ),
-        ],
-      ),
-    );
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text(
+                'Cancel',
+                style: TextStyle(color: AppColors.textSecondary),
+              ),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final newName = textController.text.trim();
+                final messenger = ScaffoldMessenger.of(context);
+                Navigator.pop(ctx);
+                if (newName.isNotEmpty) {
+                  final ok = await ref
+                      .read(deviceManagerProvider.notifier)
+                      .updateDeviceName(dev.id, newName);
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        ok
+                            ? 'Controller renamed to "$newName"'
+                            : 'Failed to save controller name to device flash',
+                      ),
+                      backgroundColor:
+                          ok ? AppColors.success : AppColors.danger,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
+              },
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+              child: const Text(
+                'Save',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      textController.dispose();
+    }
   }
 
   void _showCredentialsDialog(BuildContext context, SmartDevice dev) {

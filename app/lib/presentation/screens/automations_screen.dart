@@ -66,43 +66,50 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     return devices.first;
   }
 
+  int _loadGeneration = 0;
+
   void _loadData() {
     final devices = ref.read(deviceManagerProvider);
     final dev = _resolveDevice(devices);
     if (dev != null) {
       _selectedDeviceId = dev.id;
-      _loadRules(dev);
-      _loadAlarms(dev);
+      final gen = ++_loadGeneration;
+      _loadRules(dev, generation: gen);
+      _loadAlarms(dev, generation: gen);
     }
   }
 
-  Future<void> _loadRules(SmartDevice dev) async {
+  Future<void> _loadRules(SmartDevice dev, {int? generation}) async {
+    final gen = generation ?? _loadGeneration;
     setState(() => _loadingRules = true);
     final rawRules = await _api.fetchRules(dev.ip, password: dev.authPassword);
-    if (mounted) {
-      setState(() {
-        _rules = rawRules != null
-            ? rawRules.map((m) => AutomationRule.fromJson(m)).toList()
-            : [];
-        _loadingRules = false;
-      });
+    if (!mounted || gen != _loadGeneration || _selectedDeviceId != dev.id) {
+      return;
     }
+    setState(() {
+      _rules = rawRules != null
+          ? rawRules.map((m) => AutomationRule.fromJson(m)).toList()
+          : [];
+      _loadingRules = false;
+    });
   }
 
-  Future<void> _loadAlarms(SmartDevice dev) async {
+  Future<void> _loadAlarms(SmartDevice dev, {int? generation}) async {
+    final gen = generation ?? _loadGeneration;
     setState(() => _loadingAlarms = true);
     final rawAlarms = await _api.fetchAlarms(
       dev.ip,
       password: dev.authPassword,
     );
-    if (mounted) {
-      setState(() {
-        _alarms = rawAlarms != null
-            ? rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList()
-            : [];
-        _loadingAlarms = false;
-      });
+    if (!mounted || gen != _loadGeneration || _selectedDeviceId != dev.id) {
+      return;
     }
+    setState(() {
+      _alarms = rawAlarms != null
+          ? rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList()
+          : [];
+      _loadingAlarms = false;
+    });
   }
 
   // --- Rule Actions ---
@@ -123,7 +130,14 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       password: dev.authPassword,
     );
     if (!ok && mounted) {
-      setState(() => _rules[idx] = _rules[idx].copyWith(enabled: !enabled));
+      final revertIdx = _rules.indexWhere((r) => r.id == rule.id);
+      if (revertIdx >= 0) {
+        setState(
+          () => _rules[revertIdx] = _rules[revertIdx].copyWith(
+            enabled: !enabled,
+          ),
+        );
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Failed to update rule state'),
@@ -169,16 +183,22 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         rule.id,
         password: dev.authPassword,
       );
+      if (!mounted) return;
       if (ok) {
         setState(() => _rules.removeWhere((r) => r.id == rule.id));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Rule deleted successfully'),
-              backgroundColor: AppColors.accent,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Rule deleted successfully'),
+            backgroundColor: AppColors.accent,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to delete rule'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
       }
     }
   }
@@ -201,7 +221,14 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       password: dev.authPassword,
     );
     if (!ok && mounted) {
-      setState(() => _alarms[idx] = _alarms[idx].copyWith(enabled: !enabled));
+      final revertIdx = _alarms.indexWhere((a) => a.id == alarm.id);
+      if (revertIdx >= 0) {
+        setState(
+          () => _alarms[revertIdx] = _alarms[revertIdx].copyWith(
+            enabled: !enabled,
+          ),
+        );
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Failed to update schedule'),
@@ -244,16 +271,22 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         alarm.id,
         password: dev.authPassword,
       );
+      if (!mounted) return;
       if (ok) {
         setState(() => _alarms.removeWhere((a) => a.id == alarm.id));
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Schedule deleted'),
-              backgroundColor: AppColors.accent,
-            ),
-          );
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Schedule deleted'),
+            backgroundColor: AppColors.accent,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Failed to delete schedule'),
+            backgroundColor: AppColors.danger,
+          ),
+        );
       }
     }
   }
@@ -879,11 +912,222 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     return '${minutes}m';
   }
 
-  void _showRuleEditor(
+  String _formatAlarmTime(int hour, int minute) {
+    final h12 = (hour % 12 == 0) ? 12 : (hour % 12);
+    final mStr = minute.toString().padLeft(2, '0');
+    final amPm = hour < 12 ? 'AM' : 'PM';
+    return '${h12.toString().padLeft(2, '0')}:$mStr $amPm';
+  }
+
+  static Widget _buildScheduleChip({
+    required String label,
+    required IconData icon,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primary.withValues(alpha: 0.18)
+              : AppColors.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isSelected ? AppColors.primary : AppColors.cardBorder,
+            width: isSelected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? AppColors.primary : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                color: isSelected ? AppColors.primary : AppColors.textPrimary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildDayCircle(
+    String letter,
+    String title,
+    int dow,
+    int currentDow,
+    ValueChanged<int> onSelect,
+  ) {
+    final isSelected = dow == currentDow;
+    return Tooltip(
+      message: title,
+      child: InkWell(
+        onTap: () => onSelect(dow),
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.primary : AppColors.surfaceElevated,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.cardBorder,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.35),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Center(
+            child: Text(
+              letter,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: isSelected ? Colors.white : AppColors.textSecondary,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildPresetChip(
+    int minutes,
+    String label,
+    int currentTotal,
+    ValueChanged<int> onSelect,
+  ) {
+    final isSelected = minutes == currentTotal;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: () => onSelect(minutes),
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppColors.primary.withValues(alpha: 0.22)
+                : AppColors.card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : AppColors.cardBorder,
+              width: isSelected ? 1.5 : 1.0,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+              color: isSelected ? AppColors.primary : AppColors.textSecondary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _buildStepperBox({
+    required String label,
+    required TextEditingController controller,
+    required int value,
+    required VoidCallback onMinus,
+    required VoidCallback onPlus,
+    required ValueChanged<String> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.cardBorder),
+      ),
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.remove_circle_outline_rounded,
+                  size: 22,
+                  color: value > 0 ? AppColors.textPrimary : AppColors.textMuted,
+                ),
+                onPressed: value > 0 ? onMinus : null,
+              ),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  textAlign: TextAlign.center,
+                  keyboardType: TextInputType.number,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.textPrimary,
+                  ),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onChanged: onChanged,
+                ),
+              ),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                icon: Icon(
+                  Icons.add_circle_outline_rounded,
+                  size: 22,
+                  color: AppColors.primary,
+                ),
+                onPressed: onPlus,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showRuleEditor(
     BuildContext context,
     SmartDevice dev, [
     AutomationRule? existing,
-  ]) {
+  ]) async {
     if (dev.isGuest) return;
     final nameController = TextEditingController(
       text: existing?.name ?? 'Auto Rule ${_rules.length + 1}',
@@ -924,7 +1168,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       }
     }
 
-    showModalBottomSheet(
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -933,363 +1177,755 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
           final slotLabels = slotLabelsFor(sensor);
           final slotCount = math.max(slotLabels.length, sensorIndex + 1);
           final clampedSensorIdx = sensorIndex.clamp(0, slotCount - 1);
+          final viewInsets = MediaQuery.of(sheetContext).viewInsets.bottom;
+          final safeBottom = math.max(
+            MediaQuery.of(sheetContext).padding.bottom,
+            MediaQuery.of(sheetContext).viewPadding.bottom,
+          );
+          final bottomPadding =
+              viewInsets > 0 ? (viewInsets + 16) : (safeBottom + 20);
 
           return Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetContext).size.height * 0.9,
-          ),
-          padding: EdgeInsets.fromLTRB(
-            20,
-            20,
-            20,
-            MediaQuery.of(sheetContext).viewInsets.bottom + 20,
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  existing == null ? 'New Sensor Rule' : 'Edit Sensor Rule',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.9,
+            ),
+            padding: EdgeInsets.fromLTRB(
+              20,
+              12,
+              20,
+              bottomPadding,
+            ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              border: Border(
+                top: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.3),
+                  width: 1.5,
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'Saved and evaluated directly by this controller every second.',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 13,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: nameController,
-                  maxLength: 23,
-                  decoration: const InputDecoration(
-                    labelText: 'Rule name',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: sensor,
-                  decoration: const InputDecoration(
-                    labelText: 'Sensor',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 0, child: Text('Temperature (°C)')),
-                    DropdownMenuItem(value: 1, child: Text('Humidity (%)')),
-                    DropdownMenuItem(value: 2, child: Text('Gas / MQ-2 (ADC)')),
-                    DropdownMenuItem(value: 3, child: Text('Ambient Light (Lux)')),
-                    DropdownMenuItem(value: 4, child: Text('Water Temp Probe (°C)')),
-                    DropdownMenuItem(value: 5, child: Text('Water Tank Level (%)')),
-                    DropdownMenuItem(value: 6, child: Text('Motion / Occupancy (1=Motion, 0=Clear)')),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) return;
-                    setSheetState(() {
-                      sensor = value;
-                      sensorIndex = 0;
-                      switch (value) {
-                        case 0:
-                          threshold = 30.0;
-                          hysteresisController.text = '0.5';
-                          break;
-                        case 1:
-                          threshold = 70.0;
-                          hysteresisController.text = '2.0';
-                          break;
-                        case 2:
-                          threshold = 800.0;
-                          hysteresisController.text = '30';
-                          break;
-                        case 3:
-                          threshold = 200.0;
-                          hysteresisController.text = '15';
-                          break;
-                        case 4:
-                          threshold = 35.0;
-                          hysteresisController.text = '0.5';
-                          break;
-                        case 5:
-                          threshold = 20.0;
-                          hysteresisController.text = '3';
-                          break;
-                        case 6:
-                          threshold = condition == 1 ? 0.0 : 1.0;
-                          hysteresisController.text = '0';
-                          break;
-                      }
-                    });
-                  },
-                ),
-                if (slotCount > 1) ...[
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<int>(
-                    key: ValueKey('rule_sidx_${sensor}_$clampedSensorIdx'),
-                    initialValue: clampedSensorIdx,
-                    decoration: const InputDecoration(
-                      labelText: 'Sensor Instance',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: List.generate(
-                      slotCount,
-                      (idx) => DropdownMenuItem(
-                        value: idx,
-                        child: Text(
-                          idx < slotLabels.length
-                              ? slotLabels[idx]
-                              : 'Sensor #${idx + 1}',
-                        ),
+              ),
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Drag Handle
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.textMuted.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
                       ),
                     ),
-                    onChanged: (value) =>
-                        setSheetState(() => sensorIndex = value ?? sensorIndex),
                   ),
-                ],
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: condition,
-                  decoration: const InputDecoration(
-                    labelText: 'Trigger condition',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 0,
-                      child: Text('Rises to / above threshold (≥)'),
-                    ),
-                    DropdownMenuItem(
-                      value: 1,
-                      child: Text('Falls to / below threshold (≤)'),
-                    ),
-                  ],
-                  onChanged: (value) => setSheetState(() {
-                    condition = value ?? condition;
-                    if (sensor == 6) {
-                      threshold = condition == 1 ? 0.0 : 1.0;
-                    }
-                  }),
-                ),
-                const SizedBox(height: 16),
-                Builder(
-                  builder: (context) {
-                    String unitStr = '°C';
-                    double maxVal = 60.0;
-                    int divisionsVal = 60;
-                    int decimals = 1;
 
-                    if (sensor == 0) {
-                      unitStr = '°C';
-                      maxVal = 60.0;
-                      divisionsVal = 60;
-                      decimals = 1;
-                    } else if (sensor == 1) {
-                      unitStr = '%';
-                      maxVal = 100.0;
-                      divisionsVal = 100;
-                      decimals = 0;
-                    } else if (sensor == 2) {
-                      unitStr = 'ADC';
-                      maxVal = dev.telemetry.gasMax > 0
-                          ? dev.telemetry.gasMax.toDouble()
-                          : (dev.isEsp8266 ? 1023.0 : 4095.0);
-                      divisionsVal = dev.isEsp8266 ? 50 : 80;
-                      decimals = 0;
-                    } else if (sensor == 3) {
-                      unitStr = 'lx';
-                      maxVal = 2000.0;
-                      divisionsVal = 100;
-                      decimals = 0;
-                    } else if (sensor == 4) {
-                      unitStr = '°C';
-                      maxVal = 100.0;
-                      divisionsVal = 100;
-                      decimals = 1;
-                    } else if (sensor == 5) {
-                      unitStr = '%';
-                      maxVal = 100.0;
-                      divisionsVal = 100;
-                      decimals = 0;
-                    } else if (sensor == 6) {
-                      unitStr = '';
-                      maxVal = 1.0;
-                      divisionsVal = 1;
-                      decimals = 0;
-                    }
-
-                    final clampedTh = threshold.clamp(0.0, maxVal);
-                    final thLabel = sensor == 6
-                        ? 'Motion Threshold: ${clampedTh >= 0.5 ? "1 (Detected)" : "0 (Clear)"}'
-                        : 'Threshold: ${clampedTh.toStringAsFixed(decimals)} $unitStr';
-
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          thLabel,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.textPrimary,
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryGlow,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.25),
                           ),
                         ),
-                        Slider(
-                          value: clampedTh,
-                          min: 0,
-                          max: maxVal,
-                          divisions: divisionsVal,
-                          activeColor: AppColors.primary,
-                          onChanged: (value) => setSheetState(() => threshold = value),
+                        child: Icon(
+                          existing == null ? Icons.add_moderator_rounded : Icons.edit_note_rounded,
+                          color: AppColors.primary,
+                          size: 22,
                         ),
-                      ],
-                    );
-                  },
-                ),
-                TextField(
-                  controller: hysteresisController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              existing == null ? 'New Sensor Rule' : 'Edit Sensor Rule',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Evaluated directly by controller every second',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceElevated,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.close_rounded, size: 18, color: AppColors.textSecondary),
+                        ),
+                        onPressed: () => Navigator.pop(sheetContext),
+                      ),
+                    ],
                   ),
-                  decoration: const InputDecoration(
-                    labelText: 'Hysteresis (anti-flapping)',
-                    helperText:
-                        'The reading must cross this reset margin before the rule can fire again.',
-                    border: OutlineInputBorder(),
+                  const SizedBox(height: 18),
+
+                  // Rule Name Field
+                  Text(
+                    'RULE LABEL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: relay,
-                  decoration: const InputDecoration(
-                    labelText: 'Target',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    ...List.generate(
-                      dev.relays.length,
-                      (index) => DropdownMenuItem(
-                        value: index,
-                        child: Text(_relayLabel(dev, index)),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: nameController,
+                    maxLength: 23,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      hintText: 'e.g. Overheat Fan Trigger',
+                      counterStyle: TextStyle(fontSize: 10, color: AppColors.textMuted),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
                       ),
                     ),
-                    const DropdownMenuItem(
-                      value: 255,
-                      child: Text('All relays'),
-                    ),
-                  ],
-                  onChanged: (value) =>
-                      setSheetState(() => relay = value ?? relay),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  initialValue: action,
-                  decoration: const InputDecoration(
-                    labelText: 'Action',
-                    border: OutlineInputBorder(),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 0, child: Text('Turn ON')),
-                    DropdownMenuItem(value: 1, child: Text('Turn OFF')),
-                  ],
-                  onChanged: (value) =>
-                      setSheetState(() => action = value ?? action),
-                ),
-                const SizedBox(height: 22),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                  const SizedBox(height: 14),
+
+                  // Sensor Dropdown
+                  Text(
+                    'SENSOR TRIGGER',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
                     ),
-                    onPressed: () async {
-                      final hysteresis = double.tryParse(
-                        hysteresisController.text.trim(),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    initialValue: sensor,
+                    dropdownColor: AppColors.surfaceElevated,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                      ),
+                    ),
+                    items: [
+                      DropdownMenuItem(
+                        value: 0,
+                        child: Row(
+                          children: [
+                            Icon(Icons.thermostat_rounded, color: AppColors.tempAmber, size: 20),
+                            SizedBox(width: 10),
+                            Text('Temperature (°C)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 1,
+                        child: Row(
+                          children: [
+                            Icon(Icons.water_drop_rounded, color: AppColors.humCyan, size: 20),
+                            SizedBox(width: 10),
+                            Text('Humidity (%)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 2,
+                        child: Row(
+                          children: [
+                            Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 20),
+                            SizedBox(width: 10),
+                            Text('Gas / MQ-2 (ADC)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 3,
+                        child: Row(
+                          children: [
+                            Icon(Icons.wb_sunny_rounded, color: Colors.amber, size: 20),
+                            SizedBox(width: 10),
+                            Text('Ambient Light (Lux)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 4,
+                        child: Row(
+                          children: [
+                            Icon(Icons.device_thermostat_rounded, color: Colors.cyan, size: 20),
+                            SizedBox(width: 10),
+                            Text('Water Temp Probe (°C)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 5,
+                        child: Row(
+                          children: [
+                            Icon(Icons.waves_rounded, color: Colors.blue, size: 20),
+                            SizedBox(width: 10),
+                            Text('Water Tank Level (%)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 6,
+                        child: Row(
+                          children: [
+                            Icon(Icons.directions_run_rounded, color: AppColors.warning, size: 20),
+                            SizedBox(width: 10),
+                            Text('Motion / Occupancy (1=Motion, 0=Clear)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() {
+                        sensor = value;
+                        sensorIndex = 0;
+                        switch (value) {
+                          case 0:
+                            threshold = 30.0;
+                            hysteresisController.text = '0.5';
+                            break;
+                          case 1:
+                            threshold = 70.0;
+                            hysteresisController.text = '2.0';
+                            break;
+                          case 2:
+                            threshold = 800.0;
+                            hysteresisController.text = '30';
+                            break;
+                          case 3:
+                            threshold = 200.0;
+                            hysteresisController.text = '15';
+                            break;
+                          case 4:
+                            threshold = 35.0;
+                            hysteresisController.text = '0.5';
+                            break;
+                          case 5:
+                            threshold = 20.0;
+                            hysteresisController.text = '3';
+                            break;
+                          case 6:
+                            threshold = condition == 1 ? 0.0 : 1.0;
+                            hysteresisController.text = '0';
+                            break;
+                        }
+                      });
+                    },
+                  ),
+                  if (slotCount > 1) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'SENSOR INSTANCE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<int>(
+                      key: ValueKey('rule_sidx_${sensor}_$clampedSensorIdx'),
+                      initialValue: clampedSensorIdx,
+                      dropdownColor: AppColors.surfaceElevated,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: AppColors.card,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: AppColors.cardBorder),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: AppColors.cardBorder),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                        ),
+                      ),
+                      items: List.generate(
+                        slotCount,
+                        (idx) => DropdownMenuItem(
+                          value: idx,
+                          child: Text(
+                            idx < slotLabels.length ? slotLabels[idx] : 'Sensor #${idx + 1}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) =>
+                          setSheetState(() => sensorIndex = value ?? sensorIndex),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+
+                  // Trigger Condition Segmented Control
+                  Text(
+                    'TRIGGER CONDITION',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  LuxurySegmentedSelector<int>(
+                    values: const [0, 1],
+                    labels: const {
+                      0: 'Rises to / above (≥)',
+                      1: 'Falls to / below (≤)',
+                    },
+                    icons: const {
+                      0: Icons.arrow_upward_rounded,
+                      1: Icons.arrow_downward_rounded,
+                    },
+                    selectedValue: condition,
+                    onSelected: (value) => setSheetState(() {
+                      condition = value;
+                      if (sensor == 6) {
+                        threshold = condition == 1 ? 0.0 : 1.0;
+                      }
+                    }),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Threshold Hero Card
+                  Builder(
+                    builder: (context) {
+                      String unitStr = '°C';
+                      double maxVal = 60.0;
+                      int divisionsVal = 60;
+                      int decimals = 1;
+
+                      if (sensor == 0) {
+                        unitStr = '°C';
+                        maxVal = 60.0;
+                        divisionsVal = 60;
+                        decimals = 1;
+                      } else if (sensor == 1) {
+                        unitStr = '%';
+                        maxVal = 100.0;
+                        divisionsVal = 100;
+                        decimals = 0;
+                      } else if (sensor == 2) {
+                        unitStr = 'ADC';
+                        maxVal = dev.telemetry.gasMax > 0
+                            ? dev.telemetry.gasMax.toDouble()
+                            : (dev.isEsp8266 ? 1023.0 : 4095.0);
+                        divisionsVal = dev.isEsp8266 ? 50 : 80;
+                        decimals = 0;
+                      } else if (sensor == 3) {
+                        unitStr = 'lx';
+                        maxVal = 2000.0;
+                        divisionsVal = 100;
+                        decimals = 0;
+                      } else if (sensor == 4) {
+                        unitStr = '°C';
+                        maxVal = 100.0;
+                        divisionsVal = 100;
+                        decimals = 1;
+                      } else if (sensor == 5) {
+                        unitStr = '%';
+                        maxVal = 100.0;
+                        divisionsVal = 100;
+                        decimals = 0;
+                      } else if (sensor == 6) {
+                        unitStr = '';
+                        maxVal = 1.0;
+                        divisionsVal = 1;
+                        decimals = 0;
+                      }
+
+                      final clampedTh = threshold.clamp(0.0, maxVal);
+                      final thDisplay = sensor == 6
+                          ? (clampedTh >= 0.5 ? 'Motion Detected (1)' : 'Clear (0)')
+                          : '${clampedTh.toStringAsFixed(decimals)} $unitStr';
+
+                      return Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.cardBorder),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  'ACTIVATION THRESHOLD',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.7,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: AppColors.primary.withValues(alpha: 0.35),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    thDisplay,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            SliderTheme(
+                              data: SliderTheme.of(sheetContext).copyWith(
+                                activeTrackColor: AppColors.primary,
+                                thumbColor: AppColors.primary,
+                                overlayColor: AppColors.primary.withValues(alpha: 0.2),
+                              ),
+                              child: Slider(
+                                value: clampedTh,
+                                min: 0,
+                                max: maxVal,
+                                divisions: divisionsVal,
+                                onChanged: (value) =>
+                                    setSheetState(() => threshold = value),
+                              ),
+                            ),
+                          ],
+                        ),
                       );
-                      if (hysteresis == null || hysteresis < 0) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Enter a valid non-negative hysteresis value.',
+                    },
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Hysteresis Card
+                  Text(
+                    'ANTI-FLAPPING HYSTERESIS',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: hysteresisController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      helperText:
+                          'Sensor reading must cross this reset margin before retriggering.',
+                      helperMaxLines: 2,
+                      helperStyle: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Target Relay
+                  Text(
+                    'TARGET RELAY CHANNEL',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    initialValue: relay,
+                    dropdownColor: AppColors.surfaceElevated,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                      ),
+                    ),
+                    items: [
+                      ...List.generate(
+                        dev.relays.length,
+                        (index) => DropdownMenuItem(
+                          value: index,
+                          child: Row(
+                            children: [
+                              Icon(Icons.toggle_on_rounded, color: AppColors.primary, size: 18),
+                              const SizedBox(width: 8),
+                              Text(_relayLabel(dev, index), style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 255,
+                        child: Row(
+                          children: [
+                            Icon(Icons.flash_on_rounded, color: AppColors.accent, size: 18),
+                            const SizedBox(width: 8),
+                            const Text('All relays (Master)', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setSheetState(() => relay = value ?? relay),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Action Dropdown
+                  Text(
+                    'TRIGGER ACTION',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  DropdownButtonFormField<int>(
+                    initialValue: action,
+                    dropdownColor: AppColors.surfaceElevated,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                      ),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: 0,
+                        child: Row(
+                          children: [
+                            Icon(Icons.power_rounded, color: AppColors.success, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn ON', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 1,
+                        child: Row(
+                          children: [
+                            Icon(Icons.power_off_rounded, color: AppColors.danger, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn OFF', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                    onChanged: (value) =>
+                        setSheetState(() => action = value ?? action),
+                  ),
+                  const SizedBox(height: 22),
+
+                  // Submit Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 4,
+                        shadowColor: AppColors.primary.withValues(alpha: 0.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                      onPressed: () async {
+                        final hysteresis = double.tryParse(
+                          hysteresisController.text.trim(),
+                        );
+                        if (hysteresis == null || hysteresis < 0) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Enter a valid non-negative hysteresis value.',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        final maxThreshold = sensor == 0
+                            ? 60.0
+                            : (sensor == 1 || sensor == 5
+                                  ? 100.0
+                                  : (sensor == 2
+                                        ? (dev.telemetry.gasMax > 0
+                                              ? dev.telemetry.gasMax.toDouble()
+                                              : (dev.isEsp8266 ? 1023.0 : 4095.0))
+                                        : (sensor == 3
+                                              ? 2000.0
+                                              : (sensor == 6 ? 1.0 : 100.0))));
+                        final rule = AutomationRule(
+                          id: existing?.id ?? 0,
+                          enabled: existing?.enabled ?? true,
+                          name: nameController.text.trim().isEmpty
+                              ? 'Auto Rule'
+                              : nameController.text.trim(),
+                          sensor: sensor,
+                          sensorIndex: clampedSensorIdx,
+                          condition: condition,
+                          threshold: threshold.clamp(0.0, maxThreshold),
+                          hysteresis: hysteresis,
+                          targetRelay: relay,
+                          action: action,
+                        );
+                        final ok = await _api.saveRule(
+                          dev.ip,
+                          rule.toJson(),
+                          password: dev.authPassword,
+                        );
+                        if (!sheetContext.mounted) return;
+                        if (ok) {
+                          Navigator.pop(sheetContext);
+                          await _loadRules(dev);
+                        } else {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text('Controller rejected the rule.'),
+                              backgroundColor: AppColors.danger,
+                            ),
+                          );
+                        }
+                      },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            existing == null ? Icons.check_circle_outline_rounded : Icons.sync_rounded,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            existing == null
+                                ? 'Save Rule to Controller'
+                                : 'Update Rule on Controller',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.3,
                             ),
                           ),
-                        );
-                        return;
-                      }
-                      final maxThreshold = sensor == 0
-                          ? 60.0
-                          : (sensor == 1 || sensor == 5
-                                ? 100.0
-                                : (sensor == 2
-                                      ? (dev.telemetry.gasMax > 0
-                                            ? dev.telemetry.gasMax.toDouble()
-                                            : (dev.isEsp8266 ? 1023.0 : 4095.0))
-                                      : (sensor == 3
-                                            ? 2000.0
-                                            : (sensor == 6 ? 1.0 : 100.0))));
-                      final rule = AutomationRule(
-                        id: existing?.id ?? 0,
-                        enabled: existing?.enabled ?? true,
-                        name: nameController.text.trim().isEmpty
-                            ? 'Auto Rule'
-                            : nameController.text.trim(),
-                        sensor: sensor,
-                        sensorIndex: clampedSensorIdx,
-                        condition: condition,
-                        threshold: threshold.clamp(0.0, maxThreshold),
-                        hysteresis: hysteresis,
-                        targetRelay: relay,
-                        action: action,
-                      );
-                      final ok = await _api.saveRule(
-                        dev.ip,
-                        rule.toJson(),
-                        password: dev.authPassword,
-                      );
-                      if (!sheetContext.mounted) return;
-                      if (ok) {
-                        Navigator.pop(sheetContext);
-                        await _loadRules(dev);
-                      } else {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          SnackBar(
-                            content: Text('Controller rejected the rule.'),
-                            backgroundColor: AppColors.danger,
-                          ),
-                        );
-                      }
-                    },
-                    child: Text(
-                      existing == null
-                          ? 'Save rule to controller'
-                          : 'Update rule on controller',
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-        );
+          );
         },
       ),
     );
+    nameController.dispose();
+    hysteresisController.dispose();
   }
 
-  void _showTimerEditor(
+  Future<void> _showTimerEditor(
     BuildContext context,
     SmartDevice dev, {
     ScheduledAlarm? existing,
     int initialMode = 0,
-  }) {
+  }) async {
     if (dev.isGuest) return;
     var mode = (existing?.mode ?? initialMode).clamp(0, 1);
     var scheduleType = (existing?.type ?? 1).clamp(0, 4);
@@ -1305,34 +1941,78 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       hour: existing?.hour ?? 8,
       minute: existing?.minute ?? 0,
     );
-    final hoursController = TextEditingController(
-      text: '${(existing?.delayMinutes ?? 30) ~/ 60}',
-    );
-    final minutesController = TextEditingController(
-      text: '${(existing?.delayMinutes ?? 30) % 60}',
-    );
+    int delayHours = (existing?.delayMinutes ?? 30) ~/ 60;
+    int delayMinutes = (existing?.delayMinutes ?? 30) % 60;
+    final hoursController = TextEditingController(text: '$delayHours');
+    final minutesController = TextEditingController(text: '$delayMinutes');
 
-    showModalBottomSheet(
+    void syncControllers() {
+      hoursController.text = '$delayHours';
+      minutesController.text = '$delayMinutes';
+    }
+
+    await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (sheetContext, setSheetState) {
           final actionNeedsRelay = action <= 2;
+          final totalDelayMinutes = (delayHours * 60) + delayMinutes;
+
+          // Format TimeOfDay for hero clock display
+          final hour12 = time.hourOfPeriod == 0 ? 12 : time.hourOfPeriod;
+          final minuteStr = time.minute.toString().padLeft(2, '0');
+          final amPm = time.period == DayPeriod.am ? 'AM' : 'PM';
+          final formattedClockTime = '${hour12.toString().padLeft(2, '0')}:$minuteStr';
+
+          // Estimated fire time for delay timer
+          final estFireDate = DateTime.now().add(Duration(minutes: totalDelayMinutes));
+          final estHour = estFireDate.hour == 0 ? 12 : (estFireDate.hour > 12 ? estFireDate.hour - 12 : estFireDate.hour);
+          final estMin = estFireDate.minute.toString().padLeft(2, '0');
+          final estAmPm = estFireDate.hour >= 12 ? 'PM' : 'AM';
+          final estFireString = '$estHour:$estMin $estAmPm';
+
+          // Formatted duration string
+          String formattedDuration;
+          if (totalDelayMinutes <= 0) {
+            formattedDuration = '0m';
+          } else if (delayHours > 0 && delayMinutes > 0) {
+            formattedDuration = '${delayHours}h ${delayMinutes}m';
+          } else if (delayHours > 0) {
+            formattedDuration = '${delayHours}h';
+          } else {
+            formattedDuration = '${delayMinutes}m';
+          }
+
+          final viewInsets = MediaQuery.of(sheetContext).viewInsets.bottom;
+          final safeBottom = math.max(
+            MediaQuery.of(sheetContext).padding.bottom,
+            MediaQuery.of(sheetContext).viewPadding.bottom,
+          );
+          final bottomPadding =
+              viewInsets > 0 ? (viewInsets + 16) : (safeBottom + 20);
+
           return Container(
             constraints: BoxConstraints(
               maxHeight: MediaQuery.of(sheetContext).size.height * 0.9,
             ),
             padding: EdgeInsets.fromLTRB(
               20,
+              12,
               20,
-              20,
-              MediaQuery.of(sheetContext).viewInsets.bottom + 20,
+              bottomPadding,
             ),
             decoration: BoxDecoration(
               color: AppColors.surface,
               borderRadius: const BorderRadius.vertical(
                 top: Radius.circular(28),
+              ),
+              border: Border(
+                top: BorderSide(
+                  color: AppColors.primary.withValues(alpha: 0.3),
+                  width: 1.5,
+                ),
               ),
             ),
             child: SingleChildScrollView(
@@ -1340,167 +2020,703 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    existing == null
-                        ? 'New Hardware Timer'
-                        : 'Edit Hardware Timer',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                  // Drag Handle
+                  Center(
+                    child: Container(
+                      width: 44,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.textMuted.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'The ESP keeps this timer and runs it even when the app is closed.',
-                    style: TextStyle(
-                      color: AppColors.textSecondary,
-                      fontSize: 13,
-                    ),
+
+                  // Header with Icon, Title, and Close Button
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primaryGlow,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Icon(
+                          existing == null
+                              ? Icons.alarm_add_rounded
+                              : Icons.edit_calendar_rounded,
+                          color: AppColors.primary,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              existing == null
+                                  ? 'New Hardware Timer'
+                                  : 'Edit Hardware Timer',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.textPrimary,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Runs directly on ESP controller flash',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        icon: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: AppColors.surfaceElevated,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        onPressed: () => Navigator.pop(sheetContext),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 18),
+
+                  // Mode Selector: Fixed Time vs Delay Timer
                   LuxurySegmentedSelector<int>(
                     values: const [0, 1],
-                    labels: const {0: 'Fixed time', 1: 'Delay timer'},
-                    icons: const {0: Icons.schedule, 1: Icons.timer_outlined},
+                    labels: const {0: 'Fixed Clock Time', 1: 'Delay Countdown'},
+                    icons: const {0: Icons.schedule_rounded, 1: Icons.hourglass_top_rounded},
                     selectedValue: mode,
                     onSelected: (value) => setSheetState(() => mode = value),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 18),
+
+                  // Mode 0: Fixed Time UI
                   if (mode == 0) ...[
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        'Time: ${time.format(sheetContext)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
+                    // Hero Digital Clock Card (Tap to pick time)
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showTimePicker(
+                          context: sheetContext,
+                          initialTime: time,
+                        );
+                        if (picked != null) {
+                          setSheetState(() => time = picked);
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(18),
+                          border: Border.all(
+                            color: AppColors.primary.withValues(alpha: 0.35),
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.primary.withValues(alpha: 0.08),
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
                         ),
-                      ),
-                      subtitle: Text(
-                        'Uses this ESP controller’s NTP/RTC time.',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                      trailing: OutlinedButton(
-                        onPressed: () async {
-                          final picked = await showTimePicker(
-                            context: sheetContext,
-                            initialTime: time,
-                          );
-                          if (picked != null) {
-                            setSheetState(() => time = picked);
-                          }
-                        },
-                        child: const Text('Change'),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: AppColors.primaryGlow,
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Icon(
+                                Icons.access_time_filled_rounded,
+                                color: AppColors.primary,
+                                size: 28,
+                              ),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'TRIGGER TIME',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.8,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                                    textBaseline: TextBaseline.alphabetic,
+                                    children: [
+                                      Text(
+                                        formattedClockTime,
+                                        style: TextStyle(
+                                          fontSize: 32,
+                                          fontWeight: FontWeight.w900,
+                                          color: AppColors.textPrimary,
+                                          letterSpacing: -0.5,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        amPm,
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w800,
+                                          color: AppColors.primary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      Container(
+                                        width: 7,
+                                        height: 7,
+                                        decoration: const BoxDecoration(
+                                          color: AppColors.success,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        'ESP NTP / RTC Clock',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.textSecondary,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(
+                                  color: AppColors.primary.withValues(alpha: 0.35),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.edit_rounded,
+                                    size: 14,
+                                    color: AppColors.primary,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Change',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<int>(
-                      initialValue: scheduleType,
-                      decoration: const InputDecoration(
-                        labelText: 'Repeat',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(value: 0, child: Text('Once')),
-                        DropdownMenuItem(value: 1, child: Text('Daily')),
-                        DropdownMenuItem(value: 2, child: Text('Weekly')),
-                        DropdownMenuItem(
-                          value: 3,
-                          child: Text('Weekdays (Mon–Fri)'),
-                        ),
-                        DropdownMenuItem(
-                          value: 4,
-                          child: Text('Weekends (Sat–Sun)'),
-                        ),
-                      ],
-                      onChanged: (value) => setSheetState(
-                        () => scheduleType = value ?? scheduleType,
-                      ),
-                    ),
-                    if (scheduleType == 2) ...[
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<int>(
-                        initialValue: dayOfWeek,
-                        decoration: const InputDecoration(
-                          labelText: 'Day of week',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const [
-                          DropdownMenuItem(value: 0, child: Text('Sunday')),
-                          DropdownMenuItem(value: 1, child: Text('Monday')),
-                          DropdownMenuItem(value: 2, child: Text('Tuesday')),
-                          DropdownMenuItem(value: 3, child: Text('Wednesday')),
-                          DropdownMenuItem(value: 4, child: Text('Thursday')),
-                          DropdownMenuItem(value: 5, child: Text('Friday')),
-                          DropdownMenuItem(value: 6, child: Text('Saturday')),
-                        ],
-                        onChanged: (value) =>
-                            setSheetState(() => dayOfWeek = value ?? dayOfWeek),
-                      ),
-                    ],
-                  ] else ...[
+                    const SizedBox(height: 16),
+
+                    // Repeat Schedule Title & Chips
                     Text(
-                      'Delay from now',
+                      'REPEAT SCHEDULE',
                       style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                     const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildScheduleChip(
+                          label: 'Daily',
+                          icon: Icons.repeat_rounded,
+                          isSelected: scheduleType == 1,
+                          onTap: () => setSheetState(() => scheduleType = 1),
+                        ),
+                        _buildScheduleChip(
+                          label: 'Weekdays',
+                          icon: Icons.work_outline_rounded,
+                          isSelected: scheduleType == 3,
+                          onTap: () => setSheetState(() => scheduleType = 3),
+                        ),
+                        _buildScheduleChip(
+                          label: 'Weekends',
+                          icon: Icons.weekend_outlined,
+                          isSelected: scheduleType == 4,
+                          onTap: () => setSheetState(() => scheduleType = 4),
+                        ),
+                        _buildScheduleChip(
+                          label: 'Once Only',
+                          icon: Icons.looks_one_outlined,
+                          isSelected: scheduleType == 0,
+                          onTap: () => setSheetState(() => scheduleType = 0),
+                        ),
+                        _buildScheduleChip(
+                          label: 'Weekly Day',
+                          icon: Icons.calendar_today_rounded,
+                          isSelected: scheduleType == 2,
+                          onTap: () => setSheetState(() => scheduleType = 2),
+                        ),
+                      ],
+                    ),
+
+                    // When "Weekly Day" (scheduleType == 2) is chosen: 7 Days selector
+                    if (scheduleType == 2) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.card,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppColors.cardBorder),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'SELECT DAY OF WEEK',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.6,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _buildDayCircle('S', 'Sun', 0, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('M', 'Mon', 1, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('T', 'Tue', 2, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('W', 'Wed', 3, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('T', 'Thu', 4, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('F', 'Fri', 5, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                                _buildDayCircle('S', 'Sat', 6, dayOfWeek, (d) => setSheetState(() => dayOfWeek = d)),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ] else ...[
+                    // Mode 1: Delay Timer UI
+                    // Hero Duration Display Card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                          color: totalDelayMinutes > 0
+                              ? AppColors.primary.withValues(alpha: 0.35)
+                              : AppColors.cardBorder,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.primary.withValues(alpha: 0.06),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: AppColors.primaryGlow,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Icon(
+                              Icons.hourglass_top_rounded,
+                              color: AppColors.primary,
+                              size: 26,
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'COUNTDOWN DURATION',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.8,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  formattedDuration,
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.w900,
+                                    color: AppColors.textPrimary,
+                                    letterSpacing: -0.5,
+                                  ),
+                                ),
+                                if (totalDelayMinutes > 0) ...[
+                                  const SizedBox(height: 3),
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.bolt_rounded,
+                                        size: 14,
+                                        color: AppColors.warning,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Will execute at ~$estFireString',
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textSecondary,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Quick Presets Bar
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'QUICK PRESETS',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.7,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        Text(
+                          'Tap to select',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          _buildPresetChip(5, '5m', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(10, '10m', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(15, '15m', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(30, '30m', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(45, '45m', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(60, '1h', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(120, '2h', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                          _buildPresetChip(240, '4h', totalDelayMinutes, (m) {
+                            setSheetState(() {
+                              delayHours = m ~/ 60;
+                              delayMinutes = m % 60;
+                              syncControllers();
+                            });
+                          }),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // Dual Stepper Cards: Hours & Minutes
                     Row(
                       children: [
                         Expanded(
-                          child: TextField(
+                          child: _buildStepperBox(
+                            label: 'HOURS',
                             controller: hoursController,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Hours',
-                              border: OutlineInputBorder(),
-                            ),
+                            value: delayHours,
+                            onMinus: () {
+                              if (delayHours > 0) {
+                                setSheetState(() {
+                                  delayHours--;
+                                  hoursController.text = '$delayHours';
+                                });
+                              }
+                            },
+                            onPlus: () {
+                              if (delayHours < 72) {
+                                setSheetState(() {
+                                  delayHours++;
+                                  hoursController.text = '$delayHours';
+                                });
+                              }
+                            },
+                            onChanged: (val) {
+                              setSheetState(() {
+                                delayHours = int.tryParse(val.trim()) ?? delayHours;
+                              });
+                            },
                           ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: TextField(
+                          child: _buildStepperBox(
+                            label: 'MINUTES',
                             controller: minutesController,
-                            keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(
-                              labelText: 'Minutes',
-                              border: OutlineInputBorder(),
-                            ),
+                            value: delayMinutes,
+                            onMinus: () {
+                              if (delayMinutes > 0) {
+                                setSheetState(() {
+                                  delayMinutes--;
+                                  minutesController.text = '$delayMinutes';
+                                });
+                              }
+                            },
+                            onPlus: () {
+                              if (delayMinutes < 59) {
+                                setSheetState(() {
+                                  delayMinutes++;
+                                  minutesController.text = '$delayMinutes';
+                                });
+                              }
+                            },
+                            onChanged: (val) {
+                              setSheetState(() {
+                                delayMinutes = int.tryParse(val.trim()) ?? delayMinutes;
+                              });
+                            },
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'A delay timer runs once, then disables itself. Editing or enabling it re-arms it from now.',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
+                    const SizedBox(height: 10),
+
+                    // Explanation Card
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceElevated,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.cardBorder, width: 0.8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.info_outline_rounded,
+                            size: 16,
+                            color: AppColors.primaryLight,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'A delay timer runs once from activation and auto-disarms upon completion.',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: AppColors.textSecondary,
+                                height: 1.3,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                   const SizedBox(height: 16),
+
+                  // Action Dropdown
+                  Text(
+                    'TRIGGER ACTION',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.7,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   DropdownButtonFormField<int>(
                     initialValue: action,
-                    decoration: const InputDecoration(
-                      labelText: 'Action',
-                      border: OutlineInputBorder(),
+                    dropdownColor: AppColors.surfaceElevated,
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: AppColors.card,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(color: AppColors.cardBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: AppColors.primary,
+                          width: 1.5,
+                        ),
+                      ),
                     ),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Turn relay ON')),
-                      DropdownMenuItem(value: 1, child: Text('Turn relay OFF')),
-                      DropdownMenuItem(value: 2, child: Text('Toggle relay')),
-                      DropdownMenuItem(value: 3, child: Text('Sound buzzer')),
+                    items: [
+                      DropdownMenuItem(
+                        value: 0,
+                        child: Row(
+                          children: [
+                            Icon(Icons.power_rounded, color: AppColors.success, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn relay ON', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 1,
+                        child: Row(
+                          children: [
+                            Icon(Icons.power_off_rounded, color: AppColors.danger, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn relay OFF', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 2,
+                        child: Row(
+                          children: [
+                            Icon(Icons.swap_horiz_rounded, color: AppColors.primaryLight, size: 20),
+                            SizedBox(width: 10),
+                            Text('Toggle relay', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 3,
+                        child: Row(
+                          children: [
+                            Icon(Icons.notifications_active_rounded, color: AppColors.warning, size: 20),
+                            SizedBox(width: 10),
+                            Text('Sound buzzer', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
                       DropdownMenuItem(
                         value: 4,
-                        child: Text('Turn ALL relays ON'),
+                        child: Row(
+                          children: [
+                            Icon(Icons.flash_on_rounded, color: AppColors.success, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn ALL relays ON', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                       DropdownMenuItem(
                         value: 5,
-                        child: Text('Turn ALL relays OFF'),
+                        child: Row(
+                          children: [
+                            Icon(Icons.flash_off_rounded, color: AppColors.danger, size: 20),
+                            SizedBox(width: 10),
+                            Text('Turn ALL relays OFF', style: TextStyle(fontWeight: FontWeight.w600)),
+                          ],
+                        ),
                       ),
                     ],
                     onChanged: (value) => setSheetState(() {
@@ -1512,26 +2728,46 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                       }
                     }),
                   ),
+
+                  // Target Relay Channel
                   if (actionNeedsRelay) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 14),
+                    Text(
+                      'TARGET RELAY CHANNEL',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.7,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     if (dev.relays.isEmpty)
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: AppColors.warning.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: AppColors.warning.withValues(alpha: 0.45),
                           ),
                         ),
-                        child: const Text(
-                          'No relay channels on this Sensor Node. Choose "Sound buzzer" or "Turn ALL relays ON/OFF".',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.warning,
-                            fontWeight: FontWeight.w600,
-                          ),
+                        child: const Row(
+                          children: [
+                            Icon(Icons.info_outline_rounded, color: AppColors.warning, size: 18),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'No relay channels on this Sensor Node. Choose "Sound buzzer" or "Turn ALL relays ON/OFF".',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: AppColors.warning,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       )
                     else
@@ -1539,28 +2775,72 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         initialValue: (relay >= 0 && relay < dev.relays.length)
                             ? relay
                             : 0,
-                        decoration: const InputDecoration(
-                          labelText: 'Target relay',
-                          border: OutlineInputBorder(),
+                        dropdownColor: AppColors.surfaceElevated,
+                        decoration: InputDecoration(
+                          filled: true,
+                          fillColor: AppColors.card,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 12,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide(color: AppColors.cardBorder),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide(color: AppColors.cardBorder),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(14),
+                            borderSide: BorderSide(
+                              color: AppColors.primary,
+                              width: 1.5,
+                            ),
+                          ),
                         ),
                         items: List.generate(
                           dev.relays.length,
-                          (index) => DropdownMenuItem(
-                            value: index,
-                            child: Text(_relayLabel(dev, index)),
-                          ),
+                          (index) {
+                            final r = dev.relays[index];
+                            return DropdownMenuItem(
+                              value: index,
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    r.state ? Icons.bolt_rounded : Icons.power_outlined,
+                                    color: r.state ? AppColors.accent : AppColors.textMuted,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    _relayLabel(dev, index),
+                                    style: const TextStyle(fontWeight: FontWeight.w600),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                         onChanged: (value) =>
                             setSheetState(() => relay = value ?? relay),
                       ),
                   ],
                   const SizedBox(height: 22),
+
+                  // Submit Button
                   SizedBox(
                     width: double.infinity,
+                    height: 52,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.primary,
                         foregroundColor: Colors.white,
+                        elevation: 4,
+                        shadowColor: AppColors.primary.withValues(alpha: 0.4),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                       ),
                       onPressed: () async {
                         if (actionNeedsRelay && dev.relays.isEmpty) {
@@ -1574,20 +2854,19 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           );
                           return;
                         }
-                        final hours =
-                            int.tryParse(hoursController.text.trim()) ?? -1;
-                        final minutes =
-                            int.tryParse(minutesController.text.trim()) ?? -1;
+                        final hoursText = hoursController.text.trim();
+                        final minutesText = minutesController.text.trim();
+                        final hours = hoursText.isEmpty ? 0 : (int.tryParse(hoursText) ?? -1);
+                        final minutes = minutesText.isEmpty ? 0 : (int.tryParse(minutesText) ?? -1);
                         final delay = (hours * 60) + minutes;
                         if (mode == 1 &&
                             (hours < 0 ||
                                 minutes < 0 ||
-                                minutes > 59 ||
                                 delay <= 0)) {
                           ScaffoldMessenger.of(sheetContext).showSnackBar(
                             const SnackBar(
                               content: Text(
-                                'Set a delay of at least one minute (minutes: 0–59).',
+                                'Set a delay of at least one minute.',
                               ),
                             ),
                           );
@@ -1617,8 +2896,8 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           await _loadAlarms(dev);
                         } else {
                           ScaffoldMessenger.of(sheetContext).showSnackBar(
-                            SnackBar(
-                              content: const Text(
+                            const SnackBar(
+                              content: Text(
                                 'Controller rejected the timer.',
                               ),
                               backgroundColor: AppColors.danger,
@@ -1626,10 +2905,27 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           );
                         }
                       },
-                      child: Text(
-                        existing == null
-                            ? 'Save timer to controller'
-                            : 'Update timer on controller',
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            existing == null
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.sync_rounded,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            existing == null
+                                ? 'Save Timer to Controller'
+                                : 'Update Timer on Controller',
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.3,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1640,17 +2936,21 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         },
       ),
     );
+    hoursController.dispose();
+    minutesController.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceManagerProvider);
     final dev = _resolveDevice(devices);
-    final isVisible = ref.watch(navigationIndexProvider) == 2;
+    final isVisible =
+        widget.preselectedDeviceId != null ||
+        ref.watch(navigationIndexProvider) == 2;
     final isDark = AppColors.isDark;
 
-    // MainShell retains tabs in an IndexedStack. Do not load automation data
-    // merely because this offstage widget was constructed at app startup.
+    // MainShell retains tabs in an IndexedStack. Trigger initial load when
+    // tab 2 is visible or when AutomationsScreen was pushed for a specific controller.
     if (isVisible && !_initialLoadRequested && dev != null) {
       _initialLoadRequested = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1713,20 +3013,43 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                       ],
               ),
               dividerColor: Colors.transparent,
-              tabs: const [
+              tabs: [
                 Tab(
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.sensors, size: 16),
-                      SizedBox(width: 8),
-                      Text(
+                      const Icon(Icons.sensors_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      const Text(
                         'Sensor Rules',
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 13,
                         ),
                       ),
+                      if (_rules.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.18)
+                                : AppColors.primary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${_rules.length}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: isDark ? Colors.white : AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1734,15 +3057,41 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.schedule, size: 16),
-                      SizedBox(width: 8),
-                      Text(
-                        'Timers & Schedules',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 13,
+                      const Icon(Icons.schedule_rounded, size: 16),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          'Timers & Schedules',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
+                      if (_alarms.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1.5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: isDark
+                                ? Colors.white.withValues(alpha: 0.18)
+                                : AppColors.primary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            '${_alarms.length}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: isDark ? Colors.white : AppColors.primary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1827,7 +3176,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                       ),
-                                      if (d.room.isNotEmpty) ...[
+                                      if (d.room.trim().isNotEmpty &&
+                                          d.room.trim().toLowerCase() !=
+                                              d.name.trim().toLowerCase()) ...[
                                         const SizedBox(width: 6),
                                         Text(
                                           '(${d.room})',
@@ -1979,7 +3330,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
       itemCount: _rules.length,
       itemBuilder: (ctx, idx) {
         final rule = _rules[idx];
@@ -2055,7 +3406,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: GlassCard(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.zero,
             borderColor: isTriggered
                 ? AppColors.warning
                 : (rule.enabled
@@ -2064,154 +3415,255 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: sColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
+                // ═══ Top Section ═══
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: rule.enabled
+                              ? sColor.withValues(alpha: 0.15)
+                              : AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: rule.enabled
+                                ? sColor.withValues(alpha: 0.3)
+                                : AppColors.cardBorder,
+                          ),
+                        ),
+                        child: Icon(sIcon, color: rule.enabled ? sColor : AppColors.textMuted, size: 20),
                       ),
-                      child: Icon(sIcon, color: sColor, size: 20),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  rule.name,
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                    color: AppColors.textPrimary,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    rule.name,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15,
+                                      color: rule.enabled
+                                          ? AppColors.textPrimary
+                                          : AppColors.textMuted,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                  overflow: TextOverflow.ellipsis,
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isTriggered
-                                      ? AppColors.warning.withValues(
-                                          alpha: 0.18,
-                                        )
-                                      : (rule.enabled
-                                            ? AppColors.success.withValues(
-                                                alpha: 0.14,
-                                              )
-                                            : AppColors.surfaceElevated),
-                                  borderRadius: BorderRadius.circular(6),
-                                  border: Border.all(
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
                                     color: isTriggered
-                                        ? AppColors.warning.withValues(
-                                            alpha: 0.5,
-                                          )
-                                        : Colors.transparent,
+                                        ? AppColors.warning.withValues(alpha: 0.18)
+                                        : (rule.enabled
+                                              ? AppColors.success.withValues(alpha: 0.14)
+                                              : AppColors.surfaceElevated),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: isTriggered
+                                          ? AppColors.warning.withValues(alpha: 0.5)
+                                          : (rule.enabled
+                                                ? AppColors.success.withValues(alpha: 0.4)
+                                                : AppColors.cardBorder),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: isTriggered
+                                              ? AppColors.warning
+                                              : (rule.enabled
+                                                    ? AppColors.success
+                                                    : AppColors.textMuted),
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        isTriggered
+                                            ? 'TRIGGERED'
+                                            : (rule.enabled ? 'ARMED' : 'PAUSED'),
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 0.4,
+                                          color: isTriggered
+                                              ? AppColors.warning
+                                              : (rule.enabled
+                                                    ? AppColors.success
+                                                    : AppColors.textMuted),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                child: Text(
-                                  isTriggered
-                                      ? '⚡ TRIGGERED'
-                                      : (rule.enabled ? 'ARMED' : 'PAUSED'),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.tune_rounded,
+                                  size: 12,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(
+                                    'IF ${rule.sensorLabel} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed((rule.sensor == 2 || rule.sensor == 6) ? 0 : 1)}${rule.unit}',
+                                    style: TextStyle(
+                                      fontSize: 11.5,
+                                      color: AppColors.textSecondary,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                Text(
+                                  '  •  ',
                                   style: TextStyle(
-                                    fontSize: 9.5,
-                                    fontWeight: FontWeight.w800,
+                                    color: AppColors.textMuted,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                Text(
+                                  'Live: $liveSensorValue',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
                                     color: isTriggered
                                         ? AppColors.warning
-                                        : (rule.enabled
-                                              ? AppColors.success
-                                              : AppColors.textMuted),
+                                        : sColor,
                                   ),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            'IF ${rule.sensorLabel} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed((rule.sensor == 2 || rule.sensor == 6) ? 0 : 1)}${rule.unit}  •  Live: $liveSensorValue',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSecondary,
+                              ],
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    Switch(
-                      value: rule.enabled,
-                      activeThumbColor: AppColors.success,
-                      onChanged: dev.isGuest
-                          ? null
-                          : (v) => _toggleRule(dev, rule, v),
-                    ),
-                  ],
+                      Switch(
+                        value: rule.enabled,
+                        activeThumbColor: AppColors.success,
+                        onChanged: dev.isGuest
+                            ? null
+                            : (v) => _toggleRule(dev, rule, v),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Divider(
+                    color: AppColors.cardBorder.withValues(alpha: 0.5),
+                    height: 1,
+                  ),
                 ),
                 const SizedBox(height: 10),
-                Divider(color: AppColors.cardBorder, height: 1),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Row(
-                        children: [
-                          Icon(
-                            rule.action == 0 ? Icons.power : Icons.power_off,
-                            size: 16,
-                            color: rule.action == 0
-                                ? AppColors.success
-                                : AppColors.danger,
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              'THEN ${rule.actionLabel}: $rName',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12,
-                                color: AppColors.textPrimary,
+
+                // ═══ Bottom Section: Action chip + Edit/Delete ═══
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: (rule.action == 0
+                                      ? AppColors.success
+                                      : AppColors.danger)
+                                  .withValues(alpha: rule.enabled ? 0.1 : 0.06),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: (rule.action == 0
+                                        ? AppColors.success
+                                        : AppColors.danger)
+                                    .withValues(alpha: rule.enabled ? 0.3 : 0.15),
                               ),
                             ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  rule.action == 0
+                                      ? Icons.power_rounded
+                                      : Icons.power_off_rounded,
+                                  size: 14,
+                                  color: (rule.action == 0
+                                          ? AppColors.success
+                                          : AppColors.danger)
+                                      .withValues(alpha: rule.enabled ? 1.0 : 0.5),
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    'THEN ${rule.actionLabel}: $rName',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 12,
+                                      color: (rule.action == 0
+                                              ? AppColors.success
+                                              : AppColors.danger)
+                                          .withValues(alpha: rule.enabled ? 1.0 : 0.5),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        IconButton(
-                          tooltip: 'Edit rule',
-                          icon: const Icon(Icons.edit_outlined, size: 20),
-                          onPressed: dev.isGuest
-                              ? null
-                              : () => _showRuleEditor(context, dev, rule),
+                      const SizedBox(width: 8),
+                      IconButton(
+                        tooltip: 'Edit rule',
+                        icon: Icon(
+                          Icons.edit_outlined,
+                          size: 18,
+                          color: AppColors.textSecondary,
                         ),
-                        IconButton(
-                          tooltip: 'Delete rule',
-                          icon: Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: dev.isGuest
-                                ? AppColors.textMuted
-                                : AppColors.danger,
-                          ),
-                          onPressed: dev.isGuest
-                              ? null
-                              : () => _deleteRule(dev, rule),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: dev.isGuest
+                            ? null
+                            : () => _showRuleEditor(context, dev, rule),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete rule',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: dev.isGuest
+                              ? AppColors.textMuted
+                              : AppColors.danger,
                         ),
-                      ],
-                    ),
-                  ],
+                        visualDensity: VisualDensity.compact,
+                        onPressed: dev.isGuest
+                            ? null
+                            : () => _deleteRule(dev, rule),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -2294,133 +3746,350 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
       itemCount: _alarms.length,
       itemBuilder: (ctx, idx) {
         final a = _alarms[idx];
         final rName = _relayLabel(dev, a.targetRelay);
         final isDelay = a.mode == 1;
-        final title = isDelay ? _delayLabel(a.delayMinutes) : a.timeString;
-        final frequency = isDelay ? 'Delay timer (once)' : a.typeLabel;
+        final title = isDelay
+            ? _delayLabel(a.delayMinutes)
+            : _formatAlarmTime(a.hour, a.minute);
         final actionText = a.action <= 2
             ? '${a.actionLabel} $rName'
             : a.actionLabel;
 
+        // Status state
+        final bool isFired = isDelay && a.fired;
+        final bool isCompleted = !isDelay && a.type == 0 && a.fired;
+        final String statusText = !a.enabled
+            ? 'PAUSED'
+            : (isFired || isCompleted)
+                ? 'COMPLETED'
+                : 'ARMED';
+        final Color statusColor = !a.enabled
+            ? AppColors.textMuted
+            : (isFired || isCompleted)
+                ? AppColors.warning
+                : AppColors.success;
+
+        // Action colors
+        Color actionColor;
+        IconData actionIcon;
+        switch (a.action) {
+          case 0:
+          case 4:
+            actionColor = AppColors.success;
+            actionIcon = Icons.power_rounded;
+            break;
+          case 1:
+          case 5:
+            actionColor = AppColors.danger;
+            actionIcon = Icons.power_off_rounded;
+            break;
+          case 2:
+            actionColor = AppColors.primaryLight;
+            actionIcon = Icons.swap_horiz_rounded;
+            break;
+          case 3:
+          default:
+            actionColor = AppColors.warning;
+            actionIcon = Icons.notifications_active_rounded;
+            break;
+        }
+
+        // When paused, mute action colors
+        final effectiveActionColor = a.enabled
+            ? actionColor
+            : actionColor.withValues(alpha: 0.45);
+
+        // Subtitle pieces
+        final String typeLabel = isDelay
+            ? 'One-shot countdown'
+            : a.typeLabel;
+
+        // Only show next run badge for fixed-time armed timers
+        final bool showNextRun = a.enabled &&
+            !isDelay &&
+            !isCompleted &&
+            a.nextRunBadge.isNotEmpty &&
+            !a.nextRunBadge.toLowerCase().contains('paused');
+
         return Padding(
           padding: const EdgeInsets.only(bottom: 12),
           child: GlassCard(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.zero,
             borderColor: a.enabled
-                ? AppColors.accent.withValues(alpha: 0.35)
+                ? (isFired || isCompleted)
+                    ? AppColors.warning.withValues(alpha: 0.4)
+                    : AppColors.primary.withValues(alpha: 0.35)
                 : AppColors.cardBorder,
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppColors.primaryGlow,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(Icons.alarm, color: AppColors.accent, size: 24),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                // ═══ Top Section: Title + Status + Switch ═══
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          Text(
-                            title,
-                            style: TextStyle(
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.textPrimary,
-                            ),
+                      // Icon bubble
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: a.enabled
+                              ? (isFired || isCompleted)
+                                  ? AppColors.warning.withValues(alpha: 0.12)
+                                  : AppColors.primaryGlow
+                              : AppColors.surfaceElevated,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: a.enabled
+                                ? (isFired || isCompleted)
+                                    ? AppColors.warning.withValues(alpha: 0.3)
+                                    : AppColors.primary.withValues(alpha: 0.3)
+                                : AppColors.cardBorder,
                           ),
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 3,
-                              ),
-                              decoration: BoxDecoration(
-                                color: a.enabled
-                                    ? AppColors.primary.withValues(alpha: 0.15)
-                                    : AppColors.surfaceElevated,
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: a.enabled
-                                      ? AppColors.primary.withValues(alpha: 0.4)
-                                      : AppColors.cardBorder,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.timer_outlined,
-                                    size: 11,
-                                    color: a.enabled
-                                        ? AppColors.primaryLight
-                                        : AppColors.textMuted,
+                        ),
+                        child: Icon(
+                          isDelay
+                              ? Icons.hourglass_top_rounded
+                              : Icons.alarm_rounded,
+                          color: a.enabled
+                              ? (isFired || isCompleted)
+                                  ? AppColors.warning
+                                  : AppColors.primary
+                              : AppColors.textMuted,
+                          size: 22,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      // Title + subtitle
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    title,
+                                    style: TextStyle(
+                                      fontSize: isDelay ? 24 : 22,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: isDelay ? -0.5 : -0.3,
+                                      color: a.enabled
+                                          ? AppColors.textPrimary
+                                          : AppColors.textMuted,
+                                    ),
                                   ),
-                                  const SizedBox(width: 4),
+                                ),
+                                const SizedBox(width: 10),
+                                // Status badge
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 3,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: statusColor.withValues(alpha: 0.14),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: statusColor.withValues(alpha: 0.4),
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Container(
+                                        width: 6,
+                                        height: 6,
+                                        decoration: BoxDecoration(
+                                          color: statusColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        statusText,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 0.4,
+                                          color: statusColor,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            // Subtitle row: type + optional next run
+                            Row(
+                              children: [
+                                Icon(
+                                  isDelay
+                                      ? Icons.timer_outlined
+                                      : Icons.repeat_rounded,
+                                  size: 12,
+                                  color: AppColors.textSecondary,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  typeLabel,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    color: AppColors.textSecondary,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                if (showNextRun) ...[
+                                  Text(
+                                    '  •  ',
+                                    style: TextStyle(
+                                      color: AppColors.textMuted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
                                   Flexible(
                                     child: Text(
                                       a.nextRunBadge,
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
-                                        fontSize: 10.5,
-                                        fontWeight: FontWeight.w800,
-                                        color: a.enabled
-                                            ? AppColors.primaryLight
-                                            : AppColors.textMuted,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.primaryLight,
                                       ),
                                     ),
                                   ),
                                 ],
-                              ),
+                                if (isDelay && a.enabled && !isFired) ...[
+                                  Text(
+                                    '  •  ',
+                                    style: TextStyle(
+                                      color: AppColors.textMuted,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Counting down',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.primaryLight,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$frequency • $actionText',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
+                          ],
                         ),
+                      ),
+                      // Switch
+                      Switch(
+                        value: a.enabled,
+                        activeThumbColor: AppColors.success,
+                        onChanged: dev.isGuest
+                            ? null
+                            : (v) => _toggleAlarm(dev, a, v),
                       ),
                     ],
                   ),
                 ),
-                Switch(
-                  value: a.enabled,
-                  activeThumbColor: AppColors.success,
-                  onChanged: dev.isGuest
-                      ? null
-                      : (v) => _toggleAlarm(dev, a, v),
-                ),
-                IconButton(
-                  tooltip: 'Edit timer',
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  onPressed: dev.isGuest
-                      ? null
-                      : () => _showTimerEditor(context, dev, existing: a),
-                ),
-                IconButton(
-                  tooltip: 'Delete timer',
-                  icon: Icon(
-                    Icons.delete_outline,
-                    color: dev.isGuest
-                        ? AppColors.textMuted
-                        : AppColors.danger,
-                    size: 20,
+
+                const SizedBox(height: 12),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Divider(
+                    color: AppColors.cardBorder.withValues(alpha: 0.5),
+                    height: 1,
                   ),
-                  onPressed: dev.isGuest ? null : () => _deleteAlarm(dev, a),
+                ),
+                const SizedBox(height: 10),
+
+                // ═══ Bottom Section: Action chip + Edit/Delete ═══
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
+                  child: Row(
+                    children: [
+                      // Action chip (content-hugging, not stretched)
+                      Expanded(
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: effectiveActionColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: effectiveActionColor.withValues(
+                                  alpha: a.enabled ? 0.3 : 0.15,
+                                ),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  actionIcon,
+                                  size: 14,
+                                  color: effectiveActionColor,
+                                ),
+                                const SizedBox(width: 6),
+                                Flexible(
+                                  child: Text(
+                                    actionText,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: effectiveActionColor,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Edit & Delete buttons
+                      IconButton(
+                        tooltip: 'Edit timer',
+                        icon: Icon(
+                          Icons.edit_outlined,
+                          size: 18,
+                          color: AppColors.textSecondary,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: dev.isGuest
+                            ? null
+                            : () => _showTimerEditor(
+                                context,
+                                dev,
+                                existing: a,
+                              ),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete timer',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          color: dev.isGuest
+                              ? AppColors.textMuted
+                              : AppColors.danger,
+                          size: 18,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: dev.isGuest
+                            ? null
+                            : () => _deleteAlarm(dev, a),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),

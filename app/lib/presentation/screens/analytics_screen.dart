@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/smart_device.dart';
@@ -21,12 +22,23 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   String? _selectedDeviceId; // null means the explicit All Devices view.
   bool _prefsLoaded = false;
   bool _initialRefreshStarted = false;
+  bool _autoSelectedSingleDevice = false;
+  Timer? _tickerTimer;
 
   @override
   void initState() {
     super.initState();
     _manager = ref.read(deviceManagerProvider.notifier);
     _loadPreferences();
+    _tickerTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tickerTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadPreferences() async {
@@ -71,7 +83,11 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
 
     // With a single controller, make the focused view convenient while still
     // preserving All Devices as the default for installations with many nodes.
-    if (_prefsLoaded && _selectedDeviceId == null && devices.length == 1) {
+    if (_prefsLoaded &&
+        !_autoSelectedSingleDevice &&
+        _selectedDeviceId == null &&
+        devices.length == 1) {
+      _autoSelectedSingleDevice = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _selectedDeviceId == null) {
           _selectDevice(devices.first.id);

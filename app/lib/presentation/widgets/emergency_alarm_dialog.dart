@@ -24,7 +24,7 @@ class EmergencyAlarmDialog extends ConsumerStatefulWidget {
     required String deviceId,
     required String alarmType,
   }) async {
-    if (_isShowing) return;
+    if (_isShowing || !context.mounted) return;
     _isShowing = true;
     try {
       await showDialog<void>(
@@ -35,7 +35,11 @@ class EmergencyAlarmDialog extends ConsumerStatefulWidget {
       );
     } finally {
       _isShowing = false;
-      ref.read(emergencyAlarmProvider.notifier).clear();
+      if (context.mounted) {
+        try {
+          ref.read(emergencyAlarmProvider.notifier).clear();
+        } catch (_) {}
+      }
     }
   }
 
@@ -197,15 +201,16 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
               onPressed: (_isMuting || _isShuttingOff)
                   ? null
                   : () async {
+                      final navigator =
+                          Navigator.of(context, rootNavigator: true);
                       setState(() => _isMuting = true);
                       await manager.controlBuzzer(
                         widget.deviceId,
                         action: 'mute',
                       );
-                      if (!context.mounted) return;
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
+                      if (!mounted) return;
+                      navigator.pop();
+                      navigator.push(
                         MaterialPageRoute(
                           builder: (_) =>
                               DeviceScreen(deviceId: widget.deviceId),

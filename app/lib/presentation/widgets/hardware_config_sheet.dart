@@ -143,6 +143,8 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
         username: widget.device.authUsername,
       );
 
+      if (!mounted) return;
+
       if (profile != null) {
         _applyProfileToState(profile);
       } else {
@@ -150,6 +152,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
         _initDefaultChannels(defaultCount);
       }
     } catch (_) {
+      if (!mounted) return;
       final defaultCount = widget.device.isEsp8266 ? 2 : 5;
       _initDefaultChannels(defaultCount);
       _errorMessage = 'Could not fetch live profile from controller. Loaded defaults.';

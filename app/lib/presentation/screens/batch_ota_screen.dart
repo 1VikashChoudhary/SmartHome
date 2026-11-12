@@ -104,6 +104,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
           return;
         }
 
+        if (!mounted) return;
         setState(() {
           _firmwareBytes = bytes;
           _selectedFileName = file.name;
@@ -191,18 +192,26 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
 
     final targetDevices = _selectedDeviceId == null
         ? devices.where((d) {
-            if (!d.isOnline) return false;
+            if (!d.isOnline || d.isGuest || d.needsAuth) return false;
             // When flashing ALL controllers, smartly filter by architecture if binary name specifies it
             if (isEsp8266Binary && !d.isEsp8266) return false;
             if (isEsp32Binary && d.isEsp8266) return false;
             return true;
           }).toList()
-        : devices.where((d) => d.id == _selectedDeviceId).toList();
+        : devices
+              .where((d) =>
+                  d.id == _selectedDeviceId &&
+                  d.isOnline &&
+                  !d.isGuest &&
+                  !d.needsAuth)
+              .toList();
 
     if (targetDevices.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('No online target devices available to flash'),
+          content: Text(
+            'No online, admin-unlocked target devices available to flash',
+          ),
           backgroundColor: AppColors.danger,
         ),
       );
@@ -407,6 +416,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
         device.ip,
         password: device.authPassword,
       );
+      if (!mounted) return const _OtaVerification.cancelled();
       if (status == null) {
         sawOffline = true;
         setState(() {

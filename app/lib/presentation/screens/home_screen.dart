@@ -62,7 +62,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     int tempCount = 0;
     double humSum = 0;
     int humCount = 0;
-    SmartDevice? gasAlarmDevice;
+    final gasAlarmDevices = <SmartDevice>[];
 
     for (final dev in devices) {
       final enabledRelays = dev.relays.where((r) => r.enabled).toList();
@@ -85,7 +85,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         humCount++;
       }
       if (dev.isOnline && dev.telemetry.gasAlarm) {
-        gasAlarmDevice = dev;
+        gasAlarmDevices.add(dev);
       }
     }
 
@@ -282,14 +282,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   child: ListView(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 children: [
-                  // Gas Emergency Banner
-                  if (gasAlarmDevice != null) ...[
+                  // Gas Emergency Banner (supports all simultaneous emergency devices)
+                  for (final gasDevice in gasAlarmDevices) ...[
                     GestureDetector(
                       onTap: () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => DeviceScreen(deviceId: gasAlarmDevice!.id),
+                            builder: (_) =>
+                                DeviceScreen(deviceId: gasDevice.id),
                           ),
                         );
                       },
@@ -299,28 +300,36 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         decoration: BoxDecoration(
                           color: AppColors.danger.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.danger, width: 1.5),
+                          border:
+                              Border.all(color: AppColors.danger, width: 1.5),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 28),
+                            const Icon(Icons.warning_amber_rounded,
+                                color: AppColors.danger, size: 28),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'GAS / SMOKE WARNING: ${gasAlarmDevice.name.toUpperCase()}',
-                                    style: const TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold, fontSize: 13),
+                                    'GAS / SMOKE WARNING: ${gasDevice.name.toUpperCase()}',
+                                    style: const TextStyle(
+                                        color: AppColors.danger,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13),
                                   ),
                                   Text(
-                                    'MQ-2 Reading: ${gasAlarmDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
-                                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                                    'MQ-2 Reading: ${gasDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
+                                    style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 11),
                                   ),
                                 ],
                               ),
                             ),
-                            const Icon(Icons.chevron_right, color: AppColors.danger),
+                            const Icon(Icons.chevron_right,
+                                color: AppColors.danger),
                           ],
                         ),
                       ),
@@ -393,12 +402,46 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               : const [Color(0xFF059669), Color(0xFF10B981)],
                           glowColor: const Color(0xFF10B981).withValues(alpha: isDark ? 0.3 : 0.15),
                           borderColor: const Color(0xFF34D399).withValues(alpha: isDark ? 0.45 : 0.3),
-                          onTap: () {
-                            for (final d in devices) {
-                              if (!d.needsAuth &&
-                                  d.numRelays > 0 &&
-                                  (d.relays.isEmpty ||
-                                      d.relays.any((r) => r.enabled))) {
+                          onTap: () async {
+                            final targetDevices = filteredDevices
+                                .where((d) =>
+                                    d.isOnline &&
+                                    !d.needsAuth &&
+                                    d.numRelays > 0 &&
+                                    (d.relays.isEmpty ||
+                                        d.relays.any((r) => r.enabled)))
+                                .toList();
+                            if (targetDevices.isEmpty) return;
+                            final roomLabel = _selectedRoom == 'All'
+                                ? 'all controllers'
+                                : '$_selectedRoom controllers';
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: AppColors.surface,
+                                title: const Text('Turn ALL ON?'),
+                                content: Text(
+                                  'Turn on all enabled relay loads across $roomLabel?',
+                                  style: TextStyle(
+                                      color: AppColors.textSecondary),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.success,
+                                    ),
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Turn ON'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              for (final d in targetDevices) {
                                 manager.setAllRelays(d.id, 'on');
                               }
                             }
@@ -418,12 +461,47 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               : const [Color(0xFF4338CA), Color(0xFF312E81)],
                           glowColor: const Color(0xFF8B5CF6).withValues(alpha: isDark ? 0.28 : 0.15),
                           borderColor: const Color(0xFFA78BFA).withValues(alpha: isDark ? 0.4 : 0.3),
-                          onTap: () {
-                            for (final d in devices) {
-                              if (!d.needsAuth &&
-                                  d.numRelays > 0 &&
-                                  (d.relays.isEmpty ||
-                                      d.relays.any((r) => r.enabled))) {
+                          onTap: () async {
+                            final targetDevices = filteredDevices
+                                .where((d) =>
+                                    d.isOnline &&
+                                    !d.needsAuth &&
+                                    d.numRelays > 0 &&
+                                    (d.relays.isEmpty ||
+                                        d.relays.any((r) => r.enabled)))
+                                .toList();
+                            if (targetDevices.isEmpty) return;
+                            final roomLabel = _selectedRoom == 'All'
+                                ? 'all controllers'
+                                : '$_selectedRoom controllers';
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: AppColors.surface,
+                                title: const Text('Turn ALL OFF?'),
+                                content: Text(
+                                  'Power off all enabled relay loads across $roomLabel?',
+                                  style: TextStyle(
+                                      color: AppColors.textSecondary),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: AppColors.danger,
+                                      foregroundColor: Colors.white,
+                                    ),
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Turn OFF'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirm == true) {
+                              for (final d in targetDevices) {
                                 manager.setAllRelays(d.id, 'off');
                               }
                             }

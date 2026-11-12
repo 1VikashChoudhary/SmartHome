@@ -29,9 +29,14 @@ class SmartDevice {
   bool get isEsp8266 => platform.toUpperCase().contains('ESP8266') || model.toUpperCase().contains('ESP8266');
   bool get isEsp32 => !isEsp8266;
 
-  bool get needsAuth =>
-      authLocked ||
-      (authRequired && (authPassword == null || authPassword!.isEmpty));
+  bool get hasCredentials =>
+      (authPassword != null && authPassword!.isNotEmpty) ||
+      (!authLocked &&
+          isGuest &&
+          authUsername != null &&
+          authUsername!.trim().isNotEmpty);
+
+  bool get needsAuth => authLocked || (authRequired && !hasCredentials);
 
   bool get isAdmin => authRole.toLowerCase() == 'admin';
   bool get isGuest => authRole.toLowerCase() == 'guest';
@@ -168,6 +173,7 @@ class SmartDevice {
     String? hostname,
     String? name,
     String? room,
+    String? fwVersion,
     int? numRelays,
     bool? authRequired,
     bool? authLocked,
@@ -193,7 +199,7 @@ class SmartDevice {
       hostname: hostname ?? this.hostname,
       name: name ?? this.name,
       room: room ?? this.room,
-      fwVersion: fwVersion,
+      fwVersion: fwVersion ?? this.fwVersion,
       numRelays: numRelays ?? this.numRelays,
       authRequired: authRequired ?? this.authRequired,
       authLocked: authLocked ?? this.authLocked,
@@ -225,6 +231,7 @@ class SmartDevice {
     'fw_version': fwVersion,
     'num_relays': numRelays,
     'auth_required': authRequired,
+    'auth_locked': authLocked,
     'auth_role': authRole,
     'auth_username': authUsername,
     'auth_password': authPassword,
@@ -246,8 +253,9 @@ class SmartDevice {
       }
     }
 
+    final id = (json['id'] ?? json['mac'] ?? json['ip'] ?? '').toString();
     return SmartDevice(
-      id: json['id'] as String,
+      id: id,
       mac: json['mac'] as String? ?? '',
       ip: json['ip'] as String? ?? '',
       hostname: json['hostname'] as String? ?? 'smarthome',
@@ -256,6 +264,7 @@ class SmartDevice {
       fwVersion: json['fw_version'] as String? ?? '3.2.0',
       numRelays: (json['num_relays'] as num?)?.toInt() ?? 5,
       authRequired: json['auth_required'] as bool? ?? false,
+      authLocked: json['auth_locked'] as bool? ?? false,
       authRole: json['auth_role'] as String? ?? 'admin',
       authUsername: json['auth_username'] as String?,
       authPassword: json['auth_password'] as String?,

@@ -1002,6 +1002,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           backlight: v,
                         );
                         if (!mounted) return;
+                        if (!ok) {
+                          setState(() => _lcdBacklight = !v);
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
@@ -1029,6 +1032,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         setState(() => _lcdEnabled = v);
                         final ok = await widget.manager.saveLcdSettings(widget.device.id, enabled: v);
                         if (!mounted) return;
+                        if (!ok) {
+                          setState(() => _lcdEnabled = !v);
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
@@ -2361,6 +2367,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           {'arduino_ota': val},
                         );
                         if (!mounted) return;
+                        if (!ok) {
+                          setState(() => _arduinoOta = !val);
+                        }
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
@@ -2785,6 +2794,7 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
         final file = result.first;
         final bytes = await file.readAsBytes();
         final content = utf8.decode(bytes);
+        if (!mounted) return;
         setState(() {
           _selectedFileName = file.name;
           _selectedFileSize = bytes.length;
@@ -2794,6 +2804,7 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
         _validateJson(content);
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _validationError = 'Failed to read file: $e';
         _parsedData = null;
@@ -3224,6 +3235,7 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                               label: const Text('Paste Clipboard', style: TextStyle(fontSize: 12)),
                               onPressed: () async {
                                 final data = await Clipboard.getData(Clipboard.kTextPlain);
+                                if (!mounted) return;
                                 if (data?.text != null) {
                                   _pasteController.text = data!.text!;
                                   _selectedFileName = 'Pasted from Clipboard';

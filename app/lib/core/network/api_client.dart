@@ -59,21 +59,31 @@ class ApiClient {
         onRequest: (options, handler) {
           final password =
               options.extra.remove('smarthome_auth_password') as String?;
-          if (password != null && password.isNotEmpty) {
-            final requestedUser =
-                options.extra.remove('smarthome_auth_username') as String?;
-            final knownUser =
-                _usernameByHost[_hostKey(options.uri.host, options.uri.port)];
-            final user = (requestedUser != null && requestedUser.isNotEmpty)
-                ? requestedUser
-                : (knownUser ?? 'admin');
+          final requestedUser =
+              options.extra.remove('smarthome_auth_username') as String?;
+          final knownUser =
+              _usernameByHost[_hostKey(options.uri.host, options.uri.port)];
+          final user = (requestedUser != null && requestedUser.isNotEmpty)
+              ? requestedUser
+              : knownUser;
+          final hasPassword = password != null && password.isNotEmpty;
+          final hasCustomUser =
+              user != null &&
+              user.isNotEmpty &&
+              user.toLowerCase() != 'admin';
+          if (hasPassword || hasCustomUser) {
+            final effectiveUser = (user != null && user.isNotEmpty)
+                ? user
+                : 'admin';
             options.headers['Authorization'] =
-                'Basic ${base64Encode(utf8.encode('$user:$password'))}';
+                'Basic ${base64Encode(utf8.encode('$effectiveUser:${password ?? ''}'))}';
           }
           handler.next(options);
         },
         onError: (error, handler) {
-          if (error.response?.statusCode == 401) {
+          final skipUnauthorized =
+              error.requestOptions.extra['smarthome_skip_unauthorized'] == true;
+          if (!skipUnauthorized && error.response?.statusCode == 401) {
             onUnauthorized?.call(error.requestOptions.uri.host);
           }
           handler.next(error);
@@ -121,22 +131,29 @@ class ApiClient {
     String? password, {
     String? username,
     Duration? timeout,
+    bool skipUnauthorizedCallback = false,
   }) {
     final headers = <String, dynamic>{
       'Accept': 'application/json',
       'X-Requested-With': 'SmartHome',
     };
+    final extra = <String, dynamic>{};
     if (password != null && password.isNotEmpty) {
-      return Options(
-        headers: headers,
-        receiveTimeout: timeout,
-        extra: {
-          'smarthome_auth_password': password,
-          'smarthome_auth_username': username ?? defaultUsername,
-        },
-      );
+      extra['smarthome_auth_password'] = password;
     }
-    return Options(headers: headers, receiveTimeout: timeout);
+    if (username != null && username.trim().isNotEmpty) {
+      extra['smarthome_auth_username'] = username.trim();
+    } else if (password != null && password.isNotEmpty) {
+      extra['smarthome_auth_username'] = defaultUsername;
+    }
+    if (skipUnauthorizedCallback) {
+      extra['smarthome_skip_unauthorized'] = true;
+    }
+    return Options(
+      headers: headers,
+      receiveTimeout: timeout,
+      extra: extra.isEmpty ? null : extra,
+    );
   }
 
   /// Fast discovery probe (unauthenticated)
@@ -161,11 +178,17 @@ class ApiClient {
   Future<Map<String, dynamic>?> fetchStatus(
     String ip, {
     String? password,
+    String? username,
+    bool skipUnauthorizedCallback = false,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/status'),
-        options: _authOptions(password),
+        options: _authOptions(
+          password,
+          username: username,
+          skipUnauthorizedCallback: skipUnauthorizedCallback,
+        ),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
