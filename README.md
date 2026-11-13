@@ -1,4 +1,4 @@
-# Unified ESP32 & ESP8266 Smart Home & Environmental Monitoring System
+# Smart Home & Environmental Monitoring System
 
 <p align="center">
   <img src="https://img.shields.io/badge/Firmware-v1.1.0-blue?style=for-the-badge&logo=espressif&logoColor=white" alt="Firmware Version" />
@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Tests-55%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
-A commercial-grade, production-hardened IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
+IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
 
 ---
 
