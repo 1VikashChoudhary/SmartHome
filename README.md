@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-55%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-66%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
@@ -31,7 +31,8 @@ IoT smart home automation hub powered by a **single unified codebase** that runs
 13. [First-Time Setup Guide](#first-time-setup-guide)
 14. [Troubleshooting](#troubleshooting)
 15. [Project Directory Layout](#project-directory-layout)
-16. [License](#license)
+16. [Sponsor & Support the Project](#sponsor--support-the-project)
+17. [License](#license)
 
 ---
 
@@ -49,6 +50,7 @@ IoT smart home automation hub powered by a **single unified codebase** that runs
 * **Dynamic GPIO Template Engine**: Runtime configuration of relay channels (0 to 8 relays, including relayless Sensor Nodes), pin remapping, boot modes, active-HIGH/LOW polarities, and switch interlocking without reflashing.
 * **Obsidian Glassmorphism Web Dashboard**: Single-page application embedded directly in PROGMEM with dark/light themes, SVG iconography, real-time WebSocket telemetry, gauge animations, and a symmetrical 6-card Settings grid.
 * **Cross-Platform Flutter Companion App**: Single app controls both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, batch multi-device OTA updates, backup management, and encrypted credential storage.
+* **About & Sponsorship Screens**: Beautiful modern About page integrated into both the ESP Web Dashboard and the Flutter Companion App with project branding, feature highlights, and direct UPI (India) / PayPal (International) sponsorship support.
 * **Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics.
 * **Defense-in-Depth Security**: WPA2-PSK AP mode with MAC-derived unique passwords, IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, and encrypted mobile storage.
 
@@ -240,8 +242,8 @@ All pre-compiled firmware binaries and mobile application packages are included 
 ### 1. Embedded Firmware Binaries
 | Board | File Path | Usage |
 |:---|:---|:---|
-| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (824 KB) |
-| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.55 MB) |
+| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (842 KB) |
+| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.57 MB) |
 | **ESP32 (Full Flash)** | [`binaries/esp32/SmartHome_ESP32_merged_0x0.bin`](binaries/esp32/SmartHome_ESP32_merged_0x0.bin) | Serial flasher at offset `0x0` (4.00 MB) |
 
 ### 2. Flutter Companion App Release APKs
@@ -305,7 +307,22 @@ flutter build apk --obfuscate --split-debug-info=build/app/outputs/symbols --spl
 
 ## Compilation & Flashing Guide
 
-### Compiling Firmware via Arduino CLI
+### Automated 1-Click Build Script (Recommended)
+
+The project includes an automated PowerShell build script [`build_firmware.ps1`](build_firmware.ps1) that compiles firmware and copies output binaries to `binaries/`:
+
+```powershell
+# Build for both ESP8266 and ESP32:
+.\build_firmware.ps1
+
+# Build for a specific target only:
+.\build_firmware.ps1 -Target esp32
+.\build_firmware.ps1 -Target esp8266
+```
+
+The script auto-detects the locally installed `arduino-cli`, compiles with the correct FQBN and partition scheme, and copies the resulting `.bin` files to `binaries/esp8266/` and `binaries/esp32/`.
+
+### Manual Compilation via Arduino CLI
 
 #### 1. For ESP8266 (NodeMCUv2 / 4MB):
 ```bash
@@ -391,6 +408,7 @@ SmartHome/
 ├── TimeManager.h / .cpp           # SNTP network clock and DS3231 RTC fallback
 ├── AlarmScheduler.h / .cpp        # Scheduled calendar and delay event manager
 ├── RuleManager.h / .cpp           # Condition-action sensor automation engine
+├── build_firmware.ps1             # Automated 1-click firmware build script (ESP8266 + ESP32)
 ├── CHANGELOG.md                   # Release notes and version history
 ├── asset/                         # Project icon and branding assets
 ├── binaries/                      # Ready-to-flash binaries & release APKs
@@ -400,8 +418,30 @@ SmartHome/
 └── app/                           # Flutter cross-platform companion app
     ├── pubspec.yaml               # Flutter dependencies and assets
     ├── lib/                       # Dart application source code
-    └── test/                      # Automated unit and widget test suite (55 tests)
+    │   └── presentation/screens/
+    │       └── about_screen.dart  # About & Sponsorship screen (UPI + PayPal)
+    └── test/                      # Automated unit and widget test suite (66 tests)
 ```
+
+---
+
+## Sponsor & Support the Project
+
+SmartHome is an independent, 100% free and open-source project. If it brings value to your home or maker setups, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!
+
+### 🇮🇳 India — UPI Payment (Zero Fee · Instant)
+
+| UPI VPA ID | Supported Apps |
+|:---|:---|
+| **`1vikash@ybl`** | Google Pay · PhonePe · Paytm · BHIM · Cred · Amazon Pay |
+
+### 🌍 International — PayPal
+
+| PayPal | Link |
+|:---|:---|
+| **Vikash Choudhary** | [https://paypal.me/1vikash](https://paypal.me/1vikash) |
+
+> Both sponsorship options are also accessible directly from the **About & Sponsorship** screen in the ESP Web Dashboard and the Flutter Companion App — tap the ❤️ heart icon in Settings.
 
 ---
 

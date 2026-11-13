@@ -42,9 +42,22 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       if (mounted) setState(() {});
     });
     _selectedDeviceId = widget.preselectedDeviceId;
-    _countdownTicker = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (mounted && _alarms.isNotEmpty) {
-        setState(() {});
+    _countdownTicker = Timer.periodic(const Duration(seconds: 15), (_) async {
+      if (!mounted) return;
+      setState(() {});
+      // Silently refresh alarm fired status from device if connected
+      final devices = ref.read(deviceManagerProvider);
+      final dev = _resolveDevice(devices);
+      if (dev != null && dev.isOnline && _alarms.isNotEmpty) {
+        final rawAlarms = await _api.fetchAlarms(
+          dev.ip,
+          password: dev.authPassword,
+        );
+        if (mounted && rawAlarms != null && _selectedDeviceId == dev.id) {
+          setState(() {
+            _alarms = rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList();
+          });
+        }
       }
     });
   }
@@ -119,8 +132,15 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     bool enabled,
   ) async {
     final idx = _rules.indexWhere((r) => r.id == rule.id);
+    final previousTriggered = rule.triggered;
     if (idx >= 0) {
-      setState(() => _rules[idx] = _rules[idx].copyWith(enabled: enabled));
+      setState(
+        () => _rules[idx] = _rules[idx].copyWith(
+          enabled: enabled,
+          // When re-enabling a rule, reset triggered flag immediately in UI
+          triggered: enabled ? false : rule.triggered,
+        ),
+      );
     }
 
     final ok = await _api.setRuleEnabled(
@@ -129,12 +149,22 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       enabled,
       password: dev.authPassword,
     );
-    if (!ok && mounted) {
+    if (!mounted) return;
+    if (ok) {
+      // Silently sync latest rule state from controller without full-page spinner
+      final rawRules = await _api.fetchRules(dev.ip, password: dev.authPassword);
+      if (mounted && rawRules != null && _selectedDeviceId == dev.id) {
+        setState(() {
+          _rules = rawRules.map((m) => AutomationRule.fromJson(m)).toList();
+        });
+      }
+    } else {
       final revertIdx = _rules.indexWhere((r) => r.id == rule.id);
       if (revertIdx >= 0) {
         setState(
           () => _rules[revertIdx] = _rules[revertIdx].copyWith(
             enabled: !enabled,
+            triggered: previousTriggered,
           ),
         );
       }
@@ -210,8 +240,15 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     bool enabled,
   ) async {
     final idx = _alarms.indexWhere((a) => a.id == alarm.id);
+    final previousFired = alarm.fired;
     if (idx >= 0) {
-      setState(() => _alarms[idx] = _alarms[idx].copyWith(enabled: enabled));
+      setState(
+        () => _alarms[idx] = _alarms[idx].copyWith(
+          enabled: enabled,
+          // When re-enabling an alarm, reset fired flag immediately so UI reflects ARMED
+          fired: enabled ? false : alarm.fired,
+        ),
+      );
     }
 
     final ok = await _api.setAlarmEnabled(
@@ -220,12 +257,25 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       enabled,
       password: dev.authPassword,
     );
-    if (!ok && mounted) {
+    if (!mounted) return;
+    if (ok) {
+      // Silently sync latest alarm state from controller without full-page spinner
+      final rawAlarms = await _api.fetchAlarms(
+        dev.ip,
+        password: dev.authPassword,
+      );
+      if (mounted && rawAlarms != null && _selectedDeviceId == dev.id) {
+        setState(() {
+          _alarms = rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList();
+        });
+      }
+    } else {
       final revertIdx = _alarms.indexWhere((a) => a.id == alarm.id);
       if (revertIdx >= 0) {
         setState(
           () => _alarms[revertIdx] = _alarms[revertIdx].copyWith(
             enabled: !enabled,
+            fired: previousFired,
           ),
         );
       }

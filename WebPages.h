@@ -264,6 +264,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="tab" id="tabNavHardware" onclick="showTab('hardware')"><svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor"><path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/></svg> Hardware</div>
 <div class="tab" onclick="showTab('logs')"><svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg> Logs</div>
 <div class="tab" id="tabNavSystem" onclick="showTab('system')"><svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg> System</div>
+<div class="tab" id="tabNavAbout" onclick="showTab('about')"><svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg> About</div>
 </div>
 <!-- Dashboard Tab -->
 <div class="tab-content active" id="tab-dashboard">
@@ -797,6 +798,202 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 </div>
 </div>
 
+<!-- About & Sponsor Tab -->
+<div class="tab-content" id="tab-about">
+<div class="grid" style="grid-template-columns:1fr;">
+
+<!-- Hero Card -->
+<div class="card" style="text-align:center;border:1px solid rgba(99,102,241,0.3);">
+<div style="display:inline-flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:18px;background:var(--accent-grad);box-shadow:0 8px 24px rgba(99,102,241,0.4);margin-bottom:14px;">
+<svg viewBox="0 0 24 24" width="36" height="36" style="fill:#fff;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+</div>
+<h2 style="margin:0;font-size:1.4rem;font-weight:800;letter-spacing:-0.03em;">SmartHome Pro</h2>
+<p style="color:var(--text2);font-size:.82rem;margin:6px 0 14px;">Multi-Channel Controller Suite</p>
+<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
+<span class="badge badge-info">v1.0.0 Stable</span>
+<span class="badge badge-ok">100% Local-First</span>
+<span class="badge" style="background:rgba(59,130,246,0.15);color:var(--blue);border:1px solid rgba(59,130,246,0.3);">Zero Cloud Required</span>
+</div>
+</div>
+</div>
+
+<!-- Sponsor Section Header -->
+<div style="display:flex;align-items:center;gap:10px;margin:8px 0 6px;">
+<div style="padding:6px;background:rgba(244,63,94,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--red);"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+</div>
+<span style="font-size:.78rem;font-weight:800;letter-spacing:0.08em;color:var(--text);">SPONSOR &amp; SUPPORT PROJECT</span>
+</div>
+<p style="font-size:.8rem;color:var(--text2);line-height:1.5;margin-bottom:14px;">SmartHome is an independent Smart Home & Environmental Monitoring System . If it brings value to your home or maker setups, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!</p>
+
+<div class="grid">
+
+<!-- UPI Card (India) -->
+<div class="card" style="border:1px solid rgba(16,185,129,0.35);">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
+<div style="display:flex;align-items:center;gap:12px;">
+<div style="padding:8px;background:rgba(16,185,129,0.12);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="22" height="22" style="fill:var(--green);"><path d="M3 11h8V3H3v8zm2-6h4v4H5V5zm8-2v8h8V3h-8zm6 6h-4V5h4v4zM3 21h8v-8H3v8zm2-6h4v4H5v-4zm13-2h-2v4h-4v2h4v4h2v-4h4v-2h-4v-4z"/></svg>
+</div>
+<div>
+<div style="font-size:.95rem;font-weight:700;">India &bull; UPI Payment</div>
+<div style="font-size:.72rem;color:var(--text2);">Zero transaction fee &bull; Instant</div>
+</div>
+</div>
+<span class="badge badge-ok">BHIM / UPI</span>
+</div>
+<div style="background:var(--bg);border:1px solid var(--card-border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+<svg viewBox="0 0 24 24" width="18" height="18" style="fill:var(--green);flex-shrink:0;"><path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+<div style="flex:1;">
+<div style="font-size:.62rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">UPI VPA ID</div>
+<div style="font-size:1rem;font-weight:800;letter-spacing:0.05em;font-family:monospace;" id="upiIdText">1vikash@ybl</div>
+</div>
+<button class="btn btn-outline btn-sm" id="btnCopyUpi" onclick="copyAboutText('1vikash@ybl','UPI ID','btnCopyUpi')" title="Copy UPI ID" style="padding:6px 10px;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+Copy
+</button>
+</div>
+<div style="display:flex;gap:8px;margin-bottom:12px;">
+<button class="btn btn-green" style="flex:1;" onclick="copyAboutText('upi://pay?pa=1vikash@ybl&pn=Vikash%20Choudhary&cu=INR&tn=SmartHome%20Project%20Sponsorship','UPI deep link','btnCopyUpi')">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M7 2v11h3v9l7-12h-4l4-8z"/></svg>
+Pay via Any UPI App
+</button>
+</div>
+<div style="display:flex;flex-wrap:wrap;gap:6px;">
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">Google Pay</span>
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">PhonePe</span>
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">Paytm</span>
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">BHIM</span>
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">Cred</span>
+<span style="font-size:.68rem;font-weight:600;color:var(--text2);padding:3px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--card-border);">Amazon Pay</span>
+</div>
+</div>
+
+<!-- PayPal Card (International) -->
+<div class="card" style="border:1px solid rgba(0,112,186,0.4);">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;">
+<div style="display:flex;align-items:center;gap:12px;">
+<div style="padding:8px;background:rgba(0,112,186,0.15);border-radius:10px;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="22" height="22" style="fill:#38bdf8;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+</div>
+<div>
+<div style="font-size:.95rem;font-weight:700;">International &bull; PayPal</div>
+<div style="font-size:.72rem;color:var(--text2);">Global donations &bull; Cards &amp; PayPal balance</div>
+</div>
+</div>
+<span class="badge" style="background:rgba(0,112,186,0.18);color:#38bdf8;border:1px solid rgba(0,112,186,0.4);">Worldwide</span>
+</div>
+<div style="background:var(--bg);border:1px solid var(--card-border);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+<svg viewBox="0 0 24 24" width="18" height="18" style="fill:#38bdf8;flex-shrink:0;"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>
+<div style="flex:1;">
+<div style="font-size:.62rem;font-weight:700;color:var(--text-muted);letter-spacing:0.05em;text-transform:uppercase;">PAYPAL ME LINK</div>
+<div style="font-size:.88rem;font-weight:700;">https://paypal.me/1vikash</div>
+</div>
+<button class="btn btn-outline btn-sm" id="btnCopyPaypal" onclick="copyAboutText('https://paypal.me/1vikash','PayPal link','btnCopyPaypal')" title="Copy PayPal link" style="padding:6px 10px;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+Copy
+</button>
+</div>
+<div style="display:flex;gap:8px;">
+<a href="https://paypal.me/1vikash" target="_blank" rel="noopener" class="btn btn-primary" style="flex:1;text-decoration:none;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+Donate via PayPal.Me
+</a>
+</div>
+</div>
+</div>
+
+<!-- Features Section -->
+<div style="display:flex;align-items:center;gap:10px;margin:8px 0 6px;">
+<div style="padding:6px;background:rgba(99,102,241,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--accent2);"><path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z"/></svg>
+</div>
+<span style="font-size:.78rem;font-weight:800;letter-spacing:0.08em;color:var(--text);">ARCHITECTURE &amp; KEY CAPABILITIES</span>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr;">
+<div class="card">
+<div style="display:flex;flex-direction:column;gap:16px;">
+
+<div style="display:flex;gap:14px;align-items:flex-start;">
+<div style="padding:8px;background:rgba(16,185,129,0.12);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="20" height="20" style="fill:var(--green);"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+</div>
+<div><div style="font-weight:700;font-size:.88rem;">100% Local &amp; Private</div><div style="font-size:.76rem;color:var(--text2);line-height:1.4;margin-top:3px;">Complete operational independence with zero cloud subscriptions, zero telemetry, and zero mandatory external connections.</div></div>
+</div>
+
+<div style="border-top:1px solid var(--border);"></div>
+
+<div style="display:flex;gap:14px;align-items:flex-start;">
+<div style="padding:8px;background:rgba(99,102,241,0.12);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="20" height="20" style="fill:var(--accent2);"><path d="M15 9H9v6h6V9zm-2 4h-2v-2h2v2zm8-2V9h-2V7c0-1.1-.9-2-2-2h-2V3h-2v2h-2V3H9v2H7c-1.1 0-2 .9-2 2v2H3v2h2v2H3v2h2v2c0 1.1.9 2 2 2h2v2h2v-2h2v2h2v-2h2c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2zm-4 6H7V7h10v10z"/></svg>
+</div>
+<div><div style="font-weight:700;font-size:.88rem;">Flash-Persistent Automations</div><div style="font-size:.76rem;color:var(--text2);line-height:1.4;margin-top:3px;">Timers and conditional sensor rules execute deterministically on-chip and persist across reboots via LittleFS / Flash.</div></div>
+</div>
+
+<div style="border-top:1px solid var(--border);"></div>
+
+<div style="display:flex;gap:14px;align-items:flex-start;">
+<div style="padding:8px;background:rgba(139,92,246,0.12);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="20" height="20" style="fill:#8b5cf6;"><path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
+</div>
+<div><div style="font-weight:700;font-size:.88rem;">Custom DIY Pin Matrix</div><div style="font-size:.76rem;color:var(--text2);line-height:1.4;margin-top:3px;">Dynamic pin mapping with boot-glitch prevention, active HIGH/LOW polarity, and real-time pin conflict detection.</div></div>
+</div>
+
+<div style="border-top:1px solid var(--border);"></div>
+
+<div style="display:flex;gap:14px;align-items:flex-start;">
+<div style="padding:8px;background:rgba(6,182,212,0.12);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="20" height="20" style="fill:#06b6d4;"><path d="M15 13V5a3 3 0 00-6 0v8a5 5 0 106 0zm-3-9a1 1 0 011 1v3h-2V5a1 1 0 011-1z"/></svg>
+</div>
+<div><div style="font-weight:700;font-size:.88rem;">Multi-Sensor Engine</div><div style="font-size:.76rem;color:var(--text2);line-height:1.4;margin-top:3px;">Real-time metrics for DHT11/DHT22 climate, BME280 barometric, MQ-2 gas/smoke, and ultrasonic tank monitoring.</div></div>
+</div>
+
+<div style="border-top:1px solid var(--border);"></div>
+
+<div style="display:flex;gap:14px;align-items:flex-start;">
+<div style="padding:8px;background:rgba(245,158,11,0.12);border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="20" height="20" style="fill:var(--orange);"><path d="M20 18.69L7.84 6.14 5.27 3.49 4 4.76l2.8 2.8v.01c-.52.99-.8 2.16-.8 3.43v5l-2 2v1h13.73l2 2L21 19.72l-1-1.03zM12 22c1.11 0 2-.89 2-2h-4c0 1.11.89 2 2 2zm6-7.32V11c0-3.08-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68c-.15.03-.29.08-.42.12-.1.03-.2.07-.3.11h-.01c-.01 0-.01 0-.02.01-.23.09-.46.2-.68.31 0 0-.01 0-.01.01L18 14.68z"/></svg>
+</div>
+<div><div style="font-weight:700;font-size:.88rem;">Safe Over-the-Air (OTA) Updates</div><div style="font-size:.76rem;color:var(--text2);line-height:1.4;margin-top:3px;">Rollback-protected dual partition on ESP32, MD5-verified flash streaming for ESP8266.</div></div>
+</div>
+
+</div>
+</div>
+</div>
+
+<!-- Developer & Repository -->
+<div style="display:flex;align-items:center;gap:10px;margin:8px 0 6px;">
+<div style="padding:6px;background:rgba(129,140,248,0.15);border-radius:8px;display:flex;align-items:center;justify-content:center;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--accent2);"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+</div>
+<span style="font-size:.78rem;font-weight:800;letter-spacing:0.08em;color:var(--text);">DEVELOPER &amp; REPOSITORY</span>
+</div>
+
+<div class="grid" style="grid-template-columns:1fr;">
+<div class="card">
+<div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+<div style="width:44px;height:44px;border-radius:50%;background:rgba(99,102,241,0.2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1rem;color:var(--accent2);flex-shrink:0;">VC</div>
+<div>
+<div style="font-weight:700;font-size:.95rem;">Vikash Choudhary</div>
+<div style="font-size:.72rem;color:var(--text2);">Project Creator &amp; Embedded Systems Engineer</div>
+</div>
+</div>
+<a href="https://github.com/1VikashChoudhary/SmartHome" target="_blank" rel="noopener" class="btn btn-outline" style="width:100%;text-decoration:none;">
+<svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+View Project on GitHub
+</a>
+</div>
+</div>
+
+<!-- Footer -->
+<div style="text-align:center;padding:10px 0 4px;">
+<div style="font-size:.72rem;font-weight:600;color:var(--text-muted);">SmartHome Pro</div>
+<div style="font-size:.66rem;color:var(--text-muted);margin-top:3px;">Smart Home & Environmental Monitoring System</div>
+</div>
+
+</div>
+
 <!-- Alarm Add/Edit Modal -->
 <div class="alarm-modal" id="alarmModal">
 <div class="alarm-box">
@@ -1014,6 +1211,15 @@ d.className='toast toast-'+level;
 d.textContent=msg;
 document.getElementById('toasts').appendChild(d);
 setTimeout(()=>d.remove(),4000);
+}
+
+// Copy to clipboard (About tab)
+function copyAboutText(text,label,btnId){
+navigator.clipboard.writeText(text).then(()=>{
+toast(label+' copied to clipboard!','ok');
+const btn=document.getElementById(btnId);
+if(btn){const orig=btn.innerHTML;btn.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg> Copied';setTimeout(()=>{btn.innerHTML=orig;},3000);}
+}).catch(()=>{toast('Copy failed','err');});
 }
 
 // WebSocket

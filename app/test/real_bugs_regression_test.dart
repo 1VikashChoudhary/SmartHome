@@ -206,5 +206,32 @@ void main() {
       expect(delayAlarm.nextRunBadge, 'Runs within 1h 15m');
       expect(delayAlarm.actionLabel, 'Turn OFF');
     });
+
+    test('Re-arming a completed Delay Countdown alarm clears fired flag and transitions to armed', () {
+      final completedAlarm = ScheduledAlarm(
+        id: 3,
+        enabled: false,
+        mode: 1,
+        delayMinutes: 1,
+        action: 1,
+        targetRelay: 0,
+        fired: true,
+      );
+
+      expect(completedAlarm.nextRunBadge, 'Paused');
+
+      // If toggled ON without clearing fired flag, nextRunBadge wrongly stays 'Completed'
+      final buggyArm = completedAlarm.copyWith(enabled: true);
+      expect(buggyArm.nextRunBadge, 'Completed');
+
+      // With proper re-arming logic, fired flag is reset to false
+      final rearmed = completedAlarm.copyWith(
+        enabled: true,
+        fired: false,
+      );
+      expect(rearmed.enabled, true);
+      expect(rearmed.fired, false);
+      expect(rearmed.nextRunBadge, 'Runs within 1m');
+    });
   });
 }
