@@ -285,19 +285,19 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <!-- Sensors Summary -->
 <div class="card">
 <div class="card-title"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M15 13V5a3 3 0 00-6 0v8a5 5 0 106 0zm-3-9a1 1 0 011 1v3h-2V5a1 1 0 011-1z"/></svg> Environment &amp; Sensors</div>
-<div class="gauge-row">
-<div class="gauge"><div class="gauge-value"><span id="temp">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
-<div class="gauge"><div class="gauge-value"><span id="hum">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
-<div class="gauge" id="cardPressure" style="display:none;"><div class="gauge-value"><span id="pressure">--</span><span class="gauge-unit">hPa</span></div><div class="gauge-label">Barometer</div></div>
-<div class="gauge" id="cardLux" style="display:none;"><div class="gauge-value"><span id="lux">--</span><span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Lux</div></div>
+<div class="gauge-row" id="primaryGaugeRow">
+<div class="gauge" id="cardTemp"><div class="gauge-value"><span id="temp">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label" id="lblTemp">Temperature</div></div>
+<div class="gauge" id="cardHum"><div class="gauge-value"><span id="hum">--</span><span class="gauge-unit">%</span></div><div class="gauge-label" id="lblHum">Humidity</div></div>
+<div class="gauge" id="cardPressure" style="display:none;"><div class="gauge-value"><span id="pressure">--</span><span class="gauge-unit">hPa</span></div><div class="gauge-label" id="lblPressure">Barometer</div></div>
+<div class="gauge" id="cardLux" style="display:none;"><div class="gauge-value"><span id="lux">--</span><span class="gauge-unit">lx</span></div><div class="gauge-label" id="lblLux">Ambient Lux</div></div>
 </div>
 
-<div class="status-row" id="rowMotion" style="display:none;margin-top:8px;"><span class="status-label">Motion Occupancy</span><span class="badge" id="motionBadge">--</span></div>
-<div class="status-row" id="rowProbe" style="display:none;"><span class="status-label">Water Temp Probe</span><span class="status-value"><span id="probeTemp">--</span>&deg;C</span></div>
+<div class="status-row" id="rowMotion" style="display:none;margin-top:8px;"><span class="status-label" id="lblMotion">Motion Occupancy</span><span class="badge" id="motionBadge">--</span></div>
+<div class="status-row" id="rowProbe" style="display:none;"><span class="status-label" id="lblProbe">Water Temp Probe</span><span class="status-value" id="probeValWrap"><span id="probeTemp">--</span>&deg;C</span></div>
 
 <div id="tankWidget" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border);">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-<span class="status-label">Overhead Water Tank</span>
+<span class="status-label" id="lblTank">Overhead Water Tank</span>
 <span class="status-value"><span id="tankPct">--</span>% (<span id="tankDist">--</span> cm)</span>
 </div>
 <div style="background:var(--bg);height:14px;border-radius:7px;overflow:hidden;position:relative;border:1px solid var(--card-border);">
@@ -305,9 +305,9 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 </div>
 </div>
 
-<div style="margin-top:12px">
+<div id="gasWidget" style="margin-top:12px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-<span class="status-label">Gas Level</span>
+<span class="status-label" id="lblGas">Gas Level</span>
 <span class="badge" id="gasBadge">--</span>
 </div>
 <div class="gas-bar-wrap">
@@ -316,6 +316,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 </div>
 <div class="gas-info"><span>Raw: <span id="gasRaw">0</span></span><span>Threshold: <span id="gasTh">400</span></span></div>
 </div>
+<div id="noSensorsState" style="display:none;color:var(--text2);padding:16px;text-align:center;background:var(--bg);border-radius:10px;border:1px dashed var(--card-border);">No sensors configured in Hardware Profile.<div class="admin-only" style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="document.getElementById('tabNavHardware')?.click()">Configure in Hardware</button></div></div>
 <div id="multiSensorsWrap" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--card-border);"></div>
 </div>
 
@@ -345,9 +346,9 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 
 <!-- Sensors Tab -->
 <div class="tab-content" id="tab-sensors">
-<div class="grid">
-<div class="card">
-<div class="card-title">Climate &mdash; Temperature &amp; Humidity</div>
+<div class="grid" id="sensorPrimaryGrid">
+<div class="card" id="sensorClimateCard">
+<div class="card-title" id="sensorClimateTitle">Climate &mdash; Temperature &amp; Humidity</div>
 <div class="gauge-row">
 <div class="gauge"><div class="gauge-value"><span id="temp2">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
 <div class="gauge"><div class="gauge-value"><span id="hum2">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
@@ -364,8 +365,8 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <button class="btn btn-primary btn-sm" onclick="saveSensorCal()">Save Calibration</button>
 </div>
 </div>
-<div class="card">
-<div class="card-title">MQ2 &mdash; Gas Sensor</div>
+<div class="card" id="sensorMq2Card">
+<div class="card-title" id="sensorMq2Title">MQ2 &mdash; Gas Sensor</div>
 <div class="gauge"><div class="gauge-value"><span id="gasVal">--</span><span class="gauge-unit" id="gasMaxUnit"> /4095</span></div><div class="gauge-label">Raw ADC Value</div></div>
 <div style="margin-top:12px">
 <div class="gas-bar-wrap" style="height:32px">
@@ -392,6 +393,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 </div>
 </div>
 <div id="multiSensorCardsWrap" style="display:none;margin-top:14px;"></div>
+<div id="noSensorsTabState" class="card" style="display:none;text-align:center;color:var(--text2);padding:24px;">No sensors configured in Hardware Profile.<div class="admin-only" style="margin-top:10px"><button class="btn btn-sm btn-outline" onclick="document.getElementById('tabNavHardware')?.click()">Configure in Hardware</button></div></div>
 </div>
 
 <!-- Alarms Tab -->
@@ -1198,7 +1200,7 @@ const el=document.getElementById('tab-'+id);
 if(el)el.classList.add('active');
 if(id==='logs')refreshLogs();
 if(id==='system')loadDiag();
-if(id==='settings')loadSettings();
+if(id==='settings'||id==='sensors')loadSettings();
 if(id==='hardware')loadHardware();
 if(id==='alarms')loadAlarms();
 if(id==='rules')loadRules();
@@ -1296,59 +1298,139 @@ const wifiStateStr=d.wifi_state||'Disconnected';
 if(wifiStateStr==='Connected'){wb.className='badge badge-ok';wb.innerHTML='<span class="pulse">&#9679;</span> Connected';}
 else{wb.className='badge badge-err';wb.innerHTML='&#9679; '+escapeHtml(wifiStateStr);}
 
+function isCustomSensorLabel(lbl,prefix){
+if(!lbl)return false;
+const s=String(lbl).trim();
+if(!s)return false;
+return !new RegExp('^'+prefix+'(\\s*#?\\d+)?$','i').test(s);
+}
+
+// Active multi-instance sensor slices
+const activeClimates=(d.climates||[]).filter(c=>c&&c.enabled);
+const activeLights=(d.lights||[]).filter(l=>l&&l.enabled);
+const activeMotions=(d.motions||[]).filter(m=>m&&m.enabled);
+const activeProbes=(d.probes||[]).filter(p=>p&&p.enabled);
+const activeTanks=(d.tanks||[]).filter(t=>t&&t.enabled);
+const activeMq2s=(d.mq2s||[]).filter(g=>g&&(g.enabled||g.hw_allowed));
+
 // Temperature & humidity
-if(d.dht_enabled===false){
+const cliEn=(d.dht_enabled!==false);
+const cardT=document.getElementById('cardTemp');if(cardT)cardT.style.display=cliEn?'block':'none';
+const cardH=document.getElementById('cardHum');if(cardH)cardH.style.display=cliEn?'block':'none';
+const sCliCard=document.getElementById('sensorClimateCard');if(sCliCard)sCliCard.style.display=cliEn?'block':'none';
+if(!cliEn){
 setText('temp','--');setText('temp2','--');
 setText('hum','--');setText('hum2','--');
 const ds=document.getElementById('dhtStatus');
 if(ds){ds.className='badge badge-info';setText('dhtStatus','Disabled');}
 }else{
-if(d.temperature!==undefined){
-setText('temp',parseFloat(d.temperature).toFixed(1));setText('temp2',parseFloat(d.temperature).toFixed(1));
-setText('hum',parseFloat(d.humidity).toFixed(1));setText('hum2',parseFloat(d.humidity).toFixed(1));
+const primaryCliFault=activeClimates.length>0?!!activeClimates[0].fault:!!d.dht_fault;
+const pTemp=activeClimates.length>0?parseFloat(activeClimates[0].temperature):parseFloat(d.temperature);
+const pHum=activeClimates.length>0?parseFloat(activeClimates[0].humidity):parseFloat(d.humidity);
+const hasCliRead=(!isNaN(pTemp)&&pTemp!==0)||(!isNaN(pHum)&&pHum>0);
+if(primaryCliFault){
+setText('temp','ERR');setText('temp2','ERR');
+setText('hum','ERR');setText('hum2','ERR');
+}else if(hasCliRead){
+setText('temp',pTemp.toFixed(1));setText('temp2',pTemp.toFixed(1));
+setText('hum',pHum.toFixed(1));setText('hum2',pHum.toFixed(1));
+}else{
+setText('temp','--');setText('temp2','--');
+setText('hum','--');setText('hum2','--');
 }
 const ds=document.getElementById('dhtStatus');
 if(ds){
-if(d.dht_fault){ds.className='badge badge-err';setText('dhtStatus','FAULT');}
+if(primaryCliFault){ds.className='badge badge-err';setText('dhtStatus','FAULT');}
 else{ds.className='badge badge-ok';setText('dhtStatus','OK');}
 }
+const cliCustom=activeClimates.length>=1&&isCustomSensorLabel(activeClimates[0].label,'Climate');
+setText('lblTemp',cliCustom?(activeClimates[0].label+' Temp'):'Temperature');
+setText('lblHum',cliCustom?(activeClimates[0].label+' Humidity'):'Humidity');
+const sCliTitle=document.getElementById('sensorClimateTitle');
+if(sCliTitle)sCliTitle.textContent=cliCustom?('Climate \u2014 '+activeClimates[0].label):'Climate \u2014 Temperature & Humidity';
 }
 setText('tempTh',d.temp_threshold||'45');
 
 // Additional Telemetry
-if(d.pressure_enabled&&d.pressure!==undefined&&parseFloat(d.pressure)>300){
-const cp=document.getElementById('cardPressure');if(cp)cp.style.display='block';
+const showPressure=!!(cliEn&&d.pressure_enabled&&d.pressure!==undefined&&parseFloat(d.pressure)>300);
+const cp=document.getElementById('cardPressure');if(cp)cp.style.display=showPressure?'block':'none';
+if(showPressure){
 setText('pressure',parseFloat(d.pressure).toFixed(1));
-}else{const cp=document.getElementById('cardPressure');if(cp)cp.style.display='none';}
-if(d.lux!==undefined&&d.lux_enabled!==false){
-const cl=document.getElementById('cardLux');if(cl)cl.style.display='block';
+const activeBaro=activeClimates.find(c=>c.barometer);
+setText('lblPressure',(activeBaro&&isCustomSensorLabel(activeBaro.label,'Climate'))?(activeBaro.label+' Baro'):'Barometer');
+}
+
+const showLux=(d.lux!==undefined&&d.lux_enabled!==false);
+const cl=document.getElementById('cardLux');if(cl)cl.style.display=showLux?'block':'none';
+if(showLux){
 setText('lux',parseFloat(d.lux).toFixed(1));
-}else{const cl=document.getElementById('cardLux');if(cl)cl.style.display='none';}
-if(d.motion!==undefined&&d.motion_enabled!==false){
-const rm=document.getElementById('rowMotion');if(rm)rm.style.display='flex';
+const luxCustom=activeLights.length>=1&&isCustomSensorLabel(activeLights[0].label,'Light');
+setText('lblLux',luxCustom?activeLights[0].label:'Ambient Lux');
+}
+
+const pGaugeRow=document.getElementById('primaryGaugeRow');
+if(pGaugeRow)pGaugeRow.style.display=(cliEn||showPressure||showLux)?'':'none';
+
+const showMotion=(d.motion!==undefined&&d.motion_enabled!==false);
+const rm=document.getElementById('rowMotion');if(rm)rm.style.display=showMotion?'flex':'none';
+if(showMotion){
+const motCustom=activeMotions.length>=1&&isCustomSensorLabel(activeMotions[0].label,'Motion');
+setText('lblMotion',motCustom?activeMotions[0].label:'Motion Occupancy');
 const mb=document.getElementById('motionBadge');
 if(mb){
 mb.className=d.motion?'badge badge-err':'badge badge-ok';
 mb.textContent=d.motion?'Motion Detected':(d.motion_age_s<3600?d.motion_age_s+'s ago':'Clear');
 }
-}else{const rm=document.getElementById('rowMotion');if(rm)rm.style.display='none';}
-if(d.probe_temp!==undefined&&d.probe_enabled!==false&&parseFloat(d.probe_temp)>-55){
-const rp=document.getElementById('rowProbe');if(rp)rp.style.display='flex';
-setText('probeTemp',parseFloat(d.probe_temp).toFixed(1));
-}else{const rp=document.getElementById('rowProbe');if(rp)rp.style.display='none';}
-if(d.tank_level_pct!==undefined&&d.tank_enabled!==false){
-const tw=document.getElementById('tankWidget');if(tw)tw.style.display='block';
+}
+
+const showProbe=(d.probe_enabled!==false)&&((d.probe_temp!==undefined&&parseFloat(d.probe_temp)>-55)||!!d.probe_fault);
+const rp=document.getElementById('rowProbe');if(rp)rp.style.display=showProbe?'flex':'none';
+if(showProbe){
+const prbCustom=activeProbes.length>=1&&isCustomSensorLabel(activeProbes[0].label,'Probe');
+setText('lblProbe',prbCustom?activeProbes[0].label:'Water Temp Probe');
+const pw=document.getElementById('probeValWrap');
+if(pw){
+if(d.probe_fault){pw.innerHTML='<span class="badge badge-err">FAULT</span>';}
+else{pw.innerHTML='<span id="probeTemp">'+parseFloat(d.probe_temp).toFixed(1)+'</span>&deg;C';}
+}
+}
+
+const showTank=(d.tank_level_pct!==undefined&&d.tank_enabled!==false);
+const tw=document.getElementById('tankWidget');if(tw)tw.style.display=showTank?'block':'none';
+if(showTank){
+const hasAboveTank=cliEn||showPressure||showLux||showMotion||showProbe;
+if(tw){
+tw.style.borderTop=hasAboveTank?'1px solid var(--card-border)':'none';
+tw.style.paddingTop=hasAboveTank?'10px':'0';
+tw.style.marginTop=hasAboveTank?'12px':'0';
+}
+const tnkCustom=activeTanks.length>=1&&isCustomSensorLabel(activeTanks[0].label,'Tank');
+setText('lblTank',tnkCustom?activeTanks[0].label:'Overhead Water Tank');
 setText('tankPct',d.tank_level_pct);
-setText('tankDist',d.distance_cm||'--');
+setText('tankDist',(d.distance_cm!==undefined)?d.distance_cm:'--');
 const tb=document.getElementById('tankBar');
 if(tb){
 tb.style.width=Math.min(100,Math.max(0,d.tank_level_pct))+'%';
 tb.style.background=d.tank_level_pct<20?'#ef4444':(d.tank_level_pct>80?'#10b981':'#06b6d4');
 }
-}else{const tw=document.getElementById('tankWidget');if(tw)tw.style.display='none';}
+}
 
 // Gas
-if(d.gas_raw!==undefined){
+const hasMq2=(d.gas_enabled===true)||(d.gas_hw_allowed===true)||activeMq2s.length>0;
+const gw=document.getElementById('gasWidget');
+if(gw){
+gw.style.display=hasMq2?'block':'none';
+gw.style.marginTop=(cliEn||showPressure||showLux||showMotion||showProbe||showTank)?'12px':'0';
+}
+const sMq2Card=document.getElementById('sensorMq2Card');if(sMq2Card)sMq2Card.style.display=hasMq2?'block':'none';
+const sPriGrid=document.getElementById('sensorPrimaryGrid');if(sPriGrid)sPriGrid.style.display=(cliEn||hasMq2)?'':'none';
+if(hasMq2){
+const gasCustom=activeMq2s.length>=1&&isCustomSensorLabel(activeMq2s[0].label,'Gas');
+setText('lblGas',gasCustom?(activeMq2s[0].label+' (Gas)'):'Gas Level');
+const sMq2Title=document.getElementById('sensorMq2Title');
+if(sMq2Title)sMq2Title.textContent=gasCustom?('MQ2 \u2014 '+activeMq2s[0].label):'MQ2 \u2014 Gas Sensor';
+}
+if(hasMq2&&d.gas_raw!==undefined){
 const gasMax=d.gas_max||(d.platform==='ESP8266'?1023:4095);
 const gUnit=document.getElementById('gasMaxUnit');if(gUnit)gUnit.textContent=' /'+gasMax;
 const gLbl=document.getElementById('gasThLabel');if(gLbl)gLbl.textContent='Alarm Threshold (0-'+gasMax+')';
@@ -1366,22 +1448,29 @@ const thLine1=document.getElementById('gasThLine');if(thLine1)thLine1.style.left
 const thLine2=document.getElementById('gasThLine2');if(thLine2)thLine2.style.left=thPct+'%';
 setText('gasTh',d.gas_threshold!==undefined?d.gas_threshold:(gIsEsp8266?100:400));
 const gb=document.getElementById('gasBadge');
+if(gb){
 if(d.gas_enabled===false){gb.className='badge badge-info';gb.textContent='Disabled';}
 else if(d.gas_warming){gb.className='badge badge-warn';gb.textContent='Warming';}
 else if(d.gas_alarm){gb.className='badge badge-err';gb.textContent='DANGER';}
 else{gb.className='badge badge-ok';gb.textContent='Safe';}
+}
 setText('gasStat',d.gas_enabled===false?'Disabled':(d.gas_alarm?'DANGER':'Safe'));
+const gwBadge=document.getElementById('gasWarm');
 setText('gasWarm',d.gas_enabled===false?'Off':(d.gas_warming?'Yes':'No'));
-document.getElementById('gasWarm').className='badge '+(d.gas_enabled===false?'badge-info':(d.gas_warming?'badge-warn':'badge-ok'));
+if(gwBadge)gwBadge.className='badge '+(d.gas_enabled===false?'badge-info':(d.gas_warming?'badge-warn':'badge-ok'));
 }
 
-renderMultiSensors(d);
+const anySensorActive=cliEn||showPressure||showLux||showMotion||showProbe||showTank||hasMq2;
+const nsDash=document.getElementById('noSensorsState');
+if(nsDash)nsDash.style.display=anySensorActive?'none':'block';
+
+renderMultiSensors(d,cliEn,hasMq2);
 
 // Relays
 if(d.relays){renderRelays(d.relays);}
 }
 
-function renderMultiSensors(d){
+function renderMultiSensors(d,cliEn,hasMq2){
 const wrap=document.getElementById('multiSensorsWrap');
 const grid=document.getElementById('multiSensorCardsWrap');
 const chips=[];
@@ -1399,44 +1488,46 @@ cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge $
 const lights=(d.lights||[]).filter(l=>l&&l.enabled);
 if(lights.length>0){
 lights.forEach(l=>{
-const nm=escapeHtml(l.label||('Light #'+(l.index+1)));
+const nm=(lights.length===1&&!isCustomSensorLabel(l.label,'Light'))?'Ambient Light Sensor':escapeHtml(l.label||('Light #'+(l.index+1)));
 if(lights.length>1)chips.push(`<span><b>${nm}:</b> ${parseFloat(l.lux||0).toFixed(1)} lx</span>`);
-if(lights.length>1)cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge badge-ok">0x${(l.i2c_addr||35).toString(16).toUpperCase()}</span></div><div class="gauge"><div class="gauge-value">${parseFloat(l.lux||0).toFixed(1)}<span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Illuminance</div></div></div>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge badge-ok">0x${(l.i2c_addr||35).toString(16).toUpperCase()}</span></div><div class="gauge"><div class="gauge-value">${parseFloat(l.lux||0).toFixed(1)}<span class="gauge-unit">lx</span></div><div class="gauge-label">Ambient Illuminance</div></div></div>`);
 });
 }
 const motions=(d.motions||[]).filter(m=>m&&m.enabled);
-if(motions.length>1){
+if(motions.length>0){
 motions.forEach(m=>{
-const nm=escapeHtml(m.label||('Motion #'+(m.index+1)));
+const nm=(motions.length===1&&!isCustomSensorLabel(m.label,'Motion'))?'Motion / Radar Occupancy':escapeHtml(m.label||('Motion #'+(m.index+1)));
 const st=m.detected?'DETECTED':(m.age_s<3600?(m.age_s+'s ago'):'Clear');
-chips.push(`<span><b>${nm}:</b> <span class="badge ${m.detected?'badge-err':'badge-ok'}">${st}</span></span>`);
+if(motions.length>1)chips.push(`<span><b>${nm}:</b> <span class="badge ${m.detected?'badge-err':'badge-ok'}">${st}</span></span>`);
 cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${m.detected?'badge-err':'badge-ok'}">${st}</span></div></div>`);
 });
 }
 const probes=(d.probes||[]).filter(p=>p&&p.enabled);
-if(probes.length>1){
+if(probes.length>0){
 probes.forEach(p=>{
-const nm=escapeHtml(p.label||('Probe #'+(p.index+1)));
-const val=p.fault?'FAULT':(parseFloat(p.temperature||0).toFixed(1)+'°C');
-chips.push(`<span><b>${nm}:</b> ${val}</span>`);
+const nm=(probes.length===1&&!isCustomSensorLabel(p.label,'Probe'))?'Water Temp Probe':escapeHtml(p.label||('Probe #'+(p.index+1)));
+const pTemp=parseFloat(p.temperature||-127);
+const val=p.fault?'FAULT':(pTemp>-55?(pTemp.toFixed(1)+'°C'):'--');
+if(probes.length>1)chips.push(`<span><b>${nm}:</b> ${val}</span>`);
 cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${p.fault?'badge-err':'badge-ok'}">${val}</span></div></div>`);
 });
 }
 const tanks=(d.tanks||[]).filter(t=>t&&t.enabled);
-if(tanks.length>1){
+if(tanks.length>0){
 tanks.forEach(t=>{
-const nm=escapeHtml(t.label||('Tank #'+(t.index+1)));
-chips.push(`<span><b>${nm}:</b> ${t.level_pct||0}% (${t.distance_cm||0} cm)</span>`);
+const nm=(tanks.length===1&&!isCustomSensorLabel(t.label,'Tank'))?'Overhead Water Tank':escapeHtml(t.label||('Tank #'+(t.index+1)));
+if(tanks.length>1)chips.push(`<span><b>${nm}:</b> ${t.level_pct||0}% (${t.distance_cm||0} cm)</span>`);
 cards.push(`<div class="card"><div class="card-title">${nm}</div><div class="gauge"><div class="gauge-value">${t.level_pct||0}<span class="gauge-unit">%</span></div><div class="gauge-label">${t.distance_cm||0} cm</div></div></div>`);
 });
 }
-const mq2s=(d.mq2s||[]).filter(g=>g&&g.hw_allowed);
+const mq2s=(d.mq2s||[]).filter(g=>g&&(g.enabled||g.hw_allowed));
 if(mq2s.length>1){
 mq2s.forEach(g=>{
 const nm=escapeHtml(g.label||('Gas #'+(g.index+1)));
 const st=!g.enabled?'Disabled':(g.warming?'Warming':(g.alarm?'DANGER':'Safe'));
-chips.push(`<span><b>${nm}:</b> ${g.raw||0} <span class="badge ${g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok')}">${st}</span></span>`);
-cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok')}">${st}</span></div><div class="gauge"><div class="gauge-value">${g.raw||0}<span class="gauge-unit"> (${g.percent||0}%)</span></div><div class="gauge-label">Threshold: ${g.threshold||0}</div></div></div>`);
+const bCls=!g.enabled?'badge-info':(g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok'));
+chips.push(`<span><b>${nm}:</b> ${g.raw||0} <span class="badge ${bCls}">${st}</span></span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${bCls}">${st}</span></div><div class="gauge"><div class="gauge-value">${g.raw||0}<span class="gauge-unit"> (${g.percent||0}%)</span></div><div class="gauge-label">Threshold: ${g.threshold||0}</div></div></div>`);
 });
 }
 if(wrap){
@@ -1445,8 +1536,11 @@ wrap.innerHTML=chips.length?('<div style="font-size:0.74rem;color:var(--text2);m
 }
 if(grid){
 grid.style.display=cards.length?'block':'none';
+grid.style.marginTop=(cliEn||hasMq2)?'14px':'0';
 grid.innerHTML=cards.length?('<div class="grid">'+cards.join('')+'</div>'):'';
 }
+const nsTab=document.getElementById('noSensorsTabState');
+if(nsTab)nsTab.style.display=(!cliEn&&!hasMq2&&cards.length===0)?'block':'none';
 }
 
 // Render relay grid

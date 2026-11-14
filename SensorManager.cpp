@@ -1313,6 +1313,7 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
     obj["gas_max"]          = MQ2_ADC_MAX;
     obj["gas_alarm"]        = isMQ2Alarm();
     obj["gas_enabled"]      = isMQ2Enabled();
+    obj["gas_hw_allowed"]   = isMQ2HardwareAllowed();
     obj["gas_threshold"]    = getMQ2Threshold();
     obj["gas_warming"]      = isMQ2Warming();
 

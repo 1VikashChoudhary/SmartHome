@@ -221,11 +221,17 @@ void MqttManager::publishSensorData(SensorManager& sensorMgr) {
         }
     }
 
-    // Ultrasonic Tank Level Sensors
+    // Ultrasonic Tank Level & Distance Sensors
     for (uint8_t i = 0; i < sensorMgr.getUltrasonicCount(); i++) {
         if (!sensorMgr.isUltrasonicActiveAt(i)) continue;
         itoa(sensorMgr.getTankLevelPercentAt(i), buf, 10);
         _client.publish(buildTopic(indexedTopic("sensor/tank_level", i)).c_str(), 0, false, buf);
+
+        float distCm = sensorMgr.getDistanceCmAt(i);
+        if (distCm >= 0.0f) {
+            dtostrf(distCm, 1, 1, buf);
+            _client.publish(buildTopic(indexedTopic("sensor/distance", i)).c_str(), 0, false, buf);
+        }
     }
 }
 
@@ -458,6 +464,9 @@ void MqttManager::publishHomeAssistantDiscovery() {
         publishHaSensorEntity("sensor", indexedTopic("tank_level", i), slotTitle("Water Tank Level", i),
                               indexedTopic("sensor/tank_level", i), "%", nullptr,
                               "mdi:water-percent", nullptr, nullptr, deviceId, deviceName, availabilityTopic, tankEn[i]);
+        publishHaSensorEntity("sensor", indexedTopic("distance", i), slotTitle("Ultrasonic Distance", i),
+                              indexedTopic("sensor/distance", i), "cm", "distance",
+                              "mdi:ruler", nullptr, nullptr, deviceId, deviceName, availabilityTopic, tankEn[i]);
     }
 }
 
@@ -633,16 +642,37 @@ void MqttManager::onDisconnect(AsyncMqttClientDisconnectReason reason) {
 void MqttManager::onMessage(char* topic, char* payload,
                              AsyncMqttClientMessageProperties properties,
                              size_t len, size_t index, size_t total) {
-    // Null-terminate payload
-    char payloadBuf[16];
+    // Null-terminate payload (64 bytes supports both raw tokens and JSON command payloads)
+    char payloadBuf[64];
     size_t copyLen = min(len, sizeof(payloadBuf) - 1);
-    memcpy(payloadBuf, payload, copyLen);
+    if (copyLen > 0 && payload) {
+        memcpy(payloadBuf, payload, copyLen);
+    }
     payloadBuf[copyLen] = '\0';
 
     String topicStr = String(topic);
     String payloadStr = String(payloadBuf);
+    payloadStr.trim();
 
     SERIAL_PRINTF("[MQTT] Received: %s = %s\n", topic, payloadBuf);
+
+    if (payloadStr.startsWith("{")) {
+        JsonDocument cmdDoc;
+        if (!deserializeJson(cmdDoc, payloadStr)) {
+            if (cmdDoc["state"].is<const char*>()) {
+                payloadStr = cmdDoc["state"].as<String>();
+            } else if (cmdDoc["state"].is<int>()) {
+                payloadStr = String(cmdDoc["state"].as<int>());
+            } else if (cmdDoc["action"].is<const char*>()) {
+                payloadStr = cmdDoc["action"].as<String>();
+            } else if (cmdDoc["action"].is<int>()) {
+                payloadStr = String(cmdDoc["action"].as<int>());
+            } else {
+                payloadStr = "";
+            }
+            payloadStr.trim();
+        }
+    }
 
     // Parse relay commands: {prefix}/relay/{N}/set
     String relayPrefix = _prefix + "/relay/";

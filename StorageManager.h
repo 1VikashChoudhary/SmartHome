@@ -62,9 +62,6 @@ public:
     // High-frequency runtime states are persisted in NVS rather than LittleFS
     bool saveRelayStatesNVS(const bool* logicalStates, const bool* switchStates, uint8_t count);
     bool loadRelayStatesNVS(bool* logicalStates, bool* switchStates, uint8_t count);
-    void saveRelayAutoTimerNVS(uint8_t index, uint32_t remainingSec);
-    uint32_t getRelayAutoTimerNVS(uint8_t index);
-    void clearRelayAutoTimerNVS(uint8_t index);
     void incrementRelayCycleNVS(uint8_t index);
     uint32_t getRelayCycleNVS(uint8_t index);
     void clearNVSState();

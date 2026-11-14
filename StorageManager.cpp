@@ -918,43 +918,6 @@ bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates,
     return true;
 }
 
-void StorageManager::saveRelayAutoTimerNVS(uint8_t index, uint32_t remainingSec) {
-    if (index >= MAX_RELAYS) return;
-    char key[16];
-    snprintf(key, sizeof(key), "timer_%u", index);
-    nvs_handle_t handle;
-    if (nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_set_u32(handle, key, remainingSec);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
-}
-
-uint32_t StorageManager::getRelayAutoTimerNVS(uint8_t index) {
-    if (index >= MAX_RELAYS) return 0;
-    char key[16];
-    snprintf(key, sizeof(key), "timer_%u", index);
-    nvs_handle_t handle;
-    uint32_t val = 0;
-    if (nvs_open(NVS_NAMESPACE_STATE, NVS_READONLY, &handle) == ESP_OK) {
-        nvs_get_u32(handle, key, &val);
-        nvs_close(handle);
-    }
-    return val;
-}
-
-void StorageManager::clearRelayAutoTimerNVS(uint8_t index) {
-    if (index >= MAX_RELAYS) return;
-    char key[16];
-    snprintf(key, sizeof(key), "timer_%u", index);
-    nvs_handle_t handle;
-    if (nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle) == ESP_OK) {
-        nvs_erase_key(handle, key);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
-}
-
 void StorageManager::incrementRelayCycleNVS(uint8_t index) {
     if (index >= MAX_RELAYS) return;
     char key[16];
@@ -1062,25 +1025,6 @@ bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates,
         }
     }
     return true;
-}
-
-void StorageManager::saveRelayAutoTimerNVS(uint8_t index, uint32_t remainingSec) {
-    if (index >= MAX_RELAYS) return;
-    eepromInitHeader();
-    eepromWrite32(EEPROM_OFF_TIMERS + (index * 4), remainingSec);
-    EEPROM.commit();
-}
-
-uint32_t StorageManager::getRelayAutoTimerNVS(uint8_t index) {
-    if (index >= MAX_RELAYS || !eepromValid()) return 0;
-    return eepromRead32(EEPROM_OFF_TIMERS + (index * 4));
-}
-
-void StorageManager::clearRelayAutoTimerNVS(uint8_t index) {
-    if (index >= MAX_RELAYS) return;
-    eepromInitHeader();
-    eepromWrite32(EEPROM_OFF_TIMERS + (index * 4), 0);
-    EEPROM.commit();
 }
 
 void StorageManager::incrementRelayCycleNVS(uint8_t index) {

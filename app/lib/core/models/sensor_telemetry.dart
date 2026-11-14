@@ -12,6 +12,17 @@ int _parseInt(dynamic v, int fallback) {
   return fallback;
 }
 
+/// Returns true when [label] contains a user-defined name rather than a
+/// firmware-generated placeholder such as `"Climate 1"` or `"Tank #2"`.
+bool isCustomSensorLabel(String label, String defaultPrefix) {
+  final s = label.trim();
+  if (s.isEmpty) return false;
+  return !RegExp(
+    '^${RegExp.escape(defaultPrefix)}(?:\\s*#?\\d+)?\$',
+    caseSensitive: false,
+  ).hasMatch(s);
+}
+
 class ClimateReading {
   final int index;
   final bool enabled;
@@ -45,6 +56,8 @@ class ClimateReading {
 
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Climate #${index + 1}';
+
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Climate');
 
   factory ClimateReading.fromJson(Map<String, dynamic> json) => ClimateReading(
     index: _parseInt(json['index'], 0),
@@ -97,6 +110,8 @@ class LightReading {
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Light #${index + 1}';
 
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Light');
+
   factory LightReading.fromJson(Map<String, dynamic> json) => LightReading(
     index: _parseInt(json['index'], 0),
     enabled: json['enabled'] as bool? ?? false,
@@ -133,6 +148,8 @@ class MotionReading {
 
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Motion #${index + 1}';
+
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Motion');
 
   factory MotionReading.fromJson(Map<String, dynamic> json) => MotionReading(
     index: _parseInt(json['index'], 0),
@@ -171,6 +188,8 @@ class ProbeReading {
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Probe #${index + 1}';
 
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Probe');
+
   factory ProbeReading.fromJson(Map<String, dynamic> json) => ProbeReading(
     index: _parseInt(json['index'], 0),
     enabled: json['enabled'] as bool? ?? false,
@@ -207,6 +226,8 @@ class TankReading {
 
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Tank #${index + 1}';
+
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Tank');
 
   factory TankReading.fromJson(Map<String, dynamic> json) => TankReading(
     index: _parseInt(json['index'], 0),
@@ -256,6 +277,8 @@ class Mq2Reading {
 
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Gas #${index + 1}';
+
+  bool get hasCustomLabel => isCustomSensorLabel(label, 'Gas');
 
   factory Mq2Reading.fromJson(Map<String, dynamic> json) => Mq2Reading(
     index: _parseInt(json['index'], 0),
@@ -322,6 +345,8 @@ class SensorTelemetry {
   final bool gasWarming;
   final int gasThreshold;
   final int gasMax;
+  final bool gasEnabled;
+  final bool gasHwAllowed;
 
   // Multi-instance sensor arrays
   final List<ClimateReading> climates;
@@ -330,6 +355,29 @@ class SensorTelemetry {
   final List<ProbeReading> probes;
   final List<TankReading> tanks;
   final List<Mq2Reading> mq2s;
+
+  bool get hasActiveClimate =>
+      climates.isNotEmpty ? climates.any((c) => c.enabled) : dhtEnabled;
+  bool get hasActiveGas => mq2s.isNotEmpty
+      ? mq2s.any((m) => m.enabled || m.hwAllowed)
+      : (gasEnabled || gasHwAllowed);
+  bool get hasActiveLight =>
+      lights.isNotEmpty ? lights.any((l) => l.enabled) : luxEnabled;
+  bool get hasActiveMotion =>
+      motions.isNotEmpty ? motions.any((m) => m.enabled) : motionEnabled;
+  bool get hasActiveProbe => probes.isNotEmpty
+      ? probes.any((p) => p.enabled && (p.temperature > -55 || p.fault))
+      : (probeEnabled && (probeTemp > -55 || probeFault));
+  bool get hasActiveTank =>
+      tanks.isNotEmpty ? tanks.any((u) => u.enabled) : tankEnabled;
+  bool get hasAnySensor =>
+      hasActiveClimate ||
+      (pressureEnabled && pressure > 300) ||
+      hasActiveLight ||
+      hasActiveMotion ||
+      hasActiveProbe ||
+      hasActiveTank ||
+      hasActiveGas;
 
   SensorTelemetry({
     this.temperature = 0.0,
@@ -356,6 +404,8 @@ class SensorTelemetry {
     this.gasWarming = false,
     this.gasThreshold = 600,
     this.gasMax = 4095,
+    this.gasEnabled = false,
+    this.gasHwAllowed = false,
     this.climates = const [],
     this.lights = const [],
     this.motions = const [],
@@ -375,6 +425,16 @@ class SensorTelemetry {
           .map((e) => builder(Map<String, dynamic>.from(e)))
           .toList();
     }
+
+    final mq2sList = parseList(json['mq2s'], Mq2Reading.fromJson);
+    final parsedGasEnabled = json['gas_enabled'] as bool? ??
+        (mq2sList.isNotEmpty
+            ? mq2sList.any((m) => m.enabled)
+            : (_parseInt(json['gas_raw'], 0) > 0));
+    final parsedGasHwAllowed = json['gas_hw_allowed'] as bool? ??
+        (mq2sList.isNotEmpty
+            ? mq2sList.any((m) => m.hwAllowed)
+            : parsedGasEnabled);
 
     return SensorTelemetry(
       temperature: _parseDouble(json['temperature'], 0.0),
@@ -401,12 +461,14 @@ class SensorTelemetry {
       gasWarming: json['gas_warming'] as bool? ?? false,
       gasThreshold: _parseInt(json['gas_threshold'], 600),
       gasMax: _parseInt(json['gas_max'], 4095),
+      gasEnabled: parsedGasEnabled,
+      gasHwAllowed: parsedGasHwAllowed,
       climates: parseList(json['climates'], ClimateReading.fromJson),
       lights: parseList(json['lights'], LightReading.fromJson),
       motions: parseList(json['motions'], MotionReading.fromJson),
       probes: parseList(json['probes'], ProbeReading.fromJson),
       tanks: parseList(json['tanks'], TankReading.fromJson),
-      mq2s: parseList(json['mq2s'], Mq2Reading.fromJson),
+      mq2s: mq2sList,
     );
   }
 
@@ -435,6 +497,8 @@ class SensorTelemetry {
     'gas_warming': gasWarming,
     'gas_threshold': gasThreshold,
     'gas_max': gasMax,
+    'gas_enabled': gasEnabled,
+    'gas_hw_allowed': gasHwAllowed,
     if (climates.isNotEmpty)
       'climates': climates.map((e) => e.toJson()).toList(),
     if (lights.isNotEmpty) 'lights': lights.map((e) => e.toJson()).toList(),

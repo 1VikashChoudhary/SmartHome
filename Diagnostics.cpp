@@ -7,10 +7,13 @@
 #include "Diagnostics.h"
 
 Diagnostics::Diagnostics()
-    : _minFreeHeap(UINT32_MAX), _lastCheck(0), _bootTime(0) {}
+    : _minFreeHeap(UINT32_MAX), _lastCheck(0), _bootTime(0),
+      _rolloverCount(0), _lastMillis(0) {}
 
 void Diagnostics::begin() {
     _bootTime = millis();
+    _rolloverCount = 0;
+    _lastMillis = _bootTime;
     _minFreeHeap = ESP.getFreeHeap();
 #if defined(ESP8266)
     _resetReason = ESP.getResetReason();
@@ -29,6 +32,10 @@ void Diagnostics::begin() {
 
 void Diagnostics::loop() {
     unsigned long now = millis();
+    if (now < _lastMillis) {
+        _rolloverCount++;
+    }
+    _lastMillis = now;
     if (now - _lastCheck < DIAG_UPDATE_INTERVAL) return;
     _lastCheck = now;
 
@@ -82,7 +89,13 @@ String Diagnostics::getUptimeString() {
 }
 
 unsigned long Diagnostics::getUptimeSeconds() {
-    return millis() / 1000;
+    unsigned long now = millis();
+    if (now < _lastMillis) {
+        _rolloverCount++;
+    }
+    _lastMillis = now;
+    uint64_t totalMs = ((uint64_t)_rolloverCount << 32) | (uint64_t)now;
+    return (unsigned long)(totalMs / 1000ULL);
 }
 
 String Diagnostics::getResetReason() { return _resetReason; }

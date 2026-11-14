@@ -42,9 +42,12 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       if (mounted) setState(() {});
     });
     _selectedDeviceId = widget.preselectedDeviceId;
-    _countdownTicker = Timer.periodic(const Duration(seconds: 15), (_) async {
+    int tickCount = 0;
+    _countdownTicker = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (!mounted) return;
       setState(() {});
+      tickCount++;
+      if (tickCount % 8 != 0) return;
       // Silently refresh alarm fired status from device if connected
       final devices = ref.read(deviceManagerProvider);
       final dev = _resolveDevice(devices);

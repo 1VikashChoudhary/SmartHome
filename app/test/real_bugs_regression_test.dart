@@ -1,10 +1,54 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:smarthome_app/core/models/relay_channel.dart';
+import 'package:smarthome_app/core/models/sensor_telemetry.dart';
 import 'package:smarthome_app/core/models/smart_device.dart';
 import 'package:smarthome_app/core/models/hardware_profile.dart';
 import 'package:smarthome_app/core/models/scheduled_alarm.dart';
+import 'package:smarthome_app/core/theme/app_theme.dart';
+import 'package:smarthome_app/presentation/screens/device_screen.dart';
+import 'package:smarthome_app/presentation/widgets/emergency_alarm_dialog.dart';
+import 'package:smarthome_app/services/device_manager.dart';
 import 'package:smarthome_app/services/device_storage_service.dart';
+
+class _AlarmDialogTestDeviceManager extends DeviceManager {
+  final List<SmartDevice> _devices;
+
+  _AlarmDialogTestDeviceManager(this._devices);
+
+  @override
+  List<SmartDevice> build() => _devices;
+}
+
+Future<void> _pumpEmergencyDialog(
+  WidgetTester tester,
+  SmartDevice device,
+  String alarmType,
+) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        deviceManagerProvider.overrideWith(
+          () => _AlarmDialogTestDeviceManager([device]),
+        ),
+      ],
+      child: MaterialApp(
+        theme: AppTheme.darkTheme,
+        home: Scaffold(
+          body: EmergencyAlarmDialog(
+            deviceId: device.id,
+            alarmType: alarmType,
+          ),
+        ),
+      ),
+    ),
+  );
+  // Advance past initState audible/haptic Future.delayed timers
+  await tester.pump(const Duration(seconds: 1));
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -234,4 +278,251 @@ void main() {
       expect(rearmed.nextRunBadge, 'Runs within 1m');
     });
   });
+
+  group('EmergencyAlarmDialog Alert Type Differentiation Regressions', () {
+    final testDevice = SmartDevice(
+      id: 'dev_alarm_test',
+      mac: 'AA:BB:CC:11:22:33',
+      ip: '192.168.1.42',
+      hostname: 'smarthome-test',
+      name: 'Living Room Hub',
+      room: 'Living Room',
+      isOnline: true,
+      telemetry: SensorTelemetry(
+        temperature: 48.5,
+        tempThreshold: 45.0,
+        gasRaw: 620,
+        gasPercent: 52,
+        gasThreshold: 400,
+      ),
+    );
+
+    testWidgets('Displays SENSOR HARDWARE FAULT DETECTED for sensor_fault alarm', (
+      WidgetTester tester,
+    ) async {
+      await _pumpEmergencyDialog(tester, testDevice, 'sensor_fault');
+
+      expect(find.text('SENSOR HARDWARE FAULT DETECTED'), findsOneWidget);
+      expect(find.textContaining('Climate sensor failed to respond'), findsOneWidget);
+      expect(find.byIcon(Icons.sensors_off_rounded), findsOneWidget);
+      expect(find.text('HIGH TEMPERATURE ALARM'), findsNothing);
+    });
+
+    testWidgets('Displays GAS / SMOKE HAZARD DETECTED for gas alarm', (
+      WidgetTester tester,
+    ) async {
+      await _pumpEmergencyDialog(tester, testDevice, 'gas');
+
+      expect(find.text('GAS / SMOKE HAZARD DETECTED'), findsOneWidget);
+      expect(find.textContaining('MQ-2 Gas Sensor: 620 ADC'), findsOneWidget);
+      expect(find.byIcon(Icons.local_fire_department_rounded), findsOneWidget);
+    });
+
+    testWidgets('Displays HIGH TEMPERATURE ALARM for temperature alarm', (
+      WidgetTester tester,
+    ) async {
+      await _pumpEmergencyDialog(tester, testDevice, 'temperature');
+
+      expect(find.text('HIGH TEMPERATURE ALARM'), findsOneWidget);
+      expect(find.textContaining('Temperature: 48.5°C'), findsOneWidget);
+      expect(find.byIcon(Icons.thermostat_rounded), findsOneWidget);
+    });
+  });
+
+  group('DeviceScreen Dynamic Telemetry Card Tests', () {
+    Future<void> pumpDeviceScreen(
+      WidgetTester tester,
+      SmartDevice device,
+    ) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            deviceManagerProvider.overrideWith(
+              () => _TelemetryCardTestDeviceManager(device),
+            ),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: DeviceScreen(deviceId: device.id),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    testWidgets(
+      'Shows empty state and hides Temp/Humidity/Gas placeholders when 0 sensors configured',
+      (WidgetTester tester) async {
+        final device = SmartDevice(
+          id: 'dev-empty',
+          name: 'Office Node',
+          hostname: 'smarthome-office',
+          ip: '192.168.1.50',
+          mac: 'AA:BB:CC:DD:EE:01',
+          isOnline: true,
+          relays: const [],
+          telemetry: SensorTelemetry(
+            dhtEnabled: false,
+            gasEnabled: false,
+            gasHwAllowed: false,
+          ),
+        );
+
+        await pumpDeviceScreen(tester, device);
+
+        expect(
+          find.text('No environmental sensors configured in Hardware Profile.'),
+          findsOneWidget,
+        );
+        expect(find.text('Configure in Hardware Profile'), findsOneWidget);
+        expect(find.text('TEMPERATURE'), findsNothing);
+        expect(find.text('HUMIDITY'), findsNothing);
+        expect(find.text('AIR / GAS'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Shows Motion PIR and Overhead Water Tank only when Climate and Gas are absent',
+      (WidgetTester tester) async {
+        final device = SmartDevice(
+          id: 'dev-motion-tank',
+          name: 'Basement Node',
+          hostname: 'smarthome-basement',
+          ip: '192.168.1.51',
+          mac: 'AA:BB:CC:DD:EE:02',
+          isOnline: true,
+          relays: const [],
+          telemetry: SensorTelemetry(
+            dhtEnabled: false,
+            gasEnabled: false,
+            gasHwAllowed: false,
+            motions: const [
+              MotionReading(
+                enabled: true,
+                label: 'Motion 1',
+                detected: true,
+              ),
+            ],
+            tanks: const [
+              TankReading(
+                enabled: true,
+                label: 'Tank 1',
+                levelPct: 68,
+                distanceCm: 42.5,
+              ),
+            ],
+          ),
+        );
+
+        await pumpDeviceScreen(tester, device);
+
+        expect(find.text('MOTION PIR'), findsOneWidget);
+        expect(find.text('Overhead Water Tank'), findsOneWidget);
+        expect(find.text('68% (42.5 cm)'), findsOneWidget);
+        expect(find.text('TEMPERATURE'), findsNothing);
+        expect(find.text('HUMIDITY'), findsNothing);
+        expect(find.text('AIR / GAS'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Displays custom label on single Climate sensor and paused Gas when gasHwAllowed is true',
+      (WidgetTester tester) async {
+        final device = SmartDevice(
+          id: 'dev-custom-climate',
+          name: 'Rack Node',
+          hostname: 'smarthome-rack',
+          ip: '192.168.1.52',
+          mac: 'AA:BB:CC:DD:EE:03',
+          isOnline: true,
+          relays: const [],
+          telemetry: SensorTelemetry(
+            dhtEnabled: true,
+            gasEnabled: false,
+            gasHwAllowed: true,
+            climates: const [
+              ClimateReading(
+                enabled: true,
+                label: 'Server Rack',
+                temperature: 24.5,
+                humidity: 48,
+              ),
+            ],
+          ),
+        );
+
+        await pumpDeviceScreen(tester, device);
+
+        expect(find.text('SERVER RACK TEMP'), findsOneWidget);
+        expect(find.text('SERVER RACK HUMIDITY'), findsOneWidget);
+        expect(find.text('AIR / GAS'), findsOneWidget);
+        expect(find.text('DISABLED'), findsOneWidget);
+        expect(find.text('TEMPERATURE'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Renders both active and paused MQ-2 slots when mixed hardware-allowed mq2s exist',
+      (WidgetTester tester) async {
+        final device = SmartDevice(
+          id: 'dev-multi-mq2',
+          name: 'Multi Gas Node',
+          hostname: 'smarthome-multigas',
+          ip: '192.168.1.53',
+          mac: 'AA:BB:CC:DD:EE:04',
+          isOnline: true,
+          relays: const [],
+          telemetry: SensorTelemetry(
+            dhtEnabled: false,
+            gasEnabled: true,
+            gasHwAllowed: true,
+            mq2s: const [
+              Mq2Reading(
+                index: 0,
+                enabled: true,
+                hwAllowed: true,
+                label: 'Kitchen Gas',
+                raw: 180,
+                threshold: 400,
+              ),
+              Mq2Reading(
+                index: 1,
+                enabled: false,
+                hwAllowed: true,
+                label: 'Garage Gas',
+                raw: 0,
+                threshold: 400,
+              ),
+            ],
+          ),
+        );
+
+        await pumpDeviceScreen(tester, device);
+
+        expect(find.text('KITCHEN GAS'), findsOneWidget);
+        expect(find.text('SAFE'), findsOneWidget);
+        expect(find.text('GARAGE GAS'), findsOneWidget);
+        expect(find.text('DISABLED'), findsOneWidget);
+        expect(find.text('OFF'), findsOneWidget);
+        expect(find.text('TEMPERATURE'), findsNothing);
+        expect(find.text('HUMIDITY'), findsNothing);
+      },
+    );
+  });
+}
+
+class _TelemetryCardTestDeviceManager extends DeviceManager {
+  final SmartDevice initialDevice;
+  _TelemetryCardTestDeviceManager(this.initialDevice);
+
+  @override
+  List<SmartDevice> build() => [initialDevice];
+
+  @override
+  Future<List<RelayChannel>?> fetchDeviceRelays(String deviceId) async => null;
+
+  @override
+  Future<Map<String, dynamic>?> fetchDeviceConfig(String deviceId) async =>
+      null;
 }

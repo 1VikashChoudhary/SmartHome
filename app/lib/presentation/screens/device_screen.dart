@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/smart_device.dart';
+import '../../core/models/sensor_telemetry.dart';
 import '../../core/theme/app_colors.dart';
 import '../../services/device_manager.dart';
 import '../widgets/relay_tile.dart';
 import '../widgets/telemetry_gauge.dart';
 import '../widgets/device_tools_sheet.dart';
+import '../widgets/hardware_config_sheet.dart';
 import '../widgets/relay_config_sheet.dart';
 import '../widgets/controller_login_dialog.dart';
 import 'automations_screen.dart';
@@ -550,6 +552,54 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     ),
                   ),
                 ],
+                if (!device.needsAuth && !device.isOnline) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: AppColors.warning.withValues(alpha: 0.45),
+                        width: 1.0,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.cloud_off_rounded,
+                          color: AppColors.warning,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Offline — Reconnecting live telemetry to ${device.ip}...',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => manager.refreshDevice(device.id),
+                          style: TextButton.styleFrom(
+                            foregroundColor: AppColors.warning,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          child: const Text(
+                            'Retry',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 // Hardware & Network Overview Card
                 _buildHardwareOverviewCard(context, device, isDark),
                 const SizedBox(height: 14),
@@ -593,7 +643,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 ],
 
                 // Live Environmental Telemetry Card (Equal symmetrical layout)
-                _buildTelemetryCard(context, device, isDark),
+                _buildTelemetryCard(context, device, manager, isDark),
                 const SizedBox(height: 14),
 
                 // Master Power Scene Buttons (Aurora Emerald & Nocturnal Violet)
@@ -927,7 +977,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     );
   }
 
-  Widget _buildTelemetryCard(BuildContext context, SmartDevice device, bool isDark) {
+  Widget _buildTelemetryCard(
+    BuildContext context,
+    SmartDevice device,
+    DeviceManager manager,
+    bool isDark,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -951,28 +1006,35 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Container(
-                    width: 4,
-                    height: 16,
-                    decoration: BoxDecoration(
-                      color: AppColors.primary,
-                      borderRadius: BorderRadius.circular(2),
+              Expanded(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 4,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Live Environmental Telemetry',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                      color: AppColors.textPrimary,
-                      letterSpacing: -0.3,
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        'Live Environmental Telemetry',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          color: AppColors.textPrimary,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
+              const SizedBox(width: 8),
               TextButton.icon(
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1000,88 +1062,116 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           ),
           const SizedBox(height: 14),
 
-          // 3 Expanded Gauges (Equal Symmetrical Sizing - Zero Blank Gaps!)
           Builder(
             builder: (context) {
-              final t = device.telemetry;
-              final gasMax = t.gasMax > 0 ? t.gasMax : (device.isEsp8266 ? 1023 : 4095);
-              return Row(
-                children: [
-                  Expanded(
-                    child: TelemetryGauge(
-                      label: 'Temperature',
-                      value: !t.dhtEnabled
-                          ? 'OFF'
-                          : (t.dhtFault
-                                ? 'ERR'
-                                : (t.temperature > 0 ? t.temperature.toStringAsFixed(1) : '--')),
-                      unit: (!t.dhtEnabled || t.dhtFault) ? '' : '°C',
-                      percent: (!t.dhtEnabled || t.dhtFault)
-                          ? 0.0
-                          : ((t.temperature - 10) / 40).clamp(0.0, 1.0),
-                      color: !t.dhtEnabled
-                          ? AppColors.textMuted
-                          : (t.dhtFault ? AppColors.danger : AppColors.tempAmber),
-                      icon: Icons.thermostat_rounded,
-                      statusBadge: !t.dhtEnabled
-                          ? 'DISABLED'
-                          : (t.dhtFault
-                                ? 'FAULT'
-                                : (t.temperature > 32 ? 'WARM' : 'COMFORT')),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TelemetryGauge(
-                      label: 'Humidity',
-                      value: !t.dhtEnabled
-                          ? 'OFF'
-                          : (t.dhtFault
-                                ? 'ERR'
-                                : (t.humidity > 0 ? t.humidity.toStringAsFixed(0) : '--')),
-                      unit: (!t.dhtEnabled || t.dhtFault) ? '' : '%',
-                      percent: (!t.dhtEnabled || t.dhtFault)
-                          ? 0.0
-                          : (t.humidity / 100).clamp(0.0, 1.0),
-                      color: !t.dhtEnabled
-                          ? AppColors.textMuted
-                          : (t.dhtFault ? AppColors.danger : AppColors.cyan),
-                      icon: Icons.water_drop_rounded,
-                      statusBadge: !t.dhtEnabled
-                          ? 'DISABLED'
-                          : (t.dhtFault
-                                ? 'FAULT'
-                                : (t.humidity > 70 ? 'HUMID' : 'OPTIMAL')),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TelemetryGauge(
-                      label: 'Air / Gas',
-                      value: '${t.gasRaw}',
-                      unit: 'ADC',
-                      percent: (t.gasRaw / gasMax).clamp(0.0, 1.0),
-                      color: t.gasAlarm
-                          ? AppColors.danger
-                          : (t.gasWarming ? AppColors.warning : AppColors.success),
-                      icon: Icons.local_fire_department_rounded,
-                      statusBadge: t.gasAlarm
-                          ? 'ALARM'
-                          : (t.gasWarming ? 'WARMING' : 'SAFE'),
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+              final SensorTelemetry t = device.telemetry;
+              final gasMax = t.gasMax > 0
+                  ? t.gasMax
+                  : (device.isEsp8266 ? 1023 : 4095);
+              final allGauges = <Widget>[];
+              bool addedPressure = false;
 
-          // Extended Telemetry (Multi-Instance Climate/Barometer/Light/Motion/Probe/MQ-2)
-          Builder(
-            builder: (context) {
-              final t = device.telemetry;
-              final gasMax = t.gasMax > 0 ? t.gasMax : (device.isEsp8266 ? 1023 : 4095);
-              final extCards = <Widget>[
-                if (t.pressureEnabled && t.pressure > 300)
+              void addClimateGauges({
+                required String? customPrefix,
+                required double temperature,
+                required double humidity,
+                required bool fault,
+                required bool showPressure,
+                required double pressure,
+              }) {
+                final tempLabel = customPrefix != null
+                    ? '$customPrefix Temp'
+                    : 'Temperature';
+                final humLabel = customPrefix != null
+                    ? '$customPrefix Humidity'
+                    : 'Humidity';
+                final hasReading = temperature != 0 || humidity > 0;
+
+                allGauges.add(
+                  TelemetryGauge(
+                    label: tempLabel,
+                    value: fault
+                        ? 'ERR'
+                        : (hasReading ? temperature.toStringAsFixed(1) : '--'),
+                    unit: fault ? '' : '°C',
+                    percent: (fault || !hasReading)
+                        ? 0.0
+                        : ((temperature - 10) / 40).clamp(0.0, 1.0),
+                    color: fault ? AppColors.danger : AppColors.tempAmber,
+                    icon: Icons.thermostat_rounded,
+                    statusBadge: fault
+                        ? 'FAULT'
+                        : (temperature > 32 ? 'WARM' : 'COMFORT'),
+                  ),
+                );
+                allGauges.add(
+                  TelemetryGauge(
+                    label: humLabel,
+                    value: fault
+                        ? 'ERR'
+                        : (humidity > 0 ? humidity.toStringAsFixed(0) : '--'),
+                    unit: fault ? '' : '%',
+                    percent: fault ? 0.0 : (humidity / 100).clamp(0.0, 1.0),
+                    color: fault ? AppColors.danger : AppColors.cyan,
+                    icon: Icons.water_drop_rounded,
+                    statusBadge: fault
+                        ? 'FAULT'
+                        : (humidity > 70 ? 'HUMID' : 'OPTIMAL'),
+                  ),
+                );
+                if (showPressure && pressure > 300) {
+                  addedPressure = true;
+                  allGauges.add(
+                    TelemetryGauge(
+                      label: customPrefix != null
+                          ? '$customPrefix Baro'
+                          : 'Pressure',
+                      value: pressure.toStringAsFixed(1),
+                      unit: 'hPa',
+                      percent: ((pressure - 950) / 100).clamp(0.0, 1.0),
+                      color: AppColors.primary,
+                      icon: Icons.compress_rounded,
+                      statusBadge: 'BARO',
+                    ),
+                  );
+                }
+              }
+
+              // 1. Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x)
+              final activeClimates = t.climates.where((c) => c.enabled).toList();
+              if (activeClimates.isNotEmpty) {
+                for (int i = 0; i < activeClimates.length; i++) {
+                  final c = activeClimates[i];
+                  final prefix = (activeClimates.length == 1 && !c.hasCustomLabel)
+                      ? null
+                      : (c.hasCustomLabel ? c.label : c.displayName);
+                  final baroVal = (c.barometer && c.pressure > 300)
+                      ? c.pressure
+                      : ((i == 0 && t.pressureEnabled && t.pressure > 300)
+                          ? t.pressure
+                          : 0.0);
+                  addClimateGauges(
+                    customPrefix: prefix,
+                    temperature: c.temperature,
+                    humidity: c.humidity,
+                    fault: c.fault,
+                    showPressure: baroVal > 300,
+                    pressure: baroVal,
+                  );
+                }
+              } else if (t.climates.isEmpty && t.dhtEnabled) {
+                addClimateGauges(
+                  customPrefix: null,
+                  temperature: t.temperature,
+                  humidity: t.humidity,
+                  fault: t.dhtFault,
+                  showPressure: t.pressureEnabled && t.pressure > 300,
+                  pressure: t.pressure,
+                );
+              }
+
+              if (!addedPressure && t.pressureEnabled && t.pressure > 300) {
+                allGauges.add(
                   TelemetryGauge(
                     label: 'Pressure',
                     value: t.pressure.toStringAsFixed(1),
@@ -1091,56 +1181,91 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     icon: Icons.compress_rounded,
                     statusBadge: 'BARO',
                   ),
-                for (int i = 1; i < t.climates.length; i++) ...[
-                  if (t.climates[i].enabled) ...[
+                );
+              }
+
+              // 2. Gas / Smoke Sensors (MQ-2) - keep visible if hardware-allowed even when paused
+              final visibleMq2s = t.mq2s
+                  .where((m) => m.enabled || m.hwAllowed)
+                  .toList();
+              if (visibleMq2s.isNotEmpty) {
+                for (final m in visibleMq2s) {
+                  final gasDisabled = !m.enabled;
+                  final label = (visibleMq2s.length == 1 && !m.hasCustomLabel)
+                      ? 'Air / Gas'
+                      : (m.hasCustomLabel ? m.label : m.displayName);
+                  allGauges.add(
                     TelemetryGauge(
-                      label: '${t.climates[i].displayName} Temp',
-                      value: t.climates[i].fault ? 'ERR' : t.climates[i].temperature.toStringAsFixed(1),
-                      unit: t.climates[i].fault ? '' : '°C',
-                      percent: t.climates[i].fault ? 0.0 : ((t.climates[i].temperature - 10) / 40).clamp(0.0, 1.0),
-                      color: t.climates[i].fault ? AppColors.danger : AppColors.tempAmber,
-                      icon: Icons.thermostat_rounded,
-                      statusBadge: t.climates[i].fault ? 'FAULT' : '${t.climates[i].humidity.toStringAsFixed(0)}%',
-                    ),
-                    if (t.climates[i].barometer && t.climates[i].pressure > 300)
-                      TelemetryGauge(
-                        label: '${t.climates[i].displayName} Baro',
-                        value: t.climates[i].pressure.toStringAsFixed(1),
-                        unit: 'hPa',
-                        percent: ((t.climates[i].pressure - 950) / 100).clamp(0.0, 1.0),
-                        color: AppColors.primary,
-                        icon: Icons.compress_rounded,
-                        statusBadge: 'BARO',
-                      ),
-                  ],
-                ],
-                for (int i = 1; i < t.mq2s.length; i++)
-                  if (t.mq2s[i].enabled)
-                    TelemetryGauge(
-                      label: t.mq2s[i].displayName,
-                      value: '${t.mq2s[i].raw}',
-                      unit: 'ADC',
-                      percent: (t.mq2s[i].raw / gasMax).clamp(0.0, 1.0),
-                      color: t.mq2s[i].alarm
-                          ? AppColors.danger
-                          : (t.mq2s[i].warming ? AppColors.warning : AppColors.success),
+                      label: label,
+                      value: gasDisabled ? 'OFF' : '${m.raw}',
+                      unit: gasDisabled ? '' : 'ADC',
+                      percent: gasDisabled
+                          ? 0.0
+                          : (m.raw / gasMax).clamp(0.0, 1.0),
+                      color: gasDisabled
+                          ? AppColors.textMuted
+                          : (m.alarm
+                              ? AppColors.danger
+                              : (m.warming
+                                  ? AppColors.warning
+                                  : AppColors.success)),
                       icon: Icons.local_fire_department_rounded,
-                      statusBadge: t.mq2s[i].alarm
-                          ? 'ALARM'
-                          : (t.mq2s[i].warming ? 'WARMING' : 'SAFE'),
+                      statusBadge: gasDisabled
+                          ? 'DISABLED'
+                          : (m.alarm
+                              ? 'ALARM'
+                              : (m.warming ? 'WARMING' : 'SAFE')),
                     ),
-                if (t.lights.isNotEmpty)
-                  for (final l in t.lights.where((x) => x.enabled))
+                  );
+                }
+              } else if (t.mq2s.isEmpty && (t.gasEnabled || t.gasHwAllowed)) {
+                final gasDisabled = !t.gasEnabled;
+                allGauges.add(
+                  TelemetryGauge(
+                    label: 'Air / Gas',
+                    value: gasDisabled ? 'OFF' : '${t.gasRaw}',
+                    unit: gasDisabled ? '' : 'ADC',
+                    percent: gasDisabled
+                        ? 0.0
+                        : (t.gasRaw / gasMax).clamp(0.0, 1.0),
+                    color: gasDisabled
+                        ? AppColors.textMuted
+                        : (t.gasAlarm
+                            ? AppColors.danger
+                            : (t.gasWarming
+                                ? AppColors.warning
+                                : AppColors.success)),
+                    icon: Icons.local_fire_department_rounded,
+                    statusBadge: gasDisabled
+                        ? 'DISABLED'
+                        : (t.gasAlarm
+                            ? 'ALARM'
+                            : (t.gasWarming ? 'WARMING' : 'SAFE')),
+                  ),
+                );
+              }
+
+              // 3. Ambient Light Sensors (BH1750)
+              final activeLights = t.lights.where((x) => x.enabled).toList();
+              if (activeLights.isNotEmpty) {
+                for (final l in activeLights) {
+                  final label = (activeLights.length == 1 && !l.hasCustomLabel)
+                      ? 'Ambient Light'
+                      : (l.hasCustomLabel ? l.label : l.displayName);
+                  allGauges.add(
                     TelemetryGauge(
-                      label: t.lights.length > 1 || l.label.isNotEmpty ? l.displayName : 'Ambient Light',
+                      label: label,
                       value: l.lux.toStringAsFixed(0),
                       unit: 'lx',
                       percent: (l.lux / 1000).clamp(0.0, 1.0),
                       color: AppColors.accent,
                       icon: Icons.light_mode_rounded,
                       statusBadge: l.lux > 200 ? 'BRIGHT' : 'DIM',
-                    )
-                else if (t.luxEnabled)
+                    ),
+                  );
+                }
+              } else if (t.lights.isEmpty && t.luxEnabled) {
+                allGauges.add(
                   TelemetryGauge(
                     label: 'Ambient Light',
                     value: t.lux.toStringAsFixed(0),
@@ -1150,10 +1275,19 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     icon: Icons.light_mode_rounded,
                     statusBadge: t.lux > 200 ? 'BRIGHT' : 'DIM',
                   ),
-                if (t.motions.isNotEmpty)
-                  for (final m in t.motions.where((x) => x.enabled))
+                );
+              }
+
+              // 4. Motion & Occupancy Sensors (PIR / mmWave)
+              final activeMotions = t.motions.where((x) => x.enabled).toList();
+              if (activeMotions.isNotEmpty) {
+                for (final m in activeMotions) {
+                  final label = (activeMotions.length == 1 && !m.hasCustomLabel)
+                      ? 'Motion PIR'
+                      : (m.hasCustomLabel ? m.label : m.displayName);
+                  allGauges.add(
                     TelemetryGauge(
-                      label: t.motions.length > 1 || m.label.isNotEmpty ? m.displayName : 'Motion PIR',
+                      label: label,
                       value: m.detected ? 'ACTIVE' : 'CLEAR',
                       unit: m.detected
                           ? ''
@@ -1162,8 +1296,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                       color: m.detected ? AppColors.warning : AppColors.success,
                       icon: Icons.directions_run_rounded,
                       statusBadge: m.detected ? 'MOTION' : 'SECURE',
-                    )
-                else if (t.motionEnabled)
+                    ),
+                  );
+                }
+              } else if (t.motions.isEmpty && t.motionEnabled) {
+                allGauges.add(
                   TelemetryGauge(
                     label: 'Motion PIR',
                     value: t.motionDetected ? 'ACTIVE' : 'CLEAR',
@@ -1173,161 +1310,262 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                             ? '${t.motionAgeSeconds}s'
                             : 'IDLE'),
                     percent: t.motionDetected ? 1.0 : 0.15,
-                    color: t.motionDetected ? AppColors.warning : AppColors.success,
+                    color: t.motionDetected
+                        ? AppColors.warning
+                        : AppColors.success,
                     icon: Icons.directions_run_rounded,
                     statusBadge: t.motionDetected ? 'MOTION' : 'SECURE',
                   ),
-                if (t.probes.isNotEmpty)
-                  for (final p in t.probes.where((x) => x.enabled && (x.temperature > -55 || x.fault)))
+                );
+              }
+
+              // 5. Water Temperature Probes (DS18B20)
+              final activeProbes = t.probes.where((x) => x.enabled).toList();
+              if (activeProbes.isNotEmpty) {
+                for (final p in activeProbes) {
+                  final isFault = p.fault || p.temperature <= -55;
+                  final label = (activeProbes.length == 1 && !p.hasCustomLabel)
+                      ? 'Water Probe'
+                      : (p.hasCustomLabel ? p.label : p.displayName);
+                  allGauges.add(
                     TelemetryGauge(
-                      label: t.probes.length > 1 || p.label.isNotEmpty ? p.displayName : 'Water Probe',
-                      value: p.fault ? 'ERR' : p.temperature.toStringAsFixed(1),
-                      unit: p.fault ? '' : '°C',
-                      percent: p.fault ? 0.0 : ((p.temperature - 10) / 50).clamp(0.0, 1.0),
-                      color: p.fault ? AppColors.danger : AppColors.cyan,
+                      label: label,
+                      value: isFault ? 'ERR' : p.temperature.toStringAsFixed(1),
+                      unit: isFault ? '' : '°C',
+                      percent: isFault
+                          ? 0.0
+                          : ((p.temperature - 10) / 50).clamp(0.0, 1.0),
+                      color: isFault ? AppColors.danger : AppColors.cyan,
                       icon: Icons.water_rounded,
-                      statusBadge: p.fault ? 'FAULT' : 'TEMP',
-                    )
-                else if (t.probeEnabled && (t.probeTemp > -55 || t.probeFault))
+                      statusBadge: isFault ? 'FAULT' : 'TEMP',
+                    ),
+                  );
+                }
+              } else if (t.probes.isEmpty &&
+                  t.probeEnabled &&
+                  (t.probeTemp > -55 || t.probeFault)) {
+                allGauges.add(
                   TelemetryGauge(
                     label: 'Water Probe',
                     value: t.probeFault ? 'ERR' : t.probeTemp.toStringAsFixed(1),
                     unit: t.probeFault ? '' : '°C',
-                    percent: t.probeFault ? 0.0 : ((t.probeTemp - 10) / 50).clamp(0.0, 1.0),
+                    percent: t.probeFault
+                        ? 0.0
+                        : ((t.probeTemp - 10) / 50).clamp(0.0, 1.0),
                     color: t.probeFault ? AppColors.danger : AppColors.cyan,
                     icon: Icons.water_rounded,
                     statusBadge: t.probeFault ? 'FAULT' : 'TEMP',
                   ),
-              ];
-              if (extCards.isEmpty) return const SizedBox.shrink();
+                );
+              }
 
-              final rows = <Widget>[];
-              for (int i = 0; i < extCards.length; i += 2) {
-                final chunk = extCards.sublist(i, (i + 2).clamp(0, extCards.length));
-                rows.add(
-                  Padding(
-                    padding: const EdgeInsets.only(top: 10),
-                    child: Row(
-                      children: [
-                        Expanded(child: chunk[0]),
-                        if (chunk.length > 1) ...[
-                          const SizedBox(width: 10),
-                          Expanded(child: chunk[1]),
-                        ],
-                      ],
+              // 6. Ultrasonic Water Tank Level Monitors
+              final activeTanks = t.tanks.where((u) => u.enabled).toList();
+              final tankTiles = <Widget>[];
+              if (activeTanks.isNotEmpty) {
+                for (final tank in activeTanks) {
+                  final title = (activeTanks.length == 1 && !tank.hasCustomLabel)
+                      ? 'Overhead Water Tank'
+                      : (tank.hasCustomLabel ? tank.label : tank.displayName);
+                  tankTiles.add(
+                    _buildWaterTankTile(
+                      title: title,
+                      levelPct: tank.levelPct,
+                      distanceCm: tank.distanceCm,
+                      isDark: isDark,
                     ),
+                  );
+                }
+              } else if (t.tanks.isEmpty && t.tankEnabled) {
+                tankTiles.add(
+                  _buildWaterTankTile(
+                    title: 'Overhead Water Tank',
+                    levelPct: t.tankLevelPct,
+                    distanceCm: t.distanceCm,
+                    isDark: isDark,
                   ),
                 );
               }
-              return Column(children: rows);
-            },
-          ),
-          ...() {
-            final t = device.telemetry;
-            final tanks = t.tanks.where((u) => u.enabled).toList();
-            if (tanks.isNotEmpty) {
-              return tanks.map((tank) {
-                final title = (tanks.length == 1 && tank.label.isEmpty)
-                    ? 'Overhead Water Tank'
-                    : tank.displayName;
-                return Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Row(
-                                children: [
-                                  Icon(Icons.water_damage_rounded, size: 18, color: AppColors.cyan),
-                                  const SizedBox(width: 8),
-                                  Flexible(
-                                    child: Text(
-                                      title,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              '${tank.levelPct}% (${tank.distanceCm.toStringAsFixed(1)} cm)',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.cyan),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(6),
-                          child: LinearProgressIndicator(
-                            value: (tank.levelPct / 100).clamp(0.0, 1.0),
-                            minHeight: 10,
-                            backgroundColor: isDark ? Colors.black26 : Colors.black12,
-                            valueColor: AlwaysStoppedAnimation<Color>(
-                              tank.levelPct < 20 ? AppColors.danger : (tank.levelPct > 80 ? AppColors.success : AppColors.cyan),
-                            ),
-                          ),
-                        ),
-                      ],
+
+              // Empty state when 0 sensors are configured across all groups
+              if (allGauges.isEmpty && tankTiles.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF0F172A)
+                        : const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppColors.textMuted.withValues(alpha: 0.2),
                     ),
                   ),
-                );
-              }).toList();
-            }
-            if (!t.tankEnabled) return const <Widget>[];
-            return [
-              const SizedBox(height: 10),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.water_damage_rounded, size: 18, color: AppColors.cyan),
-                            const SizedBox(width: 8),
-                            Text('Overhead Water Tank', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary)),
-                          ],
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.sensors_off_rounded,
+                        size: 28,
+                        color: AppColors.textMuted,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'No environmental sensors configured in Hardware Profile.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textSecondary,
                         ),
-                        Text('${t.tankLevelPct}% (${t.distanceCm.toStringAsFixed(1)} cm)',
-                             style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.cyan)),
+                      ),
+                      if (!device.isGuest) ...[
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.primary,
+                            side: BorderSide(
+                              color: AppColors.primary.withValues(alpha: 0.4),
+                            ),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          icon: const Icon(Icons.memory_rounded, size: 16),
+                          label: const Text(
+                            'Configure in Hardware Profile',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          onPressed: () {
+                            HardwareConfigSheet.show(context, device, manager);
+                          },
+                        ),
                       ],
+                    ],
+                  ),
+                );
+              }
+
+              final sections = <Widget>[];
+              if (allGauges.length == 3) {
+                sections.add(
+                  Row(
+                    children: [
+                      Expanded(child: allGauges[0]),
+                      const SizedBox(width: 10),
+                      Expanded(child: allGauges[1]),
+                      const SizedBox(width: 10),
+                      Expanded(child: allGauges[2]),
+                    ],
+                  ),
+                );
+              } else if (allGauges.isNotEmpty) {
+                for (int i = 0; i < allGauges.length; i += 2) {
+                  final chunk = allGauges.sublist(
+                    i,
+                    (i + 2).clamp(0, allGauges.length),
+                  );
+                  sections.add(
+                    Padding(
+                      padding: EdgeInsets.only(top: i == 0 ? 0 : 10),
+                      child: Row(
+                        children: [
+                          Expanded(child: chunk[0]),
+                          if (chunk.length > 1) ...[
+                            const SizedBox(width: 10),
+                            Expanded(child: chunk[1]),
+                          ],
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: LinearProgressIndicator(
-                        value: (t.tankLevelPct / 100).clamp(0.0, 1.0),
-                        minHeight: 10,
-                        backgroundColor: isDark ? Colors.black26 : Colors.black12,
-                        valueColor: AlwaysStoppedAnimation<Color>(
-                          t.tankLevelPct < 20 ? AppColors.danger : (t.tankLevelPct > 80 ? AppColors.success : AppColors.cyan),
+                  );
+                }
+              }
+
+              for (int i = 0; i < tankTiles.length; i++) {
+                sections.add(
+                  Padding(
+                    padding: EdgeInsets.only(
+                      top: (allGauges.isEmpty && i == 0) ? 0 : 10,
+                    ),
+                    child: tankTiles[i],
+                  ),
+                );
+              }
+
+              return Column(children: sections);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaterTankTile({
+    required String title,
+    required int levelPct,
+    required double distanceCm,
+    required bool isDark,
+  }) {
+    final barColor = levelPct < 20
+        ? AppColors.danger
+        : (levelPct > 80 ? AppColors.success : AppColors.cyan);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.cyan.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.water_damage_rounded,
+                      size: 18,
+                      color: AppColors.cyan,
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        title,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ),
                   ],
                 ),
               ),
-            ];
-          }(),
+              const SizedBox(width: 8),
+              Text(
+                '$levelPct% (${distanceCm.toStringAsFixed(1)} cm)',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.cyan,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: LinearProgressIndicator(
+              value: (levelPct / 100).clamp(0.0, 1.0),
+              minHeight: 10,
+              backgroundColor: isDark ? Colors.black26 : Colors.black12,
+              valueColor: AlwaysStoppedAnimation<Color>(barColor),
+            ),
+          ),
         ],
       ),
     );

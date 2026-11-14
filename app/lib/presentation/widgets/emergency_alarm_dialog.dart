@@ -83,17 +83,22 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
     final manager = ref.read(deviceManagerProvider.notifier);
     final dev = _findDevice(devices);
     final isGas = widget.alarmType == 'gas';
+    final isFault = widget.alarmType == 'sensor_fault';
 
     final title = isGas
         ? 'GAS / SMOKE HAZARD DETECTED'
-        : 'HIGH TEMPERATURE ALARM';
+        : isFault
+            ? 'SENSOR HARDWARE FAULT DETECTED'
+            : 'HIGH TEMPERATURE ALARM';
     final devName = dev?.name ?? 'SmartHome Controller';
     final roomName = dev?.room ?? 'Local Room';
     final metricText = dev == null
         ? 'Emergency threshold exceeded on controller.'
-        : (isGas
-              ? 'MQ-2 Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)'
-              : 'Temperature: ${dev.telemetry.temperature.toStringAsFixed(1)}°C (Safety Limit: ${dev.telemetry.tempThreshold.toStringAsFixed(1)}°C)');
+        : isGas
+            ? 'MQ-2 Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)'
+            : isFault
+                ? 'Climate sensor failed to respond across consecutive reads. Failsafe relays have been activated.'
+                : 'Temperature: ${dev.telemetry.temperature.toStringAsFixed(1)}°C (Safety Limit: ${dev.telemetry.tempThreshold.toStringAsFixed(1)}°C)';
 
     return AlertDialog(
       backgroundColor: AppColors.surface,
@@ -118,7 +123,9 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
             child: Icon(
               isGas
                   ? Icons.local_fire_department_rounded
-                  : Icons.thermostat_rounded,
+                  : isFault
+                      ? Icons.sensors_off_rounded
+                      : Icons.thermostat_rounded,
               color: AppColors.danger,
               size: 28,
             ),

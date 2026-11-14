@@ -44,6 +44,8 @@ private:
     uint32_t _minFreeHeap;
     unsigned long _lastCheck;
     unsigned long _bootTime;
+    uint32_t _rolloverCount;
+    unsigned long _lastMillis;
     String _resetReason;
 
 #if defined(ESP32)

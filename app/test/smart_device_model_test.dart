@@ -274,6 +274,73 @@ void main() {
       expect((out['climates'] as List).length, 2);
       expect((out['mq2s'] as List).length, 2);
     });
+
+    test('isCustomSensorLabel ignores blank and firmware default labels', () {
+      expect(isCustomSensorLabel('', 'Climate'), isFalse);
+      expect(isCustomSensorLabel('   ', 'Light'), isFalse);
+      expect(isCustomSensorLabel('Climate 1', 'Climate'), isFalse);
+      expect(isCustomSensorLabel('Climate #2', 'Climate'), isFalse);
+      expect(isCustomSensorLabel('Light 1', 'Light'), isFalse);
+      expect(isCustomSensorLabel('Motion 3', 'Motion'), isFalse);
+      expect(isCustomSensorLabel('Probe 1', 'Probe'), isFalse);
+      expect(isCustomSensorLabel('Tank 2', 'Tank'), isFalse);
+      expect(isCustomSensorLabel('Gas 1', 'Gas'), isFalse);
+
+      expect(isCustomSensorLabel('Server Rack', 'Climate'), isTrue);
+      expect(isCustomSensorLabel('Porch Light', 'Light'), isTrue);
+      expect(isCustomSensorLabel('Climate 1B', 'Climate'), isTrue);
+      expect(isCustomSensorLabel('Overhead Tank Main', 'Tank'), isTrue);
+    });
+
+    test('hasCustomLabel works across all reading classes', () {
+      expect(const ClimateReading(label: 'Climate 1').hasCustomLabel, isFalse);
+      expect(const ClimateReading(label: 'Server Rack').hasCustomLabel, isTrue);
+      expect(const LightReading(label: 'Light 1').hasCustomLabel, isFalse);
+      expect(const LightReading(label: 'Desk Lux').hasCustomLabel, isTrue);
+      expect(const MotionReading(label: 'Motion 1').hasCustomLabel, isFalse);
+      expect(const MotionReading(label: 'Hall PIR').hasCustomLabel, isTrue);
+      expect(const ProbeReading(label: 'Probe 1').hasCustomLabel, isFalse);
+      expect(const ProbeReading(label: 'Pool Temp').hasCustomLabel, isTrue);
+      expect(const TankReading(label: 'Tank 1').hasCustomLabel, isFalse);
+      expect(const TankReading(label: 'Roof Sump').hasCustomLabel, isTrue);
+      expect(const Mq2Reading(label: 'Gas 1').hasCustomLabel, isFalse);
+      expect(const Mq2Reading(label: 'Kitchen Gas').hasCustomLabel, isTrue);
+    });
+
+    test('parses gas_hw_allowed and reports 0-sensor state cleanly', () {
+      final zeroSensors = SensorTelemetry.fromJson({
+        'dht_enabled': false,
+        'gas_enabled': false,
+        'gas_hw_allowed': false,
+        'gas_raw': 0,
+        'climates': [],
+        'mq2s': [],
+        'lights': [],
+        'motions': [],
+        'probes': [],
+        'tanks': [],
+      });
+      expect(zeroSensors.hasActiveClimate, isFalse);
+      expect(zeroSensors.hasActiveGas, isFalse);
+      expect(zeroSensors.hasActiveLight, isFalse);
+      expect(zeroSensors.hasActiveMotion, isFalse);
+      expect(zeroSensors.hasActiveProbe, isFalse);
+      expect(zeroSensors.hasActiveTank, isFalse);
+      expect(zeroSensors.hasAnySensor, isFalse);
+
+      final pausedMq2 = SensorTelemetry.fromJson({
+        'dht_enabled': false,
+        'gas_enabled': false,
+        'gas_hw_allowed': true,
+        'gas_raw': 0,
+      });
+      expect(pausedMq2.gasEnabled, isFalse);
+      expect(pausedMq2.gasHwAllowed, isTrue);
+      expect(pausedMq2.hasActiveGas, isTrue);
+      expect(pausedMq2.hasAnySensor, isTrue);
+      expect(pausedMq2.toJson()['gas_hw_allowed'], isTrue);
+      expect(pausedMq2.toJson()['gas_enabled'], isFalse);
+    });
   });
 
   group('ScheduledAlarm Model Tests', () {

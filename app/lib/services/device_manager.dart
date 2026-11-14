@@ -488,7 +488,9 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final isActive = data['active'] == true;
         final alertKey = '${current.id}:$alarmName';
         if (isActive &&
-            (alarmName == 'gas' || alarmName == 'temperature') &&
+            (alarmName == 'gas' ||
+                alarmName == 'temperature' ||
+                alarmName == 'sensor_fault') &&
             _activeAlertKeys.add(alertKey)) {
           ref
               .read(emergencyAlarmProvider.notifier)

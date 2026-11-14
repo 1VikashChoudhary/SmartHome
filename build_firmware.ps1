@@ -5,7 +5,8 @@
 
 param(
     [ValidateSet("all", "esp32", "esp8266")]
-    [string]$Target = "all"
+    [string]$Target = "all",
+    [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,7 +24,11 @@ if (-not (Test-Path $ArduinoCli)) {
 }
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$BuildDir  = "C:\shbuild"
+$BuildDir  = Join-Path ([System.IO.Path]::GetTempPath()) "shbuild"
+if ($Clean -and (Test-Path $BuildDir)) {
+    Write-Host "Cleaning build cache at $BuildDir..." -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $BuildDir
+}
 $BinDir    = Join-Path $ScriptDir "binaries"
 
 # Ensure output folders exist

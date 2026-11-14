@@ -180,7 +180,7 @@ void WifiManager::loop() {
             }
 
             // Also check if STA gets connected (concurrent AP+STA mode)
-            if (WiFi.status() == WL_CONNECTED && WiFi.localIP().toString() != "0.0.0.0") {
+            if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
                 Serial.println(F("[WiFi] STA connected while in AP mode"));
                 _state = WIFI_ST_CONNECTED;
                 _lastConnectTime = now;

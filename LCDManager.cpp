@@ -73,17 +73,18 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time) {
 #endif
 
     // Initialize I2C bus
-    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Wire.begin(_sdaPin, _sclPin);
 
     // Test if LCD is physically present on the I2C bus
-    Wire.beginTransmission(LCD_I2C_ADDR);
+    Wire.beginTransmission(_i2cAddr);
     byte error = Wire.endTransmission();
     if (error != 0) {
-        SERIAL_PRINTF("[LCD] LCD not detected at I2C address 0x%02X (error: %d). Disabling LCD.\n", LCD_I2C_ADDR, error);
+        SERIAL_PRINTF("[LCD] LCD not detected at I2C address 0x%02X (error: %d). Disabling LCD.\n", _i2cAddr, error);
         _enabled = false;
         return;
     }
 
+    _lcd = LiquidCrystal_I2C(_i2cAddr, _lcdCols, _lcdRows);
     _lcd.init();
 
     // Determine initial active brightness
@@ -108,7 +109,7 @@ void LCDManager::begin(StorageManager& storage, TimeManager& time) {
     _lastUpdate = millis();
 
     SERIAL_PRINTF("[LCD] Ready (addr: 0x%02X, rotation: %ds, brightness: %d%%)\n",
-                  LCD_I2C_ADDR, _rotationInterval, _brightness);
+                  _i2cAddr, _rotationInterval, _brightness);
 }
 
 void LCDManager::begin(StorageManager& storage, TimeManager& time, HardwareManager& hw) {

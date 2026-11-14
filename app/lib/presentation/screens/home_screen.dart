@@ -952,41 +952,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                  ] else if (dev.isOnline &&
-                      dev.telemetry.dhtEnabled &&
-                      !dev.telemetry.dhtError &&
-                      (dev.telemetry.temperature != 0 || dev.telemetry.humidity > 0)) ...[
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF1B2337) : const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: isDark ? const Color(0x18FFFFFF) : const Color(0xFFE2E8F0),
-                          width: 0.8,
+                  ] else if (dev.isOnline) ...() {
+                    final activeClimates =
+                        dev.telemetry.climates.where((c) => c.enabled).toList();
+                    final primaryCliFault = activeClimates.isNotEmpty
+                        ? activeClimates.first.fault
+                        : dev.telemetry.dhtError;
+                    final pTemp = activeClimates.isNotEmpty
+                        ? activeClimates.first.temperature
+                        : dev.telemetry.temperature;
+                    final pHum = activeClimates.isNotEmpty
+                        ? activeClimates.first.humidity
+                        : dev.telemetry.humidity;
+                    if (!dev.telemetry.hasActiveClimate ||
+                        primaryCliFault ||
+                        (pTemp == 0 && pHum <= 0)) {
+                      return const <Widget>[];
+                    }
+                    return [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1B2337) : const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isDark ? const Color(0x18FFFFFF) : const Color(0xFFE2E8F0),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.thermostat, size: 12, color: AppColors.tempAmber),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${pTemp.toStringAsFixed(1)}°',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.tempAmber),
+                            ),
+                            const SizedBox(width: 6),
+                            const Icon(Icons.water_drop, size: 12, color: AppColors.cyan),
+                            const SizedBox(width: 2),
+                            Text(
+                              '${pHum.toStringAsFixed(0)}%',
+                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.cyan),
+                            ),
+                          ],
                         ),
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.thermostat, size: 12, color: AppColors.tempAmber),
-                          const SizedBox(width: 2),
-                          Text(
-                            '${dev.telemetry.temperature.toStringAsFixed(1)}°',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.tempAmber),
-                          ),
-                          const SizedBox(width: 6),
-                          const Icon(Icons.water_drop, size: 12, color: AppColors.cyan),
-                          const SizedBox(width: 2),
-                          Text(
-                            '${dev.telemetry.humidity.toStringAsFixed(0)}%',
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.cyan),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                  ],
+                      const SizedBox(width: 6),
+                    ];
+                  }(),
                   Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.textMuted),
                 ],
               ),
