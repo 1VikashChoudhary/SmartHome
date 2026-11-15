@@ -22,6 +22,14 @@ void readFactoryStaMac(uint8_t mac[6]) {
     WiFi.macAddress(mac);
 #endif
 }
+
+void disableWifiSleep() {
+#if defined(ESP8266)
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#else
+    WiFi.setSleep(false);
+#endif
+}
 }
 
 // Static instance pointer for WiFi event callback
@@ -34,7 +42,8 @@ WifiManager::WifiManager()
     : _storage(nullptr), _state(WIFI_ST_DISCONNECTED),
       _networkCount(0), _currentNetwork(0),
       _lastConnectAttempt(0), _lastConnectTime(0), _connectStartTime(0),
-      _failCount(0), _dnsStarted(false),
+      _disconnectDetectedAt(0), _lastApStaRetry(0),
+      _failCount(0), _usingPinnedBssid(false), _skipPinnedBssid(false), _dnsStarted(false),
       _connectCallback(nullptr), _wasConnected(false) {
     _instance = this;
 }
@@ -44,11 +53,9 @@ WifiManager::WifiManager()
 // ============================================================================
 void WifiManager::begin(StorageManager& storage) {
     _storage = &storage;
-#if defined(ESP8266)
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
-#else
-    WiFi.setSleep(false);
-#endif
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(true);
+    disableWifiSleep();
 
     // Generate AP SSID and password from MAC
     _apSSID = generateAPSSID();
@@ -106,9 +113,14 @@ void WifiManager::loop() {
             if (WiFi.status() == WL_CONNECTED) {
                 _state = WIFI_ST_CONNECTED;
                 _lastConnectTime = now;
+                _disconnectDetectedAt = 0;
+                _usingPinnedBssid = false;
+                _skipPinnedBssid = false;
                 _failCount = 0;
                 SERIAL_PRINTF("[WiFi] Connected to %s  IP: %s  RSSI: %d dBm\n",
                               WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), WiFi.RSSI());
+                // Re-assert no-sleep after STA link-up so SDK defaults never miss AP-bridged ARPs.
+                disableWifiSleep();
 
                 // Cache BSSID and channel for fast reconnect
                 saveBssidChannel();
@@ -128,21 +140,28 @@ void WifiManager::loop() {
                 }
                 _wasConnected = true;
             }
-            // Check timeout
-            else if (now - _connectStartTime > WIFI_CONNECT_TIMEOUT) {
-                _failCount++;
-                SERIAL_PRINTF("[WiFi] Connection timeout (attempt %d/%d)\n",
-                              _failCount, WIFI_AP_FALLBACK_ATTEMPTS);
-
-                if (_failCount >= WIFI_AP_FALLBACK_ATTEMPTS) {
-                    // Fallback to AP mode
-                    Serial.println(F("[WiFi] Max attempts reached, falling back to AP mode"));
-                    startAP();
+            // Check timeout (fail fast out of pinned BSSID/channel without consuming AP fallback attempts)
+            else if (now - _connectStartTime > (_usingPinnedBssid ? 6000UL : (unsigned long)WIFI_CONNECT_TIMEOUT)) {
+                if (_usingPinnedBssid) {
+                    _skipPinnedBssid = true;
+                    Serial.println(F("[WiFi] Pinned BSSID/channel timed out, retrying full scan..."));
+                    tryConnect();
                 } else {
-                    // Try next network or retry
-                    _currentNetwork = (_currentNetwork + 1) % _networkCount;
-                    _state = WIFI_ST_DISCONNECTED;
-                    _lastConnectAttempt = now;
+                    _failCount++;
+                    SERIAL_PRINTF("[WiFi] Connection timeout (attempt %d/%d)\n",
+                                  _failCount, WIFI_AP_FALLBACK_ATTEMPTS);
+
+                    if (_failCount >= WIFI_AP_FALLBACK_ATTEMPTS) {
+                        // Fallback to AP mode
+                        Serial.println(F("[WiFi] Max attempts reached, falling back to AP mode"));
+                        _lastApStaRetry = now;
+                        startAP();
+                    } else {
+                        // Try next network or retry
+                        _currentNetwork = (_currentNetwork + 1) % _networkCount;
+                        _state = WIFI_ST_DISCONNECTED;
+                        _lastConnectAttempt = now;
+                    }
                 }
             }
             break;
@@ -152,16 +171,26 @@ void WifiManager::loop() {
 #if defined(ESP8266)
             MDNS.update();
 #endif
-            // Monitor connection
+            // Monitor connection — give native SDK autoReconnect a 3.5s grace window
+            // so brief RF/beacon glitches recover without tearing down sockets.
             if (WiFi.status() != WL_CONNECTED) {
-                Serial.println(F("[WiFi] Connection lost, reconnecting..."));
-                _state = WIFI_ST_DISCONNECTED;
-                _lastConnectAttempt = now - WIFI_RECONNECT_INTERVAL + 1000; // Retry quickly
+                if (_disconnectDetectedAt == 0) {
+                    _disconnectDetectedAt = now;
+                } else if (now - _disconnectDetectedAt >= 3500) {
+                    Serial.println(F("[WiFi] Connection lost, reconnecting..."));
+                    _state = WIFI_ST_DISCONNECTED;
+                    _disconnectDetectedAt = 0;
+                    _lastConnectAttempt = now - WIFI_RECONNECT_INTERVAL + 500; // Retry quickly
 
-                if (_connectCallback && _wasConnected) {
-                    _connectCallback(false);
+                    if (_connectCallback && _wasConnected) {
+                        _connectCallback(false);
+                    }
+                    _wasConnected = false;
                 }
-                _wasConnected = false;
+            } else if (_disconnectDetectedAt != 0) {
+                _disconnectDetectedAt = 0;
+                // SDK auto-reconnected; refresh cached BSSID/channel if the ESP roamed
+                saveBssidChannel();
             }
             break;
 
@@ -179,11 +208,23 @@ void WifiManager::loop() {
                 _dnsServer.processNextRequest();
             }
 
+            // Periodically retry STA connection in background only when no client is attached to SoftAP
+            if (_networkCount > 0 && WiFi.status() != WL_CONNECTED &&
+                WiFi.softAPgetStationNum() == 0 && (now - _lastApStaRetry >= 30000)) {
+                _lastApStaRetry = now;
+                _currentNetwork = (_currentNetwork + 1) % _networkCount;
+                WiFi.begin(_networks[_currentNetwork].ssid.c_str(),
+                           _networks[_currentNetwork].pass.c_str());
+            }
+
             // Also check if STA gets connected (concurrent AP+STA mode)
             if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
                 Serial.println(F("[WiFi] STA connected while in AP mode"));
                 _state = WIFI_ST_CONNECTED;
                 _lastConnectTime = now;
+                _disconnectDetectedAt = 0;
+                _usingPinnedBssid = false;
+                _skipPinnedBssid = false;
                 _failCount = 0;
                 _wasConnected = true;
                 saveBssidChannel();
@@ -194,6 +235,7 @@ void WifiManager::loop() {
                 }
                 // Switch to STA only mode
                 WiFi.mode(WIFI_STA);
+                disableWifiSleep();
                 if (_connectCallback) _connectCallback(true);
             }
             break;
@@ -283,6 +325,7 @@ void WifiManager::startAP() {
                   _apSSID.c_str(), pass ? pass : "None (Open)", WiFi.softAPIP().toString().c_str());
 
     // If we have credentials, keep trying STA in background
+    _lastApStaRetry = millis();
     if (_networkCount > 0) {
         WiFi.begin(_networks[0].ssid.c_str(), _networks[0].pass.c_str());
     } else {
@@ -348,6 +391,7 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
     // Attempt connection to new network
     _currentNetwork = _networkCount - 1;
     _failCount = 0;
+    _skipPinnedBssid = false;
     _state = WIFI_ST_CONNECTING;
     tryConnect();
 }
@@ -421,23 +465,26 @@ void WifiManager::tryConnect() {
 
     WiFi.disconnect(false);
     WiFi.mode(WIFI_STA);
+    WiFi.setAutoReconnect(true);
 #if defined(ESP8266)
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
     WiFi.hostname(_hostname);
 #else
-    WiFi.setSleep(false);
     WiFi.setHostname(_hostname.c_str());
 #endif
 
-    // Fast reconnect if we have cached BSSID and channel
-    if (net.hasBssid && net.channel > 0) {
+    // Fast reconnect only on initial attempt when we have cached BSSID/channel;
+    // on retry (_failCount > 0 or _skipPinnedBssid), scan all channels/APs so multi-AP/mesh or channel-hop recovers.
+    if (_failCount == 0 && !_skipPinnedBssid && net.hasBssid && net.channel > 0) {
+        _usingPinnedBssid = true;
         SERIAL_PRINTF("[WiFi] Fast connecting to %s (ch %d)\n",
                       net.ssid.c_str(), (int)net.channel);
         WiFi.begin(net.ssid.c_str(), net.pass.c_str(), net.channel, net.bssid, true);
     } else {
-        SERIAL_PRINTF("[WiFi] Connecting to %s\n", net.ssid.c_str());
+        _usingPinnedBssid = false;
+        SERIAL_PRINTF("[WiFi] Connecting to %s (full scan)\n", net.ssid.c_str());
         WiFi.begin(net.ssid.c_str(), net.pass.c_str());
     }
+    disableWifiSleep();
 }
 
 // ============================================================================
@@ -446,11 +493,22 @@ void WifiManager::tryConnect() {
 void WifiManager::saveBssidChannel() {
     if (_networkCount == 0) return;
 
+    const uint8_t* curBssid = WiFi.BSSID();
+    int32_t curChannel = WiFi.channel();
+    if (!curBssid || curChannel <= 0) return;
+
     String connectedSSID = WiFi.SSID();
     for (uint8_t i = 0; i < _networkCount; i++) {
         if (_networks[i].ssid == connectedSSID) {
-            memcpy(_networks[i].bssid, WiFi.BSSID(), 6);
-            _networks[i].channel = WiFi.channel();
+            // Skip flash write when AP BSSID and channel have not changed
+            if (_networks[i].hasBssid &&
+                _networks[i].channel == curChannel &&
+                memcmp(_networks[i].bssid, curBssid, 6) == 0) {
+                return;
+            }
+
+            memcpy(_networks[i].bssid, curBssid, 6);
+            _networks[i].channel = curChannel;
             _networks[i].hasBssid = true;
 
             // Persist the BSSID/channel

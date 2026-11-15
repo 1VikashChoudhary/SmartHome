@@ -141,22 +141,25 @@ void WebServerManager::setupPageRoutes() {
     // Main dashboard (or Captive Portal in AP setup mode unless ?dashboard=1)
     _server.on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req)) return;
-        if (_wifi && _wifi->getState() == WIFI_ST_AP_MODE && !req->hasParam("dashboard")) {
-            req->send_P(200, "text/html", PAGE_CAPTIVE);
-            return;
-        }
-        req->send_P(200, "text/html", PAGE_INDEX);
+        const char* html = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE && !req->hasParam("dashboard"))
+            ? PAGE_CAPTIVE : PAGE_INDEX;
+        AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", html);
+        r->addHeader("Connection", "close");
+        req->send(r);
     });
 
     // Firmware update page
     _server.on("/update", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
-        req->send_P(200, "text/html", PAGE_OTA_UPDATE);
+        AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", PAGE_OTA_UPDATE);
+        r->addHeader("Connection", "close");
+        req->send(r);
     });
 
     // Logout landing page
     _server.on("/logout", HTTP_GET, [](AsyncWebServerRequest* req) {
         AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", PAGE_LOGGED_OUT);
+        r->addHeader("Connection", "close");
         r->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         r->addHeader("Pragma", "no-cache");
         r->addHeader("Expires", "0");
@@ -184,6 +187,7 @@ void WebServerManager::setupAPIRoutes() {
             "{\"status\":\"logged_out\",\"message\":\"Logged out successfully\"}"
         );
         r->addHeader("WWW-Authenticate", "Basic realm=\"SmartHome\"");
+        r->addHeader("Connection", "close");
         r->addHeader("Cache-Control", "no-cache, no-store, must-revalidate");
         r->addHeader("Pragma", "no-cache");
         r->addHeader("Expires", "0");
@@ -447,10 +451,12 @@ void WebServerManager::setupAPIRoutes() {
         if (!isAuthorized(req)) return;
         if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
             AsyncResponseStream *response = req->beginResponseStream("text/csv");
+            response->addHeader("Connection", "close");
             response->print(_logger->toCSV());
             req->send(response);
         } else {
             AsyncResponseStream *response = req->beginResponseStream("application/json");
+            response->addHeader("Connection", "close");
             response->print(_logger->toJson());
             req->send(response);
         }
@@ -498,6 +504,7 @@ void WebServerManager::setupAPIRoutes() {
         if (_sensor) _sensor->saveCalibration();
         bool sanitize = req->hasParam("sanitize") && req->getParam("sanitize")->value() == "1";
         AsyncResponseStream *response = req->beginResponseStream("application/json");
+        response->addHeader("Connection", "close");
         response->print(_storage->exportAllConfig(sanitize));
         req->send(response);
     });
@@ -1416,7 +1423,9 @@ void WebServerManager::setupAPIRoutes() {
     _server.onNotFound([this](AsyncWebServerRequest* req) {
         // In AP mode, redirect to captive portal
         if (_wifi->getState() == WIFI_ST_AP_MODE) {
-            req->send_P(200, "text/html", PAGE_CAPTIVE);
+            AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", PAGE_CAPTIVE);
+            r->addHeader("Connection", "close");
+            req->send(r);
         } else {
             sendError(req, 404, F("Not Found"));
         }
@@ -1449,6 +1458,7 @@ void WebServerManager::setupCaptivePortal() {
 void WebServerManager::sendJson(AsyncWebServerRequest* req, int code, const JsonDocument& doc) {
     AsyncResponseStream *response = req->beginResponseStream("application/json");
     response->setCode(code);
+    response->addHeader("Connection", "close");
     serializeJson(doc, *response);
     req->send(response);
 }
@@ -1826,6 +1836,7 @@ bool WebServerManager::isAuthorized(AsyncWebServerRequest* req, AuthRole require
             "{\"status\":\"error\",\"message\":\"Authentication required\"}"
         );
         r->addHeader("WWW-Authenticate", "Basic realm=\"SmartHome\"");
+        r->addHeader("Connection", "close");
         req->send(r);
         return false;
     }

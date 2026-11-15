@@ -94,9 +94,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
   final Map<String, DeviceWebSocketClient> _wsClients = {};
   final Set<String> _refreshingDeviceIds = {};
+  final Map<String, int> _refreshEpochs = {};
   final Set<String> _activeAlertKeys = {};
   Timer? _periodicSyncTimer;
   Timer? _countdownTickerTimer;
+  int _activeStreamIntervalSeconds = 10;
   bool _foregroundSyncEnabled = true;
   bool _disposed = false;
 
@@ -212,12 +214,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   /// request per device.
   Future<void> refreshAllDevices({
     bool skipHealthyWs = false,
-    int staleSeconds = 25,
+    int staleSeconds = 15,
   }) async {
     if (!_isAlive) return;
     final now = DateTime.now();
     final devices = state.where((dev) {
       if (dev.ip.isEmpty) return false;
+      if (!dev.isOnline) return true;
       if (!skipHealthyWs) return true;
       final wsConnected = _wsClients[dev.id]?.isConnected ?? false;
       if (!wsConnected) return true;
@@ -228,7 +231,9 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     for (var start = 0; start < devices.length; start += 2) {
       if (!_isAlive) return;
       final end = (start + 2).clamp(0, devices.length).toInt();
-      await Future.wait(devices.sublist(start, end).map(_refreshDeviceStatus));
+      await Future.wait(
+        devices.sublist(start, end).map((d) => _refreshDeviceStatus(d)),
+      );
     }
   }
 
@@ -372,30 +377,51 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (!_isAlive) return;
     _foregroundSyncEnabled = true;
     final interval = intervalSeconds.clamp(5, 60).toInt();
+    _activeStreamIntervalSeconds = interval;
     _checkAndStartCountdownTicker();
     for (final dev in state) {
-      if (dev.ip.isNotEmpty &&
-          !dev.needsAuth &&
-          !_wsClients.containsKey(dev.id)) {
-        _startStatusStream(dev, intervalSeconds: interval);
-      }
+      _ensureLiveStatusStream(dev.id);
     }
     _periodicSyncTimer?.cancel();
     _periodicSyncTimer = Timer.periodic(Duration(seconds: interval), (_) {
       if (!_isAlive || !_foregroundSyncEnabled) return;
       for (final dev in state) {
-        if (dev.ip.isNotEmpty &&
-            !dev.needsAuth &&
-            !_wsClients.containsKey(dev.id)) {
-          _startStatusStream(dev, intervalSeconds: interval);
-        }
+        _ensureLiveStatusStream(dev.id);
       }
       refreshAllDevices(
         skipHealthyWs: true,
-        staleSeconds: interval * 2 + 5,
+        staleSeconds: interval + 5,
       );
     });
     await refreshAllDevices();
+  }
+
+  void _ensureLiveStatusStream(
+    String deviceId, {
+    bool forceReconnect = false,
+  }) {
+    if (!_isAlive || !_foregroundSyncEnabled) return;
+    final idx = state.indexWhere((d) => d.id == deviceId);
+    if (idx < 0) return;
+    final dev = state[idx];
+    if (dev.ip.isEmpty || dev.needsAuth) return;
+    final existing = _wsClients[deviceId];
+    if (existing == null) {
+      _startStatusStream(dev, intervalSeconds: _activeStreamIntervalSeconds);
+    } else if (existing.ip != dev.ip) {
+      _replaceForegroundStream(dev);
+    } else if (forceReconnect ||
+        (!existing.isConnected && !existing.isActivelyConnecting)) {
+      existing.reconnectNow();
+    }
+  }
+
+  void _ensureStreamAfterHttpRecovery(String deviceId, bool wasOffline) {
+    final ws = _wsClients[deviceId];
+    final shouldForceReconnect =
+        wasOffline &&
+        (ws == null || (!ws.isConnected && !ws.isActivelyConnecting));
+    _ensureLiveStatusStream(deviceId, forceReconnect: shouldForceReconnect);
   }
 
   void _replaceForegroundStream(SmartDevice dev) {
@@ -520,7 +546,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
             timerActive: shouldCancelTimer ? false : relay.timerActive,
             timerRemaining: shouldCancelTimer ? 0 : relay.timerRemaining,
           );
-          final updated = current.copyWith(relays: rList, isOnline: true);
+          final updated = current.copyWith(
+            relays: rList,
+            isOnline: true,
+            lastSeen: DateTime.now(),
+          );
           final newList = List<SmartDevice>.from(state);
           newList[idx] = updated;
           state = newList;
@@ -542,7 +572,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
             timerTarget: tTarget,
             timerRemaining: tRemaining,
           );
-          final updated = current.copyWith(relays: rList, isOnline: true);
+          final updated = current.copyWith(
+            relays: rList,
+            isOnline: true,
+            lastSeen: DateTime.now(),
+          );
           final newList = List<SmartDevice>.from(state);
           newList[idx] = updated;
           state = newList;
@@ -631,20 +665,28 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     _checkAndStartCountdownTicker();
   }
 
-  Future<void> _refreshDeviceStatus(SmartDevice dev) async {
+  Future<void> _refreshDeviceStatus(
+    SmartDevice dev, {
+    bool force = false,
+  }) async {
     if (!_isAlive) return;
-    if (!_refreshingDeviceIds.add(dev.id)) return;
+    final added = _refreshingDeviceIds.add(dev.id);
+    if (!added && !force) return;
+    final myEpoch = (_refreshEpochs[dev.id] ?? 0) + 1;
+    _refreshEpochs[dev.id] = myEpoch;
+    bool isStale() => !_isAlive || _refreshEpochs[dev.id] != myEpoch;
+
     try {
       if (dev.needsAuth) {
         final disc = await _api.probeDiscovery(dev.ip);
-        if (!_isAlive) return;
+        if (isStale()) return;
         if (disc != null && !disc.authRequired) {
           final json = await _api.fetchStatus(
             dev.ip,
             password: dev.authPassword,
             username: dev.authUsername,
           );
-          if (!_isAlive) return;
+          if (isStale()) return;
           if (json != null) {
             final curIdx = state.indexWhere((d) => d.id == dev.id);
             if (curIdx < 0) return;
@@ -658,22 +700,38 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         return;
       }
 
-      final json = await _api.fetchStatus(
+      var json = await _api.fetchStatus(
         dev.ip,
         password: dev.authPassword,
         username: dev.authUsername,
       );
-      if (!_isAlive) return;
+      if (isStale()) return;
+      if (json == null) {
+        // Ride through transient L2 AP bridge / ARP table updates across rooms
+        // before falling back or flipping offline.
+        await Future.delayed(const Duration(milliseconds: 350));
+        if (isStale()) return;
+        json = await _api.fetchStatus(
+          dev.ip,
+          password: dev.authPassword,
+          username: dev.authUsername,
+        );
+        if (isStale()) return;
+      }
       final postStatusIdx = state.indexWhere((d) => d.id == dev.id);
       if (postStatusIdx < 0 || state[postStatusIdx].needsAuth) {
         return;
       }
+      final wasOffline = !state[postStatusIdx].isOnline;
       if (json != null) {
         _handleWsData(dev.id, json);
+        if (!force) {
+          _ensureStreamAfterHttpRecovery(dev.id, wasOffline);
+        }
       } else {
         // Check if device is still reachable via /api/discovery
         final disc = await _api.probeDiscovery(dev.ip);
-        if (!_isAlive) return;
+        if (isStale()) return;
         final postDiscIdx = state.indexWhere((d) => d.id == dev.id);
         if (postDiscIdx < 0 || state[postDiscIdx].needsAuth) {
           return;
@@ -682,6 +740,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           if (disc.authRequired) {
             _handleDeviceAuthError(dev.id, promptUser: true);
           } else {
+            final discWasOffline = !state[postDiscIdx].isOnline;
             // Controller is alive on LAN; keep online and retry status once
             _setDeviceOnlineState(dev.id, true);
             final retryJson = await _api.fetchStatus(
@@ -689,7 +748,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
               password: dev.authPassword,
               username: dev.authUsername,
             );
-            if (!_isAlive) return;
+            if (isStale()) return;
             final postRetryIdx = state.indexWhere((d) => d.id == dev.id);
             if (postRetryIdx < 0 || state[postRetryIdx].needsAuth) {
               return;
@@ -697,13 +756,18 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
             if (retryJson != null) {
               _handleWsData(dev.id, retryJson);
             }
+            if (!force) {
+              _ensureStreamAfterHttpRecovery(dev.id, discWasOffline);
+            }
           }
         } else {
           _setDeviceOnlineState(dev.id, false);
         }
       }
     } finally {
-      _refreshingDeviceIds.remove(dev.id);
+      if (_refreshEpochs[dev.id] == myEpoch) {
+        _refreshingDeviceIds.remove(dev.id);
+      }
     }
   }
 
@@ -1092,9 +1156,14 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   Future<void> refreshDevice(String deviceId) async {
     if (!_isAlive) return;
     final idx = state.indexWhere((d) => d.id == deviceId);
-    if (idx >= 0) {
-      await _refreshDeviceStatus(state[idx]);
-    }
+    if (idx < 0) return;
+    await _refreshDeviceStatus(state[idx], force: true);
+    if (!_isAlive) return;
+    final ws = _wsClients[deviceId];
+    _ensureLiveStatusStream(
+      deviceId,
+      forceReconnect: ws == null || (!ws.isConnected && !ws.isActivelyConnecting),
+    );
   }
 
   /// Reboot device
@@ -1113,7 +1182,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (idx < 0) return null;
     final dev = state[idx];
 
-    final rawList = await _api.fetchRelays(dev.ip, password: dev.authPassword);
+    final rawList = await _api.fetchRelays(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
     if (rawList == null) return null;
 
     final List<RelayChannel> updatedRelays = [];

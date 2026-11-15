@@ -72,8 +72,11 @@ struct ClimateSlotState {
     float    rawPressure;
     float    tempOffset;
     float    humOffset;
-    bool     fault;
-    uint8_t  failCount;
+    bool          fault;
+    uint8_t       failCount;
+    unsigned long lastFaultRetry;
+    bool          measPending;
+    unsigned long measStartMs;
 };
 
 struct LightSlotState {

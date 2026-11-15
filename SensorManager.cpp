@@ -94,6 +94,9 @@ void SensorManager::cleanup() {
         _climates[i].humOffset = DHT_HUM_OFFSET_DEFAULT;
         _climates[i].fault = false;
         _climates[i].failCount = 0;
+        _climates[i].lastFaultRetry = 0;
+        _climates[i].measPending = false;
+        _climates[i].measStartMs = 0;
         _climates[i].tFine = 0;
     }
     memset(_lights, 0, sizeof(_lights));
@@ -375,12 +378,17 @@ void SensorManager::loop() {
                 uint8_t idx = (_dhtPollCursor + step) % _climateCount;
                 ClimateSlotState& s = _climates[idx];
                 if (!s.enabled || s.dht == nullptr) continue;
+                // Back off faulted/unwired DHT slots to every 15s to avoid 250ms loop stalls every 2s
+                if (s.fault && s.lastFaultRetry != 0 && (now - s.lastFaultRetry < 15000UL)) {
+                    continue;
+                }
                 _dhtPollCursor = (idx + 1) % _climateCount;
+                s.lastFaultRetry = now;
 
                 float t = s.dht->readTemperature();
                 float h = s.dht->readHumidity();
                 if (isnan(t) || isnan(h)) {
-                    s.failCount++;
+                    if (s.failCount < 255) s.failCount++;
                     if (s.failCount >= DHT_FAIL_THRESHOLD && !s.fault) {
                         s.fault = true;
                         SERIAL_PRINTF("[Sensor] Climate #%u DHT FAULT\n", (unsigned)(idx + 1));
@@ -402,6 +410,17 @@ void SensorManager::loop() {
     }
 
     // --- 2. I2C Climate (BME280 / AHT20 / SHT3x) staggered round-robin ---
+    // Complete any pending non-blocking AHT20 / SHT3x conversions once their wait window elapses
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        ClimateSlotState& s = _climates[i];
+        if (!s.enabled || !s.i2cDetected || !s.measPending) continue;
+        if (s.type == CLIMATE_AHT20 && (now - s.measStartMs >= 80UL)) {
+            readAHT20(s);
+        } else if (s.type == CLIMATE_SHT3X && (now - s.measStartMs >= 16UL)) {
+            readSHT3x(s);
+        }
+    }
+
     uint8_t i2cClimateSlots = 0;
     for (uint8_t i = 0; i < _climateCount; i++) {
         if (_climates[i].enabled && _climates[i].type >= CLIMATE_BME280 && _climates[i].i2cDetected) {
@@ -416,7 +435,7 @@ void SensorManager::loop() {
             for (uint8_t step = 0; step < _climateCount; step++) {
                 uint8_t idx = (_envPollCursor + step) % _climateCount;
                 ClimateSlotState& s = _climates[idx];
-                if (!s.enabled || s.type < CLIMATE_BME280 || !s.i2cDetected) continue;
+                if (!s.enabled || s.type < CLIMATE_BME280 || !s.i2cDetected || s.measPending) continue;
                 _envPollCursor = (idx + 1) % _climateCount;
                 if (s.type == CLIMATE_BME280)      readBME280(s);
                 else if (s.type == CLIMATE_AHT20)  readAHT20(s);
@@ -726,16 +745,22 @@ bool SensorManager::initAHT20(ClimateSlotState& s, uint8_t addr) {
 }
 
 void SensorManager::readAHT20(ClimateSlotState& s) {
-    Wire.beginTransmission(s.i2cAddr);
-    Wire.write(0xAC);
-    Wire.write(0x33);
-    Wire.write(0x00);
-    if (Wire.endTransmission() != 0) {
-        s.fault = true;
+    if (!s.measPending) {
+        Wire.beginTransmission(s.i2cAddr);
+        Wire.write(0xAC);
+        Wire.write(0x33);
+        Wire.write(0x00);
+        if (Wire.endTransmission() != 0) {
+            s.fault = true;
+            return;
+        }
+        s.measPending = true;
+        s.measStartMs = millis();
         return;
     }
 
-    delay(80); // Wait for conversion
+    if (millis() - s.measStartMs < 80UL) return;
+    s.measPending = false;
 
     Wire.requestFrom((int)s.i2cAddr, 6);
     if (Wire.available() < 6) {
@@ -775,15 +800,21 @@ bool SensorManager::initSHT3x(ClimateSlotState& s, uint8_t addr) {
 }
 
 void SensorManager::readSHT3x(ClimateSlotState& s) {
-    Wire.beginTransmission(s.i2cAddr);
-    Wire.write(0x24);
-    Wire.write(0x00); // High repeatability, clock stretching disabled
-    if (Wire.endTransmission() != 0) {
-        s.fault = true;
+    if (!s.measPending) {
+        Wire.beginTransmission(s.i2cAddr);
+        Wire.write(0x24);
+        Wire.write(0x00); // High repeatability, clock stretching disabled
+        if (Wire.endTransmission() != 0) {
+            s.fault = true;
+            return;
+        }
+        s.measPending = true;
+        s.measStartMs = millis();
         return;
     }
 
-    delay(16); // High repeatability measurement max 15ms
+    if (millis() - s.measStartMs < 16UL) return;
+    s.measPending = false;
 
     Wire.requestFrom((int)s.i2cAddr, 6);
     if (Wire.available() < 6) {

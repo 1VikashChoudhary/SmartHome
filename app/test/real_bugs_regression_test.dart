@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +12,7 @@ import 'package:smarthome_app/core/models/sensor_telemetry.dart';
 import 'package:smarthome_app/core/models/smart_device.dart';
 import 'package:smarthome_app/core/models/hardware_profile.dart';
 import 'package:smarthome_app/core/models/scheduled_alarm.dart';
+import 'package:smarthome_app/core/network/ws_client.dart';
 import 'package:smarthome_app/core/theme/app_theme.dart';
 import 'package:smarthome_app/presentation/screens/device_screen.dart';
 import 'package:smarthome_app/presentation/widgets/emergency_alarm_dialog.dart';
@@ -510,6 +515,301 @@ void main() {
       },
     );
   });
+
+  group('AP Roaming Recovery & Connection Resilience Regressions', () {
+    HttpOverrides? previousHttpOverrides;
+
+    setUp(() {
+      previousHttpOverrides = HttpOverrides.current;
+      HttpOverrides.global = null;
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+    });
+
+    tearDown(() {
+      HttpOverrides.global = previousHttpOverrides;
+    });
+
+    test(
+      'refreshAllDevices(skipHealthyWs: true) polls offline device, retries transient failure, and sends Connection: close',
+      () async {
+        var statusAttempts = 0;
+        final connectionHeaders = <String?>[];
+        var wsUpgrades = 0;
+
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+
+        final sockets = <WebSocket>[];
+        server.listen((request) async {
+          if (request.uri.path == '/ws' &&
+              WebSocketTransformer.isUpgradeRequest(request)) {
+            wsUpgrades++;
+            final ws = await WebSocketTransformer.upgrade(request);
+            sockets.add(ws);
+            ws.listen((msg) {
+              if (ws.closeCode != null) return;
+              final decoded = jsonDecode(msg as String);
+              if (decoded is Map && decoded['type'] == 'subscribe') {
+                ws.add(
+                  jsonEncode({
+                    'type': 'status',
+                    'device_name': 'Bedroom',
+                    'mac': 'AA:BB:CC:DD:EE:99',
+                    'relays': const [],
+                  }),
+                );
+              }
+            });
+            return;
+          }
+
+          if (request.uri.path == '/api/status') {
+            statusAttempts++;
+            connectionHeaders.add(request.headers.value('connection'));
+            if (statusAttempts == 1) {
+              // Simulate a transient first-packet failure during AP handoff
+              request.response.statusCode = HttpStatus.serviceUnavailable;
+              await request.response.close();
+              return;
+            }
+            request.response.statusCode = HttpStatus.ok;
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(
+              jsonEncode({
+                'device_name': 'Bedroom',
+                'mac': 'AA:BB:CC:DD:EE:99',
+                'fw_version': '1.1.0',
+                'relays': const [],
+              }),
+            );
+            await request.response.close();
+            return;
+          }
+
+          request.response.statusCode = HttpStatus.notFound;
+          await request.response.close();
+        });
+
+        final offlineDevice = SmartDevice(
+          id: 'AA:BB:CC:DD:EE:99',
+          mac: 'AA:BB:CC:DD:EE:99',
+          ip: '127.0.0.1:${server.port}',
+          hostname: 'smarthome-bedroom',
+          name: 'Bedroom',
+          isOnline: false,
+          lastSeen: DateTime.now(),
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            deviceManagerProvider.overrideWith(
+              () => _RoamingTestDeviceManager([offlineDevice]),
+            ),
+          ],
+        );
+        addTearDown(() async {
+          container.read(deviceManagerProvider.notifier).stopForegroundSync();
+          for (final ws in sockets) {
+            await ws.close();
+          }
+          container.dispose();
+        });
+
+        final manager = container.read(deviceManagerProvider.notifier);
+        await manager.refreshAllDevices(skipHealthyWs: true);
+
+        final recovered = container.read(deviceManagerProvider).single;
+        expect(statusAttempts, 2);
+        expect(connectionHeaders, everyElement('close'));
+        expect(recovered.isOnline, isTrue);
+
+        // Verify refreshDevice recovers live WebSocket telemetry promptly.
+        await manager.refreshDevice(recovered.id);
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (wsUpgrades == 0 && DateTime.now().isBefore(deadline)) {
+          await Future.delayed(const Duration(milliseconds: 20));
+        }
+        expect(wsUpgrades, greaterThanOrEqualTo(1));
+      },
+    );
+
+    test(
+      'DeviceWebSocketClient.reconnectNow resets backoff and reconnects cleanly',
+      () async {
+        var wsConnectCount = 0;
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+
+        final sockets = <WebSocket>[];
+        server.listen((request) async {
+          if (request.uri.path == '/ws' &&
+              WebSocketTransformer.isUpgradeRequest(request)) {
+            wsConnectCount++;
+            final ws = await WebSocketTransformer.upgrade(request);
+            sockets.add(ws);
+            ws.listen((msg) {
+              if (ws.closeCode != null) return;
+              final decoded = jsonDecode(msg as String);
+              if (decoded is Map && decoded['type'] == 'subscribe') {
+                ws.add(
+                  jsonEncode({
+                    'type': 'status',
+                    'device_name': 'Bedroom',
+                    'mac': 'AA:BB:CC:DD:EE:88',
+                    'relays': const [],
+                  }),
+                );
+              }
+            });
+          } else {
+            request.response.statusCode = HttpStatus.notFound;
+            await request.response.close();
+          }
+        });
+
+        final connectedCompleter1 = Completer<void>();
+        final connectedCompleter2 = Completer<void>();
+        late DeviceWebSocketClient client;
+
+        client = DeviceWebSocketClient(
+          ip: '127.0.0.1:${server.port}',
+          onData: (_) {},
+          onConnectionChange: (isConnected) {
+            if (isConnected) {
+              if (!connectedCompleter1.isCompleted) {
+                connectedCompleter1.complete();
+              } else if (wsConnectCount >= 2 &&
+                  !connectedCompleter2.isCompleted) {
+                connectedCompleter2.complete();
+              }
+            }
+          },
+        );
+        addTearDown(() async {
+          client.dispose();
+          for (final ws in sockets) {
+            await ws.close();
+          }
+        });
+
+        client.connect();
+        await connectedCompleter1.future.timeout(const Duration(seconds: 3));
+        expect(client.isConnected, isTrue);
+        expect(wsConnectCount, 1);
+
+        client.reconnectNow();
+        await connectedCompleter2.future.timeout(const Duration(seconds: 3));
+        expect(wsConnectCount, 2);
+        expect(client.isConnected, isTrue);
+      },
+    );
+
+    test(
+      'startForegroundSync and refreshDevice preserve healthy WebSocket without tearing down handshake',
+      () async {
+        var wsUpgrades = 0;
+        final firstWsFrameServed = Completer<void>();
+
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+
+        final sockets = <WebSocket>[];
+        server.listen((request) async {
+          if (request.uri.path == '/ws' &&
+              WebSocketTransformer.isUpgradeRequest(request)) {
+            wsUpgrades++;
+            final ws = await WebSocketTransformer.upgrade(request);
+            sockets.add(ws);
+            ws.listen((msg) {
+              if (ws.closeCode != null) return;
+              final decoded = jsonDecode(msg as String);
+              if (decoded is Map && decoded['type'] == 'subscribe') {
+                ws.add(
+                  jsonEncode({
+                    'type': 'status',
+                    'device_name': 'Bedroom',
+                    'mac': 'AA:BB:CC:DD:EE:77',
+                    'relays': const [],
+                  }),
+                );
+                if (!firstWsFrameServed.isCompleted) {
+                  firstWsFrameServed.complete();
+                }
+              }
+            });
+            return;
+          }
+
+          if (request.uri.path == '/api/status') {
+            await Future.delayed(const Duration(milliseconds: 60));
+            request.response.statusCode = HttpStatus.ok;
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(
+              jsonEncode({
+                'device_name': 'Bedroom',
+                'mac': 'AA:BB:CC:DD:EE:77',
+                'fw_version': '1.1.0',
+                'relays': const [],
+              }),
+            );
+            await request.response.close();
+            return;
+          }
+
+          request.response.statusCode = HttpStatus.notFound;
+          await request.response.close();
+        });
+
+        final initialOffline = SmartDevice(
+          id: 'AA:BB:CC:DD:EE:77',
+          mac: 'AA:BB:CC:DD:EE:77',
+          ip: '127.0.0.1:${server.port}',
+          hostname: 'smarthome-bedroom',
+          name: 'Bedroom',
+          isOnline: false,
+          lastSeen: DateTime.now(),
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            deviceManagerProvider.overrideWith(
+              () => _RoamingTestDeviceManager([initialOffline]),
+            ),
+          ],
+        );
+        addTearDown(() async {
+          container.read(deviceManagerProvider.notifier).stopForegroundSync();
+          for (final ws in sockets) {
+            await ws.close();
+          }
+          container.dispose();
+        });
+
+        final manager = container.read(deviceManagerProvider.notifier);
+        await manager.startForegroundSync();
+        await firstWsFrameServed.future.timeout(const Duration(seconds: 3));
+        await Future.delayed(const Duration(milliseconds: 50));
+
+        expect(wsUpgrades, 1);
+        expect(container.read(deviceManagerProvider).single.isOnline, isTrue);
+
+        // Calling refreshDevice / refreshAllDevices must not kill the healthy WS.
+        await manager.refreshDevice(initialOffline.id);
+        await manager.refreshAllDevices();
+        await Future.delayed(const Duration(milliseconds: 50));
+        expect(wsUpgrades, 1);
+      },
+    );
+  });
+}
+
+class _RoamingTestDeviceManager extends DeviceManager {
+  final List<SmartDevice> _initial;
+  _RoamingTestDeviceManager(this._initial);
+
+  @override
+  List<SmartDevice> build() => _initial;
 }
 
 class _TelemetryCardTestDeviceManager extends DeviceManager {

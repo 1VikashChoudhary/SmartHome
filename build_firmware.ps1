@@ -44,12 +44,23 @@ Write-Host "Compiler: $ArduinoCli" -ForegroundColor Gray
 Write-Host "Sketch:   $ScriptDir" -ForegroundColor Gray
 Write-Host ""
 
+function Clear-BuildTimestampCache([string]$TargetBuildDir) {
+    $sketchObjDir = Join-Path $TargetBuildDir "sketch"
+    foreach ($obj in @("WebServerManager.cpp.o", "Diagnostics.cpp.o", "SmartHome.ino.cpp.o")) {
+        $objPath = Join-Path $sketchObjDir $obj
+        if (Test-Path $objPath) {
+            Remove-Item -Force $objPath
+        }
+    }
+}
+
 # ==============================================================================
 # ESP8266 Build
 # ==============================================================================
 if ($Target -eq "all" -or $Target -eq "esp8266") {
     Write-Host "[1/2] Compiling for ESP8266 (NodeMCU v2 / D1 Mini 4MB)..." -ForegroundColor Yellow
     $sw8266 = [System.Diagnostics.Stopwatch]::StartNew()
+    Clear-BuildTimestampCache "$BuildDir\esp8266"
     
     & $ArduinoCli compile `
         -b esp8266:esp8266:nodemcuv2 `
@@ -77,6 +88,7 @@ if ($Target -eq "all" -or $Target -eq "esp8266") {
 if ($Target -eq "all" -or $Target -eq "esp32") {
     Write-Host "[2/2] Compiling for ESP32 (Dev Module, min_spiffs OTA)..." -ForegroundColor Yellow
     $sw32 = [System.Diagnostics.Stopwatch]::StartNew()
+    Clear-BuildTimestampCache "$BuildDir\esp32"
     
     & $ArduinoCli compile `
         -b espressif:esp32:esp32:PartitionScheme=min_spiffs `

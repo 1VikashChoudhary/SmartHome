@@ -82,7 +82,11 @@ private:
     unsigned long _lastConnectAttempt;
     unsigned long _lastConnectTime;
     unsigned long _connectStartTime;
+    unsigned long _disconnectDetectedAt;
+    unsigned long _lastApStaRetry;
     uint8_t _failCount;
+    bool _usingPinnedBssid;
+    bool _skipPinnedBssid;
 
     // Captive portal DNS
     DNSServer _dnsServer;

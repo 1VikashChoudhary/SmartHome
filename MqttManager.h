@@ -37,7 +37,7 @@ public:
     void publishSensorData(SensorManager& sensorMgr);
     void publishDiagnostics(const String& json);
     void publishAvailability(bool online);
-    void publishHomeAssistantDiscovery();
+    void publishHomeAssistantDiscovery(bool allowYield = false);
     void publishHomeAssistantDiscoveryRemove(uint8_t index);
     void publishInitialStates();
 
@@ -74,9 +74,11 @@ private:
     // Reconnect state
     bool _wasConnected;
     bool _connectInProgress;
+    bool _pendingBirthSync;
     unsigned long _lastReconnectAttempt;
     unsigned long _reconnectInterval;
     unsigned long _connectStartedAt;
+    unsigned long _birthSyncReadyAt;
 
     // Publish timing
     unsigned long _lastPublish;
@@ -103,7 +105,7 @@ private:
     void applyClientConfig();
     String getDeviceId();
     String getDeviceName();
-    void addDeviceInfo(JsonObject& device);
+    void addDeviceInfo(JsonObject& device, const String& deviceId, const String& deviceName);
     bool publishDiscoveryConfig(const String& topic, JsonDocument& doc);
     void publishHaSensorEntity(const char* component, const String& objSuffix, const String& name,
                                const String& statTopicSuffix, const char* unit, const char* devClass,

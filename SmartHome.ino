@@ -565,7 +565,7 @@ void loop() {
 
     // --- Update LCD with current data ---
     static unsigned long lastLCDDataUpdate = 0;
-    if (millis() - lastLCDDataUpdate >= 1000) {
+    if (lcdMgr.isEnabled() && (millis() - lastLCDDataUpdate >= 1000)) {
         lastLCDDataUpdate = millis();
 
         // Sensor data for LCD

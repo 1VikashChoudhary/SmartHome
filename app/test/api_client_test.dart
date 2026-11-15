@@ -60,32 +60,44 @@ void main() {
         'updating': false,
         'fw_version': '3.2.1',
         'fw_date': 'Nov 4 2026 23:00:00',
+        'fw_md5': 'abc123def456',
       });
 
       expect(status.updating, isFalse);
       expect(status.firmwareVersion, '3.2.1');
       expect(status.firmwareBuild, 'Nov 4 2026 23:00:00');
+      expect(status.firmwareMd5, 'abc123def456');
     });
 
-    test('detects a changed version or build after reboot', () {
+    test('detects a changed version, build, or md5 after reboot', () {
       const original = OtaStatus(
         updating: false,
         firmwareVersion: '3.2.0',
         firmwareBuild: 'Nov 4 2026 22:00:00',
+        firmwareMd5: '1111aaaa',
       );
       const same = OtaStatus(
         updating: false,
         firmwareVersion: '3.2.0',
         firmwareBuild: 'Nov 4 2026 22:00:00',
+        firmwareMd5: '1111aaaa',
       );
       const replacement = OtaStatus(
         updating: false,
         firmwareVersion: '3.2.1',
         firmwareBuild: 'Nov 4 2026 23:00:00',
+        firmwareMd5: '1111aaaa',
+      );
+      const rebuiltSameTimestamp = OtaStatus(
+        updating: false,
+        firmwareVersion: '3.2.0',
+        firmwareBuild: 'Nov 4 2026 22:00:00',
+        firmwareMd5: '2222bbbb',
       );
 
       expect(same.differsFrom(original), isFalse);
       expect(replacement.differsFrom(original), isTrue);
+      expect(rebuiltSameTimestamp.differsFrom(original), isTrue);
     });
   });
 

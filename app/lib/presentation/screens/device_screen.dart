@@ -27,8 +27,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(deviceManagerProvider.notifier).fetchDeviceRelays(widget.deviceId);
-      ref.read(deviceManagerProvider.notifier).fetchDeviceConfig(widget.deviceId);
+      if (!mounted) return;
+      final devices = ref.read(deviceManagerProvider);
+      final idx = devices.indexWhere((d) => d.id == widget.deviceId);
+      final manager = ref.read(deviceManagerProvider.notifier);
+      if (idx >= 0 && !devices[idx].isOnline) {
+        manager.refreshDevice(widget.deviceId);
+      } else {
+        manager.fetchDeviceRelays(widget.deviceId);
+      }
     });
   }
 

@@ -6,6 +6,17 @@
 
 #include "WebSocketManager.h"
 
+namespace {
+bool isClientWritable(AsyncWebSocketClient* client) {
+    return client &&
+           client->canSend() &&
+           !client->queueIsFull() &&
+           client->client() &&
+           client->client()->canSend() &&
+           client->client()->space() > 512;
+}
+} // namespace
+
 WebSocketManager* WebSocketManager::_instance = nullptr;
 
 WebSocketManager::WebSocketManager()
@@ -45,7 +56,7 @@ void WebSocketManager::loop() {
             continue;
         }
         if (!sub.active || !sub.authenticated) continue;
-        if (!client->canSend() || client->queueIsFull()) continue;
+        if (!isClientWritable(client)) continue;
         if (now - sub.lastSent >= sub.intervalMs) {
             hasDueSubscriber = true;
             break;
@@ -65,7 +76,7 @@ void WebSocketManager::loop() {
             sub = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
             continue;
         }
-        if (!client->canSend() || client->queueIsFull()) continue;
+        if (!isClientWritable(client)) continue;
         client->text(data);
         sub.lastSent = now;
     }
@@ -82,7 +93,7 @@ void WebSocketManager::sendToAuthenticated(const String& json) {
             continue;
         }
         if (!sub.active || !sub.authenticated) continue;
-        if (client->canSend() && !client->queueIsFull()) {
+        if (isClientWritable(client)) {
             client->text(json);
         }
     }
@@ -201,11 +212,35 @@ void WebSocketManager::_onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cl
 void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                                 AwsEventType type, void* arg, uint8_t* data, size_t len) {
     switch (type) {
-        case WS_EVT_CONNECT:
+        case WS_EVT_CONNECT: {
+            // Configure keepalive and TCP RX timeout so roamed zombie sockets
+            // do not linger waiting for lwIP retransmission timeouts.
+            client->keepAlivePeriod(10);
+            if (client->client()) {
+                client->client()->setRxTimeout(25);
+                client->client()->setNoDelay(true);
+            }
+            IPAddress newIp = client->remoteIP();
+            for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
+                uint32_t oldId = _subscriptions[i].clientId;
+                if (oldId == 0 || oldId == client->id()) continue;
+                AsyncWebSocketClient* oldClient = _ws.client(oldId);
+                if (!oldClient) {
+                    _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+                    continue;
+                }
+                if (oldClient->remoteIP() == newIp &&
+                    (!oldClient->client() || !oldClient->client()->canSend() || oldClient->client()->space() < 512)) {
+                    _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+                    if (oldClient->client()) oldClient->client()->close(true);
+                }
+            }
+            _ws.cleanupClients(MAX_WS_CLIENTS);
             SERIAL_PRINTF("[WS] Client #%lu connected from %s\n",
-                          (unsigned long)client->id(), client->remoteIP().toString().c_str());
+                          (unsigned long)client->id(), newIp.toString().c_str());
             subscriptionFor(client->id(), true);
             break;
+        }
 
         case WS_EVT_DISCONNECT:
             SERIAL_PRINTF("[WS] Client #%lu disconnected\n", (unsigned long)client->id());

@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import '../models/smart_device.dart';
 import '../models/hardware_profile.dart';
@@ -22,22 +24,28 @@ class OtaStatus {
   final bool updating;
   final String firmwareVersion;
   final String firmwareBuild;
+  final String firmwareMd5;
 
   const OtaStatus({
     required this.updating,
     required this.firmwareVersion,
     required this.firmwareBuild,
+    this.firmwareMd5 = '',
   });
 
   factory OtaStatus.fromJson(Map<String, dynamic> json) => OtaStatus(
     updating: json['updating'] == true,
     firmwareVersion: json['fw_version']?.toString() ?? '',
     firmwareBuild: json['fw_date']?.toString() ?? '',
+    firmwareMd5: json['fw_md5']?.toString() ?? '',
   );
 
   bool differsFrom(OtaStatus other) =>
       firmwareVersion != other.firmwareVersion ||
-      firmwareBuild != other.firmwareBuild;
+      firmwareBuild != other.firmwareBuild ||
+      (firmwareMd5.isNotEmpty &&
+          other.firmwareMd5.isNotEmpty &&
+          firmwareMd5 != other.firmwareMd5);
 }
 
 class ApiClient {
@@ -49,11 +57,13 @@ class ApiClient {
   ApiClient({this.defaultUsername})
     : _dio = Dio(
         BaseOptions(
-          connectTimeout: const Duration(milliseconds: 5000),
-          receiveTimeout: const Duration(milliseconds: 6000),
-          headers: {'Accept': 'application/json'},
+          connectTimeout: const Duration(milliseconds: 3500),
+          receiveTimeout: const Duration(milliseconds: 4500),
+          persistentConnection: false,
+          headers: {'Accept': 'application/json', 'Connection': 'close'},
         ),
       ) {
+    _configureHttpClientAdapter();
     _dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
@@ -81,6 +91,17 @@ class ApiClient {
           handler.next(options);
         },
         onError: (error, handler) {
+          final skipReset =
+              error.requestOptions.extra['smarthome_skip_connection_reset'] ==
+              true;
+          if (!skipReset &&
+              (error.type == DioExceptionType.connectionError ||
+                  error.type == DioExceptionType.connectionTimeout ||
+                  error.type == DioExceptionType.receiveTimeout)) {
+            // Discard stale pooled sockets after AP-bridge roaming so retries
+            // open a fresh socket with updated ARP/L2 routing.
+            resetConnections();
+          }
           final skipUnauthorized =
               error.requestOptions.extra['smarthome_skip_unauthorized'] == true;
           if (!skipUnauthorized && error.response?.statusCode == 401) {
@@ -90,6 +111,28 @@ class ApiClient {
         },
       ),
     );
+  }
+
+  void _configureHttpClientAdapter() {
+    if (_dio.httpClientAdapter is IOHttpClientAdapter) {
+      _dio.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: () => HttpClient()
+          ..connectionTimeout = const Duration(milliseconds: 3500)
+          ..idleTimeout = Duration.zero
+          ..maxConnectionsPerHost = 4,
+      );
+    }
+  }
+
+  /// Replaces the underlying [IOHttpClientAdapter] so subsequent requests never
+  /// reuse stale OS sockets after an AP handoff, while closing idle sockets
+  /// gracefully so concurrent requests for other controllers can finish.
+  void resetConnections() {
+    final current = _dio.httpClientAdapter;
+    if (current is IOHttpClientAdapter) {
+      _configureHttpClientAdapter();
+      current.close(force: false);
+    }
   }
 
   static void registerDeviceUsername(String ipOrHost, String? username) {
@@ -136,6 +179,7 @@ class ApiClient {
     final headers = <String, dynamic>{
       'Accept': 'application/json',
       'X-Requested-With': 'SmartHome',
+      'Connection': 'close',
     };
     final extra = <String, dynamic>{};
     if (password != null && password.isNotEmpty) {
@@ -152,6 +196,7 @@ class ApiClient {
     return Options(
       headers: headers,
       receiveTimeout: timeout,
+      persistentConnection: false,
       extra: extra.isEmpty ? null : extra,
     );
   }
@@ -161,7 +206,12 @@ class ApiClient {
     try {
       final res = await _dio.get(
         _url(ip, '/api/discovery'),
-        options: Options(receiveTimeout: const Duration(milliseconds: 3000)),
+        options: Options(
+          receiveTimeout: const Duration(milliseconds: 3000),
+          persistentConnection: false,
+          headers: const {'Accept': 'application/json', 'Connection': 'close'},
+          extra: {'smarthome_skip_connection_reset': true},
+        ),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -581,11 +631,12 @@ class ApiClient {
   Future<List<Map<String, dynamic>>?> fetchRelays(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/relays'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;

@@ -4058,6 +4058,7 @@ var selectedFile = null;
 var polling = null;
 var preVersion = '';  // Firmware version before update
 var preBuild = '';    // Build date before update
+var preMd5 = '';      // Sketch MD5 before update
 
 // ---- Fetch current firmware version on page load ----
 (function() {
@@ -4069,6 +4070,7 @@ var preBuild = '';    // Build date before update
       var d = JSON.parse(x.responseText);
       preVersion = d.fw_version || '';
       preBuild = d.fw_date || '';
+      preMd5 = d.fw_md5 || '';
       document.getElementById('fwVer').textContent = preVersion || '?';
       document.getElementById('fwDate').textContent = preBuild || '?';
     } catch(e) {}
@@ -4319,6 +4321,7 @@ function enterVerifyPhase(attempt) {
       setProgress(100, '\u2713 Done');
       var newVer = d.fw_version || 'unknown';
       var newBuild = d.fw_date || '';
+      var newMd5 = d.fw_md5 || '';
       document.getElementById('fwVer').textContent = newVer;
       if (newBuild) document.getElementById('fwDate').textContent = newBuild;
 
@@ -4326,7 +4329,8 @@ function enterVerifyPhase(attempt) {
       if (newBuild) detail += ' (build: ' + newBuild + ')';
       if (preVersion && newVer !== preVersion) {
         detail += ' \u2014 upgraded from v' + preVersion;
-      } else if (preVersion && preBuild && newBuild !== preBuild) {
+      } else if ((preVersion && preBuild && newBuild !== preBuild) ||
+                 (preMd5 && newMd5 && newMd5 !== preMd5)) {
         detail += ' \u2014 new build active';
       } else {
         detail += ' \u2014 firmware image verified & active';

@@ -18,8 +18,9 @@ MqttManager* MqttManager::_instance = nullptr;
 MqttManager::MqttManager()
     : _storage(nullptr), _logger(nullptr), _enabled(false),
       _suspended(false), _port(MQTT_DEFAULT_PORT),
-      _wasConnected(false), _connectInProgress(false), _lastReconnectAttempt(0),
-      _reconnectInterval(MQTT_RECONNECT_BASE), _connectStartedAt(0),
+      _wasConnected(false), _connectInProgress(false), _pendingBirthSync(false),
+      _lastReconnectAttempt(0), _reconnectInterval(MQTT_RECONNECT_BASE),
+      _connectStartedAt(0), _birthSyncReadyAt(0),
       _lastPublish(0), _relayCallback(nullptr) {
     _instance = this;
 }
@@ -55,6 +56,19 @@ void MqttManager::loop() {
 
     unsigned long now = millis();
 
+    // Execute deferred post-connect birth sync / Home Assistant discovery in main loop context
+    // instead of blocking the AsyncTCP callback with flash reads and TCP packet bursts.
+    if (_client.connected() && _pendingBirthSync && (long)(now - _birthSyncReadyAt) >= 0) {
+        _pendingBirthSync = false;
+        subscribeTopics();
+        yield();
+        publishAvailability(true);
+        yield();
+        publishHomeAssistantDiscovery(true);
+        yield();
+        publishInitialStates();
+    }
+
     if (_connectInProgress && (now - _connectStartedAt >= MQTT_CONNECT_TIMEOUT)) {
         SERIAL_PRINTF("[MQTT] Connect attempt timed out after %lu ms; resetting client state\n",
                       now - _connectStartedAt);
@@ -89,6 +103,7 @@ void MqttManager::connect() {
 
 void MqttManager::disconnect() {
     _connectInProgress = false;
+    _pendingBirthSync = false;
     _connectStartedAt = 0;
     _client.disconnect();
     _wasConnected = false;
@@ -272,12 +287,11 @@ void MqttManager::publishHaSensorEntity(const char* component, const String& obj
     if (plOff && plOff[0])   doc["pl_off"] = plOff;
 
     JsonObject device = doc["dev"].to<JsonObject>();
-    addDeviceInfo(device);
-    device["name"] = deviceName;
+    addDeviceInfo(device, deviceId, deviceName);
     publishDiscoveryConfig(cfgTopic, doc);
 }
 
-void MqttManager::publishHomeAssistantDiscovery() {
+void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
     if (!_client.connected()) return;
 
     const String deviceId = getDeviceId();
@@ -407,15 +421,16 @@ void MqttManager::publishHomeAssistantDiscovery() {
         doc["icon"] = "mdi:light-switch";
 
         JsonObject device = doc["dev"].to<JsonObject>();
-        addDeviceInfo(device);
-        device["name"] = deviceName;
+        addDeviceInfo(device, deviceId, deviceName);
 
         String topic = "homeassistant/switch/" + deviceId + "/relay_" + String(i + 1) + "/config";
         publishDiscoveryConfig(topic, doc);
+        if (allowYield) yield();
     }
     for (uint8_t i = relayCount; i < MAX_RELAYS; i++) {
         publishHomeAssistantDiscoveryRemove(i);
     }
+    if (allowYield) yield();
 
     auto slotTitle = [](const char* base, uint8_t i) -> String {
         return (i == 0) ? String(base) : (String(base) + " " + String(i + 1));
@@ -431,6 +446,7 @@ void MqttManager::publishHomeAssistantDiscovery() {
         publishHaSensorEntity("sensor", indexedTopic("pressure", i), slotTitle("Barometric Pressure", i),
                               indexedTopic("sensor/pressure", i), "hPa", "atmospheric_pressure",
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, bmeEn[i]);
+        if (allowYield) yield();
     }
 
     for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
@@ -440,6 +456,7 @@ void MqttManager::publishHomeAssistantDiscovery() {
         publishHaSensorEntity("binary_sensor", indexedTopic("gas_alarm", i), slotTitle("Gas Alarm", i),
                               indexedTopic("sensor/gas_alarm", i), nullptr, "gas",
                               nullptr, "danger", "safe", deviceId, deviceName, availabilityTopic, mq2En[i]);
+        if (allowYield) yield();
     }
 
     for (uint8_t i = 0; i < MAX_LIGHT_SENSORS; i++) {
@@ -447,18 +464,21 @@ void MqttManager::publishHomeAssistantDiscovery() {
                               indexedTopic("sensor/illuminance", i), "lx", "illuminance",
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, lightEn[i]);
     }
+    if (allowYield) yield();
 
     for (uint8_t i = 0; i < MAX_MOTION_SENSORS; i++) {
         publishHaSensorEntity("binary_sensor", indexedTopic("motion", i), slotTitle("Motion Occupancy", i),
                               indexedTopic("binary_sensor/motion", i), nullptr, "motion",
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, motionEn[i]);
     }
+    if (allowYield) yield();
 
     for (uint8_t i = 0; i < MAX_PROBE_SENSORS; i++) {
         publishHaSensorEntity("sensor", indexedTopic("water_temp", i), slotTitle("Water Temperature", i),
                               indexedTopic("sensor/water_temp", i), "\xC2\xB0""C", "temperature",
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, probeEn[i]);
     }
+    if (allowYield) yield();
 
     for (uint8_t i = 0; i < MAX_ULTRASONIC_SENSORS; i++) {
         publishHaSensorEntity("sensor", indexedTopic("tank_level", i), slotTitle("Water Tank Level", i),
@@ -594,27 +614,21 @@ void MqttManager::onConnect(bool sessionPresent) {
     _lastError = "";
     _reconnectInterval = MQTT_RECONNECT_BASE; // Reset backoff
 
+    // Defer birth availability, Home Assistant discovery, initial state publish,
+    // and subscriptions to main loop() so we never stall AsyncTCP/lwIP callbacks.
+    _pendingBirthSync = true;
+    _birthSyncReadyAt = millis() + 150;
+
     if (_logger) {
         _logger->logInfo("MQTT", "Connected to broker: " + _broker);
     }
-
-    // Publish birth message
-    publishAvailability(true);
-
-    // Publish retained Home Assistant discovery config
-    publishHomeAssistantDiscovery();
-
-    // Publish current retained state topics immediately
-    publishInitialStates();
-
-    // Subscribe to relay command topics
-    subscribeTopics();
 }
 
 void MqttManager::onDisconnect(AsyncMqttClientDisconnectReason reason) {
     SERIAL_PRINTF("[MQTT] Disconnected (reason: %d)\n", (int)reason);
     _wasConnected = false;
     _connectInProgress = false;
+    _pendingBirthSync = false;
     _connectStartedAt = 0;
 
     if (_enabled && _broker.length() > 0) {
@@ -785,9 +799,8 @@ String MqttManager::getDeviceName() {
     return DEFAULT_DEVICE_NAME;
 }
 
-void MqttManager::addDeviceInfo(JsonObject& device) {
-    const String deviceId = getDeviceId();
-    device["name"] = getDeviceName();
+void MqttManager::addDeviceInfo(JsonObject& device, const String& deviceId, const String& deviceName) {
+    device["name"] = deviceName;
     device["mf"] = "Vikash Smart Home";
     device["mdl"] = FW_NAME;
     device["sw"] = FW_VERSION;

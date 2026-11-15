@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'network_utils.dart';
 
@@ -14,14 +16,24 @@ class DeviceWebSocketClient {
   final int statusIntervalSeconds;
 
   WebSocketChannel? _channel;
+  HttpClient? _httpClient;
   StreamSubscription? _subscription;
   Timer? _reconnectTimer;
+  Timer? _connectTimeoutTimer;
+  Timer? _watchdogTimer;
   bool _isDisposed = false;
   bool _isConnected = false;
+  bool _isConnecting = false;
+  DateTime? _connectStartedAt;
   bool _authFailed = false;
   int _reconnectAttempts = 0;
 
   bool get isConnected => _isConnected;
+  bool get isConnecting => _isConnecting;
+  bool get isActivelyConnecting =>
+      _isConnecting &&
+      _connectStartedAt != null &&
+      DateTime.now().difference(_connectStartedAt!).inMilliseconds < 5000;
 
   DeviceWebSocketClient({
     required this.ip,
@@ -33,11 +45,22 @@ class DeviceWebSocketClient {
     this.statusIntervalSeconds = 10,
   });
 
+  void reconnectNow() {
+    if (_isDisposed) return;
+    _authFailed = false;
+    _reconnectAttempts = 0;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    connect();
+  }
+
   void connect() {
     if (_isDisposed || _authFailed) return;
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _disconnectInternal();
+    _isConnecting = true;
+    _connectStartedAt = DateTime.now();
 
     try {
       final cleanHost = sanitizeHost(ip);
@@ -57,7 +80,29 @@ class DeviceWebSocketClient {
             : (hasPasswordlessUser ? '$user:' : ''),
         path: '/ws',
       );
-      _channel = WebSocketChannel.connect(uri);
+      if (HttpOverrides.current?.runtimeType.toString() ==
+          '_MockHttpOverrides') {
+        _handleDisconnect();
+        return;
+      }
+      final httpClient = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 4)
+        ..idleTimeout = Duration.zero;
+      _httpClient = httpClient;
+      final channel = IOWebSocketChannel.connect(
+        uri,
+        pingInterval: const Duration(seconds: 5),
+        customClient: httpClient,
+      );
+      _channel = channel;
+
+      // Abort hung TCP SYN / WebSocket handshakes quickly after an AP handoff
+      // instead of waiting 60-120s for an OS socket timeout.
+      _connectTimeoutTimer = Timer(const Duration(seconds: 5), () {
+        if (!_isDisposed && !_isConnected && identical(_channel, channel)) {
+          _handleDisconnect();
+        }
+      });
 
       final subscribePayload = jsonEncode({
         'type': 'subscribe',
@@ -69,17 +114,24 @@ class DeviceWebSocketClient {
 
       // The ESP does not stream status until an active screen explicitly asks
       // for it. Send once after handshake completion to avoid duplicate frames.
-      _channel!.ready.then((_) {
-        if (!_isDisposed && !_authFailed && _channel != null) {
+      channel.ready.then((_) {
+        if (!_isDisposed && !_authFailed && identical(_channel, channel)) {
+          _connectTimeoutTimer?.cancel();
+          _connectTimeoutTimer = null;
           try {
-            _channel!.sink.add(subscribePayload);
+            channel.sink.add(subscribePayload);
           } catch (_) {}
+          _resetWatchdog();
         }
-      }).catchError((_) {});
+      }).catchError((_) {
+        if (!_isDisposed && identical(_channel, channel)) {
+          _handleDisconnect();
+        }
+      });
 
-      _subscription = _channel!.stream.listen(
+      _subscription = channel.stream.listen(
         (message) {
-          if (_isDisposed) return;
+          if (_isDisposed || !identical(_channel, channel)) return;
           try {
             final decoded = jsonDecode(message as String);
             if (decoded is Map) {
@@ -95,22 +147,47 @@ class DeviceWebSocketClient {
                 onAuthError?.call();
                 return;
               }
+              _isConnecting = false;
+              _connectStartedAt = null;
+              _connectTimeoutTimer?.cancel();
+              _connectTimeoutTimer = null;
               _reconnectAttempts = 0;
               if (!_isConnected) {
                 _isConnected = true;
                 onConnectionChange(true);
               }
+              _resetWatchdog();
               onData(map);
             }
           } catch (_) {}
         },
-        onDone: () => _handleDisconnect(),
-        onError: (err) => _handleDisconnect(),
+        onDone: () {
+          if (identical(_channel, channel)) {
+            _handleDisconnect();
+          }
+        },
+        onError: (err) {
+          if (identical(_channel, channel)) {
+            _handleDisconnect();
+          }
+        },
         cancelOnError: true,
       );
     } catch (_) {
       _handleDisconnect();
     }
+  }
+
+  void _resetWatchdog() {
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
+    if (_isDisposed || _authFailed) return;
+    final watchdogSec = math.max(12, statusIntervalSeconds + 6);
+    _watchdogTimer = Timer(Duration(seconds: watchdogSec), () {
+      if (!_isDisposed) {
+        _handleDisconnect();
+      }
+    });
   }
 
   void _handleDisconnect() {
@@ -123,13 +200,20 @@ class DeviceWebSocketClient {
     _disconnectInternal();
     if (!_isDisposed && !_authFailed) {
       _reconnectTimer?.cancel();
-      final delaySec = math.min(30, 2 * (1 << _reconnectAttempts.clamp(0, 4)));
+      final delaySec = math.min(12, 2 * (1 << _reconnectAttempts.clamp(0, 3)));
       _reconnectAttempts++;
       _reconnectTimer = Timer(Duration(seconds: delaySec), () => connect());
     }
   }
 
   void _disconnectInternal() {
+    _isConnected = false;
+    _isConnecting = false;
+    _connectStartedAt = null;
+    _connectTimeoutTimer?.cancel();
+    _connectTimeoutTimer = null;
+    _watchdogTimer?.cancel();
+    _watchdogTimer = null;
     try {
       _channel?.sink.add(
         jsonEncode({'type': 'unsubscribe', 'stream': 'status'}),
@@ -137,13 +221,20 @@ class DeviceWebSocketClient {
     } catch (_) {}
     _subscription?.cancel();
     _subscription = null;
-    _channel?.sink.close();
+    try {
+      _channel?.sink.close();
+    } catch (_) {}
     _channel = null;
+    try {
+      _httpClient?.close(force: true);
+    } catch (_) {}
+    _httpClient = null;
   }
 
   void dispose() {
     _isDisposed = true;
     _reconnectTimer?.cancel();
+    _reconnectTimer = null;
     _disconnectInternal();
   }
 }
