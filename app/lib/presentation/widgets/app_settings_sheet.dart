@@ -7,6 +7,7 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/device_manager.dart';
 import 'glass_card.dart';
+import 'quick_controls_sheet.dart';
 import '../screens/discovery_screen.dart';
 import '../screens/about_screen.dart';
 
@@ -398,6 +399,59 @@ class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet> {
                         ),
                       ),
                     ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Mobile Quick Settings & Android Device Controls
+            GlassCard(
+              onTap: () => QuickControlsSheet.show(context),
+              borderColor: AppColors.primary.withValues(alpha: 0.35),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(9),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryGlow,
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      Icons.dashboard_customize_rounded,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Mobile Quick Settings & Device Controls',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13.5,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Pin relays to phone Quick Settings tiles (1–12) & Android Device Controls',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.textSecondary,
+                    size: 22,
                   ),
                 ],
               ),

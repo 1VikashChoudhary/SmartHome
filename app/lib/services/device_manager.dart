@@ -11,6 +11,7 @@ import '../core/network/ws_client.dart';
 import '../core/network/network_utils.dart';
 import 'discovery_service.dart';
 import 'device_storage_service.dart';
+import 'native_controls_service.dart';
 
 class IsScanningNotifier extends Notifier<bool> {
   @override
@@ -176,6 +177,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       ApiClient.registerDeviceUsername(device.ip, device.authUsername);
     }
     state = saved;
+    NativeControlsService.instance.syncDevices(saved);
 
     // The app is a companion: while it is visible, every registered controller
     // stays synchronised at a restrained 10-second cadence. This preserves
@@ -497,6 +499,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       final newList = List<SmartDevice>.from(state);
       newList[idx] = updated;
       state = newList;
+      NativeControlsService.instance.syncDevices(newList);
     }
   }
 
@@ -556,6 +559,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           newList[idx] = updated;
           state = newList;
           _checkAndStartCountdownTicker();
+          NativeControlsService.instance.syncDevices(newList);
         }
         return;
       }
@@ -582,6 +586,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           newList[idx] = updated;
           state = newList;
           _checkAndStartCountdownTicker();
+          NativeControlsService.instance.syncDevices(newList);
         }
         return;
       }
@@ -664,6 +669,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     newList[idx] = finalDev;
     state = newList;
     _checkAndStartCountdownTicker();
+    NativeControlsService.instance.syncDevices(newList);
   }
 
   Future<void> _refreshDeviceStatus(
@@ -807,6 +813,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     newList[idx] = updated;
     state = newList;
     _checkAndStartCountdownTicker();
+    NativeControlsService.instance.syncDevices(newList);
 
     // Execute API
     final ok = await _api.setRelay(
@@ -833,6 +840,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final revList = List<SmartDevice>.from(state);
         revList[currentIdx] = latest.copyWith(relays: revRelays);
         state = revList;
+        NativeControlsService.instance.syncDevices(revList);
       }
     }
   }
@@ -1007,6 +1015,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     newList[idx] = updated;
     state = newList;
     _checkAndStartCountdownTicker();
+    NativeControlsService.instance.syncDevices(newList);
 
     final ok = await _api.setAllRelays(
       dev.ip,
@@ -1638,6 +1647,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       ApiClient.registerDeviceUsername(dev.ip, dev.authUsername);
     }
     state = restored;
+    NativeControlsService.instance.syncDevices(restored, force: true);
 
     if (_foregroundSyncEnabled && restored.isNotEmpty) {
       await startForegroundSync();

@@ -11,6 +11,7 @@ class RelayTile extends StatelessWidget {
   final void Function(String action, int durationSeconds) onStartTimer;
   final VoidCallback onCancelTimer;
   final VoidCallback? onSettings;
+  final VoidCallback? onPinToQuickTile;
 
   const RelayTile({
     super.key,
@@ -20,6 +21,7 @@ class RelayTile extends StatelessWidget {
     required this.onStartTimer,
     required this.onCancelTimer,
     this.onSettings,
+    this.onPinToQuickTile,
   });
 
   IconData _getIcon(String type) {
@@ -75,23 +77,27 @@ class RelayTile extends StatelessWidget {
   void _showTileOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
       useSafeArea: true,
-      builder: (_) => Container(
+      builder: (sheetCtx) => Container(
         decoration: BoxDecoration(
-          color: AppColors.surface,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
           border: Border(top: BorderSide(color: AppColors.cardBorder, width: 1.5)),
         ),
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 16,
-          bottom: MediaQuery.of(context).padding.bottom + 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+        clipBehavior: Clip.antiAlias,
+        child: Material(
+          color: AppColors.surface,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 16,
+              bottom: MediaQuery.of(sheetCtx).padding.bottom + 16,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
             Center(
               child: Container(
                 width: 40,
@@ -160,19 +166,32 @@ class RelayTile extends StatelessWidget {
                 );
               },
             ),
+            if (onPinToQuickTile != null)
+              ListTile(
+                leading: Icon(Icons.dashboard_customize_outlined, color: AppColors.primaryLight),
+                title: Text('Pin to Quick Settings Tile', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                subtitle: Text('Control this relay from your phone notification shade', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+                onTap: () {
+                  Navigator.pop(context);
+                  onPinToQuickTile!();
+                },
+              ),
             if (onSettings != null)
               ListTile(
                 leading: Icon(Icons.tune_rounded, color: AppColors.primary),
                 title: Text('Hardware Configuration', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                 subtitle: Text('Polarity, boot state, auto-off & failsafe shutdown', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                 trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-                onTap: () {
-                  Navigator.pop(context);
-                  onSettings!();
-                },
-              ),
+              onTap: () {
+                Navigator.pop(sheetCtx);
+                onSettings!();
+              },
+            ),
             const SizedBox(height: 8),
           ],
+        ),
+          ),
         ),
       ),
     );

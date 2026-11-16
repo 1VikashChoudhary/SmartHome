@@ -9,6 +9,7 @@ import '../widgets/telemetry_gauge.dart';
 import '../widgets/device_tools_sheet.dart';
 import '../widgets/hardware_config_sheet.dart';
 import '../widgets/relay_config_sheet.dart';
+import '../widgets/quick_controls_sheet.dart';
 import '../widgets/controller_login_dialog.dart';
 import 'automations_screen.dart';
 import 'batch_ota_screen.dart';
@@ -2092,6 +2093,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                           }
                         },
                         onSettings: () => RelayConfigSheet.show(context, device, relay, manager),
+                        onPinToQuickTile: () => QuickControlsSheet.show(
+                          context,
+                          prefillDeviceId: device.id,
+                          prefillRelayId: relay.id,
+                        ),
                       );
                     },
                   );

@@ -8,6 +8,7 @@ import '../../main.dart';
 import '../widgets/relay_tile.dart';
 import '../widgets/relay_config_sheet.dart';
 import '../widgets/app_settings_sheet.dart';
+import '../widgets/quick_controls_sheet.dart';
 import '../widgets/controller_login_dialog.dart';
 import 'device_screen.dart';
 import 'discovery_screen.dart';
@@ -1201,6 +1202,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         }
                       },
                       onSettings: () => RelayConfigSheet.show(context, dev, relay, manager),
+                      onPinToQuickTile: () => QuickControlsSheet.show(
+                        context,
+                        prefillDeviceId: dev.id,
+                        prefillRelayId: relay.id,
+                      ),
                     );
                   },
                 );

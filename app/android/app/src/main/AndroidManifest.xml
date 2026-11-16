@@ -31,7 +31,61 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
         </activity>
+
+        <!-- Android 11+ Native Device Controls (Quick Settings "Device controls") -->
+        <service
+            android:name=".SmartHomeControlsService"
+            android:label="SmartHome Pro"
+            android:exported="true"
+            android:permission="android.permission.BIND_CONTROLS">
+            <intent-filter>
+                <action android:name="android.service.controls.ControlsProviderService" />
+            </intent-filter>
+        </service>
+
+        <!-- Android Quick Settings Tiles (12 customizable relay tiles) -->
+        <service android:name=".SmartHomeTileService1" android:label="Tile 1" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService2" android:label="Tile 2" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService3" android:label="Tile 3" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService4" android:label="Tile 4" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService5" android:label="Tile 5" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService6" android:label="Tile 6" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService7" android:label="Tile 7" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService8" android:label="Tile 8" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService9" android:label="Tile 9" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService10" android:label="Tile 10" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService11" android:label="Tile 11" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".SmartHomeTileService12" android:label="Tile 12" android:icon="@drawable/ic_qs_tile" android:exported="true" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/models/smart_device.dart';
+import 'native_controls_service.dart';
 
 class DeviceStorageService {
   static const String _keyDevices = 'smarthome_registered_devices';
@@ -113,6 +114,7 @@ class DeviceStorageService {
         return json;
       }).toList();
       await prefs.setString(_keyDevices, jsonEncode(list));
+      await NativeControlsService.instance.syncDevices(devices);
     });
   }
 

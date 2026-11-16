@@ -7,8 +7,11 @@ import 'presentation/screens/home_screen.dart';
 import 'presentation/screens/controllers_screen.dart';
 import 'presentation/screens/automations_screen.dart';
 import 'presentation/screens/analytics_screen.dart';
+import 'presentation/screens/device_screen.dart';
 import 'presentation/widgets/emergency_alarm_dialog.dart';
+import 'presentation/widgets/quick_controls_sheet.dart';
 import 'services/device_manager.dart';
+import 'services/native_controls_service.dart';
 
 class NavigationIndexNotifier extends Notifier<int> {
   @override
@@ -77,10 +80,36 @@ class _MainShellState extends ConsumerState<MainShell>
     super.initState();
     _deviceManager = ref.read(deviceManagerProvider.notifier);
     WidgetsBinding.instance.addObserver(this);
+    NativeControlsService.instance.setLaunchActionListener(_handleLaunchAction);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final pending = await NativeControlsService.instance.consumeLaunchAction();
+      if (pending != null && mounted) {
+        _handleLaunchAction(pending);
+      }
+    });
+  }
+
+  void _handleLaunchAction(NativeLaunchAction action) {
+    if (!mounted) return;
+    if (action.tileSlot != null) {
+      QuickControlsSheet.show(context, initialSlot: action.tileSlot);
+      return;
+    }
+    final devId = action.deviceId;
+    if (devId != null && devId.isNotEmpty) {
+      final exists = ref.read(deviceManagerProvider).any((d) => d.id == devId);
+      if (exists) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: devId)),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    NativeControlsService.instance.setLaunchActionListener(null);
     WidgetsBinding.instance.removeObserver(this);
     _deviceManager.stopForegroundSync();
     super.dispose();
