@@ -37,10 +37,10 @@ LCDManager::LCDManager()
       _lastPageChange(0), _lastUpdate(0),
       _lastUserInteraction(0),
       _alarmType(LCD_ALARM_NONE), _otaProgress(0),
-      _temp(0), _hum(0), _dhtFault(false), _dhtEnabled(true),
+      _temp(0), _hum(0), _dhtFault(false), _dhtEnabled(true), _hasHumidity(true),
       _numRelays(NUM_RELAYS),
       _gasValue(0), _gasThreshold(MQ2_DEFAULT_THRESHOLD),
-      _gasAlarm(false), _gasWarming(true), _mq2Enabled(true),
+      _gasAlarm(false), _gasWarming(true), _mq2Enabled(true), _gasIsSgp40(false),
       _mqttConnected(false),
       _isAPMode(false), _apSSID(""), _apPass("") {
     memset(_buffer, ' ', sizeof(_buffer));
@@ -463,8 +463,8 @@ void LCDManager::saveConfig() {
 // ============================================================================
 // Data Update Methods
 // ============================================================================
-void LCDManager::updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled) {
-    _temp = temp; _hum = hum; _dhtFault = dhtFault; _dhtEnabled = dhtEnabled;
+void LCDManager::updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled, bool hasHumidity) {
+    _temp = temp; _hum = hum; _dhtFault = dhtFault; _dhtEnabled = dhtEnabled; _hasHumidity = hasHumidity;
 }
 
 void LCDManager::updateRelayStates(const bool states[5]) {
@@ -492,9 +492,9 @@ void LCDManager::updateNetworkInfo(const String& ip, const String& date, const S
     _apPass = apPass;
 }
 
-void LCDManager::updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled) {
+void LCDManager::updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled, bool isSgp40) {
     _gasValue = gasValue; _gasThreshold = threshold;
-    _gasAlarm = alarm; _gasWarming = warming; _mq2Enabled = mq2Enabled;
+    _gasAlarm = alarm; _gasWarming = warming; _mq2Enabled = mq2Enabled; _gasIsSgp40 = isSgp40;
 }
 
 void LCDManager::updateMqttStatus(bool connected, const String& uptime) {
@@ -512,7 +512,9 @@ void LCDManager::renderSensorPage() {
     if (!_dhtEnabled) {
         setLine(0, "No Climate Sens ");
     } else if (_dhtFault) {
-        setLine(0, "\x08 --.-\xDF""C H:--.-% ");
+        setLine(0, _hasHumidity ? "\x08 --.-\xDF""C H:--.-% " : "\x08 Temp: --.-\xDF""C ");
+    } else if (!_hasHumidity) {
+        setLinef(0, "\x08 Temp: %5.1f\xDF""C ", _temp);
     } else {
         setLinef(0, "\x08%5.1f\xDF""C H:%4.1f%%", _temp, _hum);
     }
@@ -534,12 +536,13 @@ void LCDManager::renderSensorPage() {
 
     if (_displayMode == LCD_MODE_ROTATE && _mq2Enabled && (int)(strlen(line2) + 8) <= (int)cols) {
         // In rotate mode, append gas status alongside relay icons when width permits
+        const char* tag = _gasIsSgp40 ? " AQ" : " MQ";
         if (_gasWarming) {
-            strncat(line2, " MQ:Warm", sizeof(line2) - strlen(line2) - 1);
+            snprintf(line2 + strlen(line2), sizeof(line2) - strlen(line2), "%s:Warm", tag);
         } else if (_gasAlarm) {
-            strncat(line2, " MQ:ALRM", sizeof(line2) - strlen(line2) - 1);
+            snprintf(line2 + strlen(line2), sizeof(line2) - strlen(line2), "%s:ALRM", tag);
         } else {
-            strncat(line2, " MQ:Safe", sizeof(line2) - strlen(line2) - 1);
+            snprintf(line2 + strlen(line2), sizeof(line2) - strlen(line2), "%s:Safe", tag);
         }
     }
 
@@ -548,13 +551,13 @@ void LCDManager::renderSensorPage() {
     // Extra rows populated automatically on 20x4 I2C displays
     if (_lcdRows >= 4) {
         if (!_mq2Enabled) {
-            setLine(2, "Gas: Disabled");
+            setLine(2, _gasIsSgp40 ? "SGP40: Disabled" : "Gas: Disabled");
         } else if (_gasWarming) {
-            setLinef(2, "\x05 Gas:%4d Warming", _gasValue);
+            setLinef(2, "\x05 %s:%4d Warming", _gasIsSgp40 ? "VOC" : "Gas", _gasValue);
         } else if (_gasAlarm) {
-            setLinef(2, "\x06 GAS DANGER! %4d", _gasValue);
+            setLinef(2, "\x06 %s DANGER! %4d", _gasIsSgp40 ? "VOC" : "GAS", _gasValue);
         } else {
-            setLinef(2, "\x07 Gas:%4d/%4d OK", _gasValue, _gasThreshold);
+            setLinef(2, "\x07 %s:%4d/%4d OK", _gasIsSgp40 ? "VOC" : "Gas", _gasValue, _gasThreshold);
         }
         setLinef(3, "%-14.14s MQ:%s", _ipAddr.c_str(), _mqttConnected ? "OK" : "--");
     }
@@ -567,7 +570,9 @@ void LCDManager::renderDHTRelayPage() {
     if (!_dhtEnabled) {
         setLine(0, "T:--.-C H:--.-% ");
     } else if (_dhtFault) {
-        setLine(0, "T:ERR   H:ERR   ");
+        setLine(0, _hasHumidity ? "T:ERR   H:ERR   " : "Temp: ERR       ");
+    } else if (!_hasHumidity) {
+        setLinef(0, "Temp: %5.1fC    ", _temp);
     } else {
         setLinef(0, "T:%4.1fC H:%4.1f%%", _temp, _hum);
     }
@@ -599,11 +604,11 @@ void LCDManager::renderDHTRelayPage() {
 
     if (_lcdRows >= 4) {
         if (!_mq2Enabled) {
-            setLine(2, "Gas: Disabled");
+            setLine(2, _gasIsSgp40 ? "SGP40: Disabled" : "Gas: Disabled");
         } else if (_gasAlarm) {
-            setLinef(2, "GAS ALERT! %d/%d", _gasValue, _gasThreshold);
+            setLinef(2, "%s ALERT! %d/%d", _gasIsSgp40 ? "VOC" : "GAS", _gasValue, _gasThreshold);
         } else {
-            setLinef(2, "Gas:%4d/%4d %s", _gasValue, _gasThreshold, _gasWarming ? "Warm" : "Safe");
+            setLinef(2, "%s:%4d/%4d %s", _gasIsSgp40 ? "VOC" : "Gas", _gasValue, _gasThreshold, _gasWarming ? "Warm" : "Safe");
         }
         setLinef(3, "%-14.14s MQ:%s", _ipAddr.c_str(), _mqttConnected ? "OK" : "--");
     }
@@ -648,12 +653,12 @@ void LCDManager::renderNetworkPage() {
 
 void LCDManager::renderGasPage() {
     if (!_mq2Enabled) {
-        setLine(0, "MQ-2 Disabled   ");
+        setLine(0, _gasIsSgp40 ? "SGP40 Disabled  " : "MQ-2 Disabled   ");
         setLine(1, "Off in HW Config");
         return;
     }
-    // Line 1: Gas: 125 / 400
-    setLinef(0, "\x05 Gas:%4d/%4d", _gasValue, _gasThreshold);
+    // Line 1: Gas: 125 / 400 (or VOC: 125 / 250)
+    setLinef(0, "\x05 %s:%4d/%4d", _gasIsSgp40 ? "VOC" : "Gas", _gasValue, _gasThreshold);
 
     // Line 2: Status: Safe/DANGER/Warming
     if (_gasWarming) {
@@ -688,7 +693,7 @@ void LCDManager::renderMqttPage() {
 }
 
 void LCDManager::renderGasAlarm() {
-    setLine(0, "!!!GAS ALERT!!!");
+    setLine(0, _gasIsSgp40 ? "!!VOC ALERT!!  " : "!!!GAS ALERT!!!");
     setLine(1, "  CHECK NOW!!!  ");
 }
 

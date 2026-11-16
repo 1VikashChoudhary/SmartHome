@@ -88,11 +88,11 @@ bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType senso
             outVal = sensorMgr.getTemperatureAt(idx);
             return true;
         case RULE_SENSOR_HUM:
-            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx)) return false;
+            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx) || !sensorMgr.hasHumidityAt(idx)) return false;
             outVal = sensorMgr.getHumidityAt(idx);
             return true;
         case RULE_SENSOR_GAS:
-            if (!sensorMgr.isMq2ActiveAt(idx) || sensorMgr.isMQ2Warming()) return false;
+            if (!sensorMgr.isMq2ActiveAt(idx) || sensorMgr.isMq2WarmingAt(idx)) return false;
             outVal = (float)sensorMgr.getMQ2RawAt(idx);
             return true;
         case RULE_SENSOR_LUX:

@@ -190,8 +190,10 @@ void MqttManager::publishSensorData(SensorManager& sensorMgr) {
         dtostrf(sensorMgr.getTemperatureAt(i), 1, 1, buf);
         _client.publish(buildTopic(indexedTopic("sensor/temperature", i)).c_str(), 0, false, buf);
 
-        dtostrf(sensorMgr.getHumidityAt(i), 1, 1, buf);
-        _client.publish(buildTopic(indexedTopic("sensor/humidity", i)).c_str(), 0, false, buf);
+        if (sensorMgr.hasHumidityAt(i)) {
+            dtostrf(sensorMgr.getHumidityAt(i), 1, 1, buf);
+            _client.publish(buildTopic(indexedTopic("sensor/humidity", i)).c_str(), 0, false, buf);
+        }
 
         if (sensorMgr.hasBarometerAt(i)) {
             float pres = sensorMgr.getPressureAt(i);
@@ -303,15 +305,18 @@ void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
     uint8_t relayCount = NUM_RELAYS;
 
     bool climateEn[MAX_CLIMATE_SENSORS]    = {false};
+    bool humEn[MAX_CLIMATE_SENSORS]        = {false};
     bool bmeEn[MAX_CLIMATE_SENSORS]        = {false};
     bool lightEn[MAX_LIGHT_SENSORS]        = {false};
     bool motionEn[MAX_MOTION_SENSORS]      = {false};
     bool probeEn[MAX_PROBE_SENSORS]        = {false};
     bool tankEn[MAX_ULTRASONIC_SENSORS]    = {false};
     bool mq2En[MAX_MQ2_SENSORS]            = {false};
+    bool mq2IsSgp[MAX_MQ2_SENSORS]         = {false};
 
 #if !defined(ESP8266)
     climateEn[0] = true;
+    humEn[0] = true;
 #endif
     mq2En[0] = true;
 
@@ -331,15 +336,18 @@ void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
 
             if (hwDoc.containsKey("climates")) {
                 memset(climateEn, 0, sizeof(climateEn));
+                memset(humEn, 0, sizeof(humEn));
                 JsonArray arr = hwDoc["climates"].as<JsonArray>();
                 for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS && i < arr.size(); i++) {
                     uint8_t dt = arr[i]["type"] | 0;
                     climateEn[i] = (dt != 0);
+                    humEn[i] = (dt != 0 && dt != 7);
                     bmeEn[i] = (dt == 3);
                 }
             } else if (hwDoc.containsKey("dht")) {
                 uint8_t dt = hwDoc["dht"]["type"] | 2;
                 climateEn[0] = (dt != 0);
+                humEn[0] = (dt != 0 && dt != 7);
                 bmeEn[0] = (dt == 3);
             }
 
@@ -381,12 +389,15 @@ void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
 
             if (hwDoc.containsKey("mq2_sensors")) {
                 memset(mq2En, 0, sizeof(mq2En));
+                memset(mq2IsSgp, 0, sizeof(mq2IsSgp));
                 JsonArray arr = hwDoc["mq2_sensors"].as<JsonArray>();
                 for (uint8_t i = 0; i < MAX_MQ2_SENSORS && i < arr.size(); i++) {
                     mq2En[i] = arr[i]["enabled"] | true;
+                    mq2IsSgp[i] = ((arr[i]["type"] | 0) == 1);
                 }
             } else if (hwDoc.containsKey("mq2")) {
                 mq2En[0] = hwDoc["mq2"]["enabled"] | true;
+                mq2IsSgp[0] = ((hwDoc["mq2"]["type"] | 0) == 1);
             }
         }
         _storage->loadJson(PATH_RELAYS, relayDoc);
@@ -442,7 +453,7 @@ void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, climateEn[i]);
         publishHaSensorEntity("sensor", indexedTopic("humidity", i), slotTitle("Humidity", i),
                               indexedTopic("sensor/humidity", i), "%", "humidity",
-                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, climateEn[i]);
+                              nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, humEn[i]);
         publishHaSensorEntity("sensor", indexedTopic("pressure", i), slotTitle("Barometric Pressure", i),
                               indexedTopic("sensor/pressure", i), "hPa", "atmospheric_pressure",
                               nullptr, nullptr, nullptr, deviceId, deviceName, availabilityTopic, bmeEn[i]);
@@ -450,10 +461,14 @@ void MqttManager::publishHomeAssistantDiscovery(bool allowYield) {
     }
 
     for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
-        publishHaSensorEntity("sensor", indexedTopic("gas", i), slotTitle("Gas Level", i),
-                              indexedTopic("sensor/gas", i), "raw", nullptr,
-                              "mdi:molecule-co", nullptr, nullptr, deviceId, deviceName, availabilityTopic, mq2En[i]);
-        publishHaSensorEntity("binary_sensor", indexedTopic("gas_alarm", i), slotTitle("Gas Alarm", i),
+        publishHaSensorEntity("sensor", indexedTopic("gas", i),
+                              slotTitle(mq2IsSgp[i] ? "VOC Air Quality" : "Gas Level", i),
+                              indexedTopic("sensor/gas", i),
+                              mq2IsSgp[i] ? "VOC" : "raw", nullptr,
+                              mq2IsSgp[i] ? "mdi:air-filter" : "mdi:molecule-co",
+                              nullptr, nullptr, deviceId, deviceName, availabilityTopic, mq2En[i]);
+        publishHaSensorEntity("binary_sensor", indexedTopic("gas_alarm", i),
+                              slotTitle(mq2IsSgp[i] ? "VOC Alarm" : "Gas Alarm", i),
                               indexedTopic("sensor/gas_alarm", i), nullptr, "gas",
                               nullptr, "danger", "safe", deviceId, deviceName, availabilityTopic, mq2En[i]);
         if (allowYield) yield();

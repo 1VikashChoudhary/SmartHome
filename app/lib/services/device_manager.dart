@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models/smart_device.dart';
 import '../core/models/relay_channel.dart';
@@ -1485,7 +1486,27 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     );
     if (!_isAlive) return ok;
     if (ok) {
-      // Wait for the ESP32 1000ms deferred reboot + boot sequence, then re-sync
+      // Sync device_name locally from the backup without firing a doomed HTTP POST
+      // while the controller is in its 1000ms pre-reboot window with writes disabled.
+      try {
+        final decoded = jsonDecode(backupJson);
+        if (decoded is Map) {
+          final cfg = decoded['config.json'] ?? decoded['config'];
+          if (cfg is Map && cfg['device_name'] != null) {
+            final restoredName = cfg['device_name'].toString().trim();
+            final curIdx = state.indexWhere((d) => d.id == deviceId);
+            if (restoredName.isNotEmpty && curIdx >= 0) {
+              final list = List<SmartDevice>.from(state);
+              list[curIdx] = list[curIdx].copyWith(name: restoredName);
+              state = list;
+              await _storage.saveDevices(list);
+              if (!_isAlive) return ok;
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Wait for the ESP 1000ms deferred reboot + boot sequence, then re-sync
       Future.delayed(const Duration(milliseconds: 4500), () async {
         if (!_isAlive) return;
         await refreshDevice(deviceId);

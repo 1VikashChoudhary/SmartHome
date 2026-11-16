@@ -638,7 +638,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                                 style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold, fontSize: 14),
                               ),
                               Text(
-                                'MQ-2 Reading: ${device.telemetry.gasRaw} ADC. Check room environment immediately!',
+                                device.telemetry.gasUnit.toUpperCase() == 'VOC'
+                                    ? 'SGP40 VOC Reading: ${device.telemetry.gasRaw} VOC. Check room air quality immediately!'
+                                    : 'MQ-2 Reading: ${device.telemetry.gasRaw} ADC. Check room environment immediately!',
                                 style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                               ),
                             ],
@@ -1082,6 +1084,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 required String? customPrefix,
                 required double temperature,
                 required double humidity,
+                required bool showHumidity,
                 required bool fault,
                 required bool showPressure,
                 required double pressure,
@@ -1092,7 +1095,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 final humLabel = customPrefix != null
                     ? '$customPrefix Humidity'
                     : 'Humidity';
-                final hasReading = temperature != 0 || humidity > 0;
+                final hasReading = temperature != 0 ||
+                    (showHumidity && humidity > 0) ||
+                    (!showHumidity && !fault && temperature > -55);
 
                 allGauges.add(
                   TelemetryGauge(
@@ -1111,21 +1116,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                         : (temperature > 32 ? 'WARM' : 'COMFORT'),
                   ),
                 );
-                allGauges.add(
-                  TelemetryGauge(
-                    label: humLabel,
-                    value: fault
-                        ? 'ERR'
-                        : (humidity > 0 ? humidity.toStringAsFixed(0) : '--'),
-                    unit: fault ? '' : '%',
-                    percent: fault ? 0.0 : (humidity / 100).clamp(0.0, 1.0),
-                    color: fault ? AppColors.danger : AppColors.cyan,
-                    icon: Icons.water_drop_rounded,
-                    statusBadge: fault
-                        ? 'FAULT'
-                        : (humidity > 70 ? 'HUMID' : 'OPTIMAL'),
-                  ),
-                );
+                if (showHumidity) {
+                  allGauges.add(
+                    TelemetryGauge(
+                      label: humLabel,
+                      value: fault
+                          ? 'ERR'
+                          : (humidity > 0 ? humidity.toStringAsFixed(0) : '--'),
+                      unit: fault ? '' : '%',
+                      percent: fault ? 0.0 : (humidity / 100).clamp(0.0, 1.0),
+                      color: fault ? AppColors.danger : AppColors.cyan,
+                      icon: Icons.water_drop_rounded,
+                      statusBadge: fault
+                          ? 'FAULT'
+                          : (humidity > 70 ? 'HUMID' : 'OPTIMAL'),
+                    ),
+                  );
+                }
                 if (showPressure && pressure > 300) {
                   addedPressure = true;
                   allGauges.add(
@@ -1144,7 +1151,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 }
               }
 
-              // 1. Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x)
+              // 1. Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x / SHT40 / DS18B20)
               final activeClimates = t.climates.where((c) => c.enabled).toList();
               if (activeClimates.isNotEmpty) {
                 for (int i = 0; i < activeClimates.length; i++) {
@@ -1161,6 +1168,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     customPrefix: prefix,
                     temperature: c.temperature,
                     humidity: c.humidity,
+                    showHumidity: c.humidityEnabled,
                     fault: c.fault,
                     showPressure: baroVal > 300,
                     pressure: baroVal,
@@ -1171,6 +1179,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   customPrefix: null,
                   temperature: t.temperature,
                   humidity: t.humidity,
+                  showHumidity: t.humidityEnabled,
                   fault: t.dhtFault,
                   showPressure: t.pressureEnabled && t.pressure > 300,
                   pressure: t.pressure,
@@ -1191,24 +1200,26 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 );
               }
 
-              // 2. Gas / Smoke Sensors (MQ-2) - keep visible if hardware-allowed even when paused
+              // 2. Gas & Air Quality Sensors (MQ-2 / SGP40) - keep visible if hardware-allowed even when paused
               final visibleMq2s = t.mq2s
                   .where((m) => m.enabled || m.hwAllowed)
                   .toList();
               if (visibleMq2s.isNotEmpty) {
                 for (final m in visibleMq2s) {
                   final gasDisabled = !m.enabled;
+                  final isSgp = m.isSgp40;
+                  final mMax = m.gasMax > 0 ? m.gasMax : (isSgp ? 500 : gasMax);
                   final label = (visibleMq2s.length == 1 && !m.hasCustomLabel)
-                      ? 'Air / Gas'
+                      ? (isSgp ? 'VOC Air Quality' : 'Air / Gas')
                       : (m.hasCustomLabel ? m.label : m.displayName);
                   allGauges.add(
                     TelemetryGauge(
                       label: label,
                       value: gasDisabled ? 'OFF' : '${m.raw}',
-                      unit: gasDisabled ? '' : 'ADC',
+                      unit: gasDisabled ? '' : m.unit,
                       percent: gasDisabled
                           ? 0.0
-                          : (m.raw / gasMax).clamp(0.0, 1.0),
+                          : (m.raw / mMax).clamp(0.0, 1.0),
                       color: gasDisabled
                           ? AppColors.textMuted
                           : (m.alarm
@@ -1216,7 +1227,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                               : (m.warming
                                   ? AppColors.warning
                                   : AppColors.success)),
-                      icon: Icons.local_fire_department_rounded,
+                      icon: isSgp
+                          ? Icons.air_rounded
+                          : Icons.local_fire_department_rounded,
                       statusBadge: gasDisabled
                           ? 'DISABLED'
                           : (m.alarm
@@ -1227,14 +1240,16 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 }
               } else if (t.mq2s.isEmpty && (t.gasEnabled || t.gasHwAllowed)) {
                 final gasDisabled = !t.gasEnabled;
+                final isSgp = t.gasUnit.toUpperCase() == 'VOC';
+                final mMax = t.gasMax > 0 ? t.gasMax : (isSgp ? 500 : gasMax);
                 allGauges.add(
                   TelemetryGauge(
-                    label: 'Air / Gas',
+                    label: isSgp ? 'VOC Air Quality' : 'Air / Gas',
                     value: gasDisabled ? 'OFF' : '${t.gasRaw}',
-                    unit: gasDisabled ? '' : 'ADC',
+                    unit: gasDisabled ? '' : t.gasUnit,
                     percent: gasDisabled
                         ? 0.0
-                        : (t.gasRaw / gasMax).clamp(0.0, 1.0),
+                        : (t.gasRaw / mMax).clamp(0.0, 1.0),
                     color: gasDisabled
                         ? AppColors.textMuted
                         : (t.gasAlarm
@@ -1242,7 +1257,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                             : (t.gasWarming
                                 ? AppColors.warning
                                 : AppColors.success)),
-                    icon: Icons.local_fire_department_rounded,
+                    icon: isSgp
+                        ? Icons.air_rounded
+                        : Icons.local_fire_department_rounded,
                     statusBadge: gasDisabled
                         ? 'DISABLED'
                         : (t.gasAlarm

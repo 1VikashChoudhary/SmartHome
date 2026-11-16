@@ -56,7 +56,8 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
 
   bool get _hasAnyI2cSensor =>
       _climates.any((c) => c.type.isI2c) ||
-      _lights.any((l) => l.type != LightSensorType.none);
+      _lights.any((l) => l.type != LightSensorType.none) ||
+      _mq2s.any((g) => g.enabled && g.type.isI2c);
 
   bool _buzzerEnabled = true;
   int _buzzerPin = 5;
@@ -369,23 +370,33 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     );
   }
 
-  void _ensureI2cBusPins(Set<int> used) {
+  void _ensureI2cBusPins([Set<int>? _]) {
     final isEsp8266 = widget.device.isEsp8266;
-    if (_i2cSdaPin == 255) {
+    final outputPins = HardwareProfile.outputPinsFor(isEsp8266);
+    final nonI2cUsed = _getUsedPins(includeI2cBus: false).keys.toSet();
+    if (_i2cSdaPin == 255 || nonI2cUsed.contains(_i2cSdaPin)) {
+      final sdaForbidden = {
+        ...nonI2cUsed,
+        if (_i2cSclPin != 255) _i2cSclPin,
+      };
       _i2cSdaPin = _pickFreePin(
-        HardwareProfile.outputPinsFor(isEsp8266),
-        used,
+        outputPins,
+        sdaForbidden,
         preferred: isEsp8266 ? 4 : 21,
       );
-      if (_i2cSdaPin != 255) used.add(_i2cSdaPin);
     }
-    if (_i2cSclPin == 255) {
+    if (_i2cSclPin == 255 ||
+        nonI2cUsed.contains(_i2cSclPin) ||
+        (_i2cSdaPin != 255 && _i2cSclPin == _i2cSdaPin)) {
+      final sclForbidden = {
+        ...nonI2cUsed,
+        if (_i2cSdaPin != 255) _i2cSdaPin,
+      };
       _i2cSclPin = _pickFreePin(
-        HardwareProfile.outputPinsFor(isEsp8266),
-        used,
+        outputPins,
+        sclForbidden,
         preferred: isEsp8266 ? 5 : 22,
       );
-      if (_i2cSclPin != 255) used.add(_i2cSclPin);
     }
   }
 
@@ -407,6 +418,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     } else {
       ClimateSensorSlotConfig? i2cSlot;
       for (final model in [
+        ClimateSensorType.sht4x,
         ClimateSensorType.bme280,
         ClimateSensorType.sht31,
         ClimateSensorType.aht20,
@@ -554,6 +566,29 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
         used,
         preferred: 35,
       );
+    }
+
+    if (aPin == 255 && dPin == 255) {
+      final usedI2c = _getUsedI2cAddrs();
+      if (!usedI2c.containsKey(0x59) &&
+          _i2cSdaPin != 255 &&
+          _i2cSclPin != 255) {
+        setState(() {
+          _isCustomMode = true;
+          _switchToCustomModeName();
+          _mq2s.add(
+            const Mq2SensorSlotConfig(
+              type: GasSensorType.sgp40,
+              enabled: true,
+              analogPin: 255,
+              digitalPin: 255,
+              i2cAddr: 0x59,
+            ),
+          );
+          _ensureI2cBusPins();
+        });
+        return;
+      }
     }
 
     setState(() {
@@ -821,7 +856,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
   }
 
-  Map<int, String> _getUsedPins() {
+  Map<int, String> _getUsedPins({bool includeI2cBus = true}) {
     final Map<int, String> used = {};
     for (int i = 0; i < _numRelays && i < _channels.length; i++) {
       if (_channels[i].enabled && _channels[i].relayPin != 255) {
@@ -833,7 +868,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     }
     for (int i = 0; i < _climates.length; i++) {
       final c = _climates[i];
-      if ((c.type == ClimateSensorType.dht11 || c.type == ClimateSensorType.dht22) && c.pin != 255) {
+      if (c.type.isOneWire && c.pin != 255) {
         used[c.pin] = 'Climate ${i + 1}';
       }
     }
@@ -858,7 +893,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     }
     for (int i = 0; i < _mq2s.length; i++) {
       final g = _mq2s[i];
-      if (g.enabled) {
+      if (g.enabled && !g.type.isI2c) {
         if (g.analogPin != 255) used[g.analogPin] = 'MQ-2 ${i + 1} (A)';
         if (g.digitalPin != 255) used[g.digitalPin] = 'MQ-2 ${i + 1} (D)';
       }
@@ -866,7 +901,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     if (_buzzerEnabled && _buzzerPin != 255) {
       used[_buzzerPin] = 'Buzzer';
     }
-    if (_lcdEnabled || _hasAnyI2cSensor) {
+    if (includeI2cBus && (_lcdEnabled || _hasAnyI2cSensor)) {
       if (_i2cSdaPin != 255) used[_i2cSdaPin] = 'I2C SDA';
       if (_i2cSclPin != 255) used[_i2cSclPin] = 'I2C SCL';
     }
@@ -876,12 +911,17 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     return used;
   }
 
-  Map<int, String> _getUsedI2cAddrs() {
+  Map<int, String> _getUsedI2cAddrs({
+    int? excludeClimateIndex,
+    int? excludeLightIndex,
+    int? excludeMq2Index,
+  }) {
     final Map<int, String> addrs = {};
     if (_lcdEnabled && _lcdI2cAddr > 0) {
       addrs[_lcdI2cAddr] = 'I2C LCD';
     }
     for (int i = 0; i < _climates.length; i++) {
+      if (i == excludeClimateIndex) continue;
       final c = _climates[i];
       if (c.type.isI2c) {
         final addr = c.i2cAddr > 0 ? c.i2cAddr : c.type.defaultI2cAddr;
@@ -889,10 +929,19 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       }
     }
     for (int i = 0; i < _lights.length; i++) {
+      if (i == excludeLightIndex) continue;
       final l = _lights[i];
       if (l.type != LightSensorType.none) {
         final addr = l.i2cAddr > 0 ? l.i2cAddr : 0x23;
         addrs[addr] = 'Light ${i + 1}';
+      }
+    }
+    for (int i = 0; i < _mq2s.length; i++) {
+      if (i == excludeMq2Index) continue;
+      final g = _mq2s[i];
+      if (g.enabled && g.type.isI2c) {
+        final addr = g.i2cAddr > 0 ? g.i2cAddr : 0x59;
+        addrs[addr] = 'Air Quality ${i + 1}';
       }
     }
     return addrs;
@@ -949,7 +998,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       for (int i = 0; i < _climates.length; i++) {
         final c = _climates[i];
         final name = 'Climate Sensor ${i + 1}';
-        if (c.type == ClimateSensorType.dht11 || c.type == ClimateSensorType.dht22) {
+        if (c.type.isOneWire) {
           if (c.pin == 255) throw '$name (${c.type.label}) has no Data Pin assigned';
           claim(c.pin, name, isOutput: true);
         } else if (c.type.isI2c) {
@@ -1012,14 +1061,19 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       for (int i = 0; i < _mq2s.length; i++) {
         final g = _mq2s[i];
         if (g.enabled) {
-          if (g.analogPin == 255 && g.digitalPin == 255) {
-            throw 'MQ-2 Sensor ${i + 1} has neither Analog nor Digital GPIO assigned';
-          }
-          if (g.analogPin != 255) {
-            claim(g.analogPin, 'MQ-2 ${i + 1} Analog', isOutput: false, isAdc: true);
-          }
-          if (g.digitalPin != 255) {
-            claim(g.digitalPin, 'MQ-2 ${i + 1} Digital', isOutput: false);
+          if (g.type.isI2c) {
+            final addr = g.i2cAddr > 0 ? g.i2cAddr : 0x59;
+            claimI2c(addr, 'SGP40 Air Quality ${i + 1}');
+          } else {
+            if (g.analogPin == 255 && g.digitalPin == 255) {
+              throw 'MQ-2 Sensor ${i + 1} has neither Analog nor Digital GPIO assigned';
+            }
+            if (g.analogPin != 255) {
+              claim(g.analogPin, 'MQ-2 ${i + 1} Analog', isOutput: false, isAdc: true);
+            }
+            if (g.digitalPin != 255) {
+              claim(g.digitalPin, 'MQ-2 ${i + 1} Digital', isOutput: false);
+            }
           }
         }
       }
@@ -1760,6 +1814,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   _buildMultiSensorCard(
                     groupKey: 'climates',
                     title: 'Climate & Environmental Sensors',
+                    subtitle: 'DHT11 / DHT22 / BME280 / AHT20 / SHT3x / SHT40 / SHT45 / DS18B20',
                     emptyLabel: 'climate sensors',
                     count: _climates.length,
                     limit: _sensorLimits.climates,
@@ -1828,11 +1883,11 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
 
                   _buildMultiSensorCard(
                     groupKey: 'mq2s',
-                    title: 'Gas & Smoke Sensors (MQ-2)',
+                    title: 'Gas & Air Quality Sensors (MQ-2 / SGP40)',
                     subtitle: widget.device.isEsp8266
-                        ? 'ESP8266 has 1 analog A0 pin; additional MQ-2 slots use digital D0'
+                        ? 'ESP8266 has 1 analog A0 pin; additional MQ-2 slots use digital D0, or SGP40 uses I2C 0x59'
                         : null,
-                    emptyLabel: 'MQ-2 gas sensors',
+                    emptyLabel: 'gas / air quality sensors',
                     count: _mq2s.length,
                     limit: _sensorLimits.mq2s,
                     accentColor: AppColors.warning,
@@ -1913,23 +1968,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                                 _enterCustomMode();
                                 _lcdEnabled = val;
                                 if (val) {
-                                  final isEsp8266 = widget.device.isEsp8266;
-                                  final used = _getUsedPins().keys.toSet();
-                                  if (_i2cSdaPin == 255) {
-                                    _i2cSdaPin = _pickFreePin(
-                                      HardwareProfile.outputPinsFor(isEsp8266),
-                                      used,
-                                      preferred: isEsp8266 ? 4 : 21,
-                                    );
-                                    if (_i2cSdaPin != 255) used.add(_i2cSdaPin);
-                                  }
-                                  if (_i2cSclPin == 255) {
-                                    _i2cSclPin = _pickFreePin(
-                                      HardwareProfile.outputPinsFor(isEsp8266),
-                                      used,
-                                      preferred: isEsp8266 ? 5 : 22,
-                                    );
-                                  }
+                                  _ensureI2cBusPins();
                                 }
                               }),
                             ),
@@ -2256,6 +2295,41 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     );
   }
 
+  Widget _buildSharedI2cBusPinRow(bool isEsp8266) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: _buildPinDropdown(
+              'I2C SDA Pin (Shared)',
+              _i2cSdaPin,
+              HardwareProfile.outputPinsFor(isEsp8266),
+              (p) => setState(() {
+                _enterCustomMode();
+                _i2cSdaPin = p;
+              }),
+              allowNone: false,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _buildPinDropdown(
+              'I2C SCL Pin (Shared)',
+              _i2cSclPin,
+              HardwareProfile.outputPinsFor(isEsp8266),
+              (p) => setState(() {
+                _enterCustomMode();
+                _i2cSclPin = p;
+              }),
+              allowNone: false,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildClimateSlotCard(int i) {
     final c = _climates[i];
     final isEsp8266 = widget.device.isEsp8266;
@@ -2288,27 +2362,37 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   final used = _getUsedPins().keys.toSet();
                   int nextPin = c.pin;
                   int nextAddr = c.i2cAddr;
-                  if ((nextType == ClimateSensorType.dht11 || nextType == ClimateSensorType.dht22) && nextPin == 255) {
-                    nextPin = _pickFreePin(
-                      HardwareProfile.outputPinsFor(isEsp8266),
-                      used,
-                      preferred: i == 0 ? (isEsp8266 ? 14 : 4) : null,
-                    );
+                  if (nextType.isOneWire) {
+                    nextAddr = 0;
+                    if (nextPin == 255) {
+                      nextPin = _pickFreePin(
+                        HardwareProfile.outputPinsFor(isEsp8266),
+                        used,
+                        preferred: i == 0 ? (isEsp8266 ? 14 : 4) : null,
+                      );
+                    }
+                    _climates[i] = c.copyWith(type: nextType, pin: nextPin, i2cAddr: nextAddr);
                   } else if (nextType.isI2c) {
-                    final usedI2c = _getUsedI2cAddrs();
-                    if (!nextType.allowedI2cAddrs.contains(nextAddr)) {
+                    nextPin = 255;
+                    final usedI2c = _getUsedI2cAddrs(excludeClimateIndex: i);
+                    if (!nextType.allowedI2cAddrs.contains(nextAddr) ||
+                        usedI2c.containsKey(nextAddr)) {
                       nextAddr = nextType.allowedI2cAddrs.firstWhere(
                         (a) => !usedI2c.containsKey(a),
                         orElse: () => nextType.defaultI2cAddr,
                       );
                     }
-                    _ensureI2cBusPins(used);
+                    _climates[i] = c.copyWith(type: nextType, pin: nextPin, i2cAddr: nextAddr);
+                    _ensureI2cBusPins();
+                  } else {
+                    nextPin = 255;
+                    nextAddr = 0;
+                    _climates[i] = c.copyWith(type: nextType, pin: nextPin, i2cAddr: nextAddr);
                   }
-                  _climates[i] = c.copyWith(type: nextType, pin: nextPin, i2cAddr: nextAddr);
                 }),
               ),
             ),
-            if (c.type == ClimateSensorType.dht11 || c.type == ClimateSensorType.dht22) ...[
+            if (c.type.isOneWire) ...[
               const SizedBox(width: 10),
               Expanded(
                 child: _buildPinDropdown(
@@ -2342,10 +2426,11 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
           ],
         ),
         if (c.type.isI2c) ...[
+          _buildSharedI2cBusPinRow(isEsp8266),
           const SizedBox(height: 6),
           Text(
-            'Uses shared I2C bus (SDA: ${HardwareProfile.pinLabel(_i2cSdaPin, isEsp8266)}, SCL: ${HardwareProfile.pinLabel(_i2cSclPin, isEsp8266)} — configurable in I2C Bus & LCD section below).',
-            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            'Shared across all I2C sensors & LCD (changing SDA/SCL updates the whole I2C bus).',
+            style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
           ),
         ],
         _buildSlotLabelField(
@@ -2384,10 +2469,24 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                 onChanged: (val) => setState(() {
                   _enterCustomMode();
                   final nextType = val ?? LightSensorType.none;
+                  int nextAddr = 0;
                   if (nextType != LightSensorType.none) {
-                    _ensureI2cBusPins(_getUsedPins().keys.toSet());
+                    final usedI2c = _getUsedI2cAddrs(excludeLightIndex: i);
+                    const allowed = [0x23, 0x5C];
+                    if (allowed.contains(l.i2cAddr) &&
+                        !usedI2c.containsKey(l.i2cAddr)) {
+                      nextAddr = l.i2cAddr;
+                    } else {
+                      nextAddr = allowed.firstWhere(
+                        (a) => !usedI2c.containsKey(a),
+                        orElse: () => allowed.first,
+                      );
+                    }
                   }
-                  _lights[i] = l.copyWith(type: nextType);
+                  _lights[i] = l.copyWith(type: nextType, i2cAddr: nextAddr);
+                  if (nextType != LightSensorType.none) {
+                    _ensureI2cBusPins();
+                  }
                 }),
               ),
             ),
@@ -2413,10 +2512,11 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
           ],
         ),
         if (l.type != LightSensorType.none) ...[
+          _buildSharedI2cBusPinRow(isEsp8266),
           const SizedBox(height: 6),
           Text(
-            'Uses shared I2C bus (SDA: ${HardwareProfile.pinLabel(_i2cSdaPin, isEsp8266)}, SCL: ${HardwareProfile.pinLabel(_i2cSclPin, isEsp8266)} — configurable in I2C Bus & LCD section below).',
-            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            'Shared across all I2C sensors & LCD (changing SDA/SCL updates the whole I2C bus).',
+            style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
           ),
         ],
         _buildSlotLabelField(
@@ -2750,7 +2850,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     return _buildSlotContainer(
       groupKey: 'mq2s',
       index: i,
-      slotTitle: 'MQ-2 Gas Sensor #${i + 1}',
+      slotTitle: '${g.type.isI2c ? "SGP40 Air Quality" : "MQ-2 Gas Sensor"} #${i + 1}',
       accentColor: AppColors.warning,
       onRemove: () => _removeSensorSlot(_mq2s, i),
       children: [
@@ -2772,7 +2872,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                 _enterCustomMode();
                 int aPin = g.analogPin;
                 int dPin = g.digitalPin;
-                if (val && aPin == 255 && dPin == 255) {
+                if (val && !g.type.isI2c && aPin == 255 && dPin == 255) {
                   final used = _getUsedPins().keys.toSet();
                   aPin = _pickFreePin(
                     HardwareProfile.adc1PinsFor(isEsp8266),
@@ -2784,47 +2884,108 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   }
                 }
                 _mq2s[i] = g.copyWith(enabled: val, analogPin: aPin, digitalPin: dPin);
+                if (val && g.type.isI2c) {
+                  _ensureI2cBusPins();
+                }
               }),
             ),
           ],
         ),
         if (g.enabled) ...[
           const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: _buildPinDropdown(
-                  'Analog A0 (ADC1)',
-                  g.analogPin,
+          DropdownButtonFormField<GasSensorType>(
+            key: ValueKey('gas_type_${i}_${g.type.value}'),
+            isExpanded: true,
+            initialValue: g.type,
+            decoration: const InputDecoration(
+              labelText: 'Sensor Model',
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: GasSensorType.values
+                .map(
+                  (t) => DropdownMenuItem(
+                    value: t,
+                    child: Text(
+                      t.label,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (val) => setState(() {
+              _enterCustomMode();
+              final nextType = val ?? GasSensorType.mq2;
+              final used = _getUsedPins().keys.toSet();
+              int aPin = g.analogPin;
+              int dPin = g.digitalPin;
+              if (!nextType.isI2c && aPin == 255 && dPin == 255) {
+                aPin = _pickFreePin(
                   HardwareProfile.adc1PinsFor(isEsp8266),
-                  (p) => setState(() {
-                    _enterCustomMode();
-                    _mq2s[i] = g.copyWith(analogPin: p);
-                  }),
-                  allowNone: true,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildPinDropdown(
-                  'Digital D0',
-                  g.digitalPin,
-                  HardwareProfile.inputPinsFor(isEsp8266),
-                  (p) => setState(() {
-                    _enterCustomMode();
-                    _mq2s[i] = g.copyWith(digitalPin: p);
-                  }),
-                  allowNone: true,
-                ),
-              ),
-            ],
+                  used,
+                  preferred: i == 0 ? (isEsp8266 ? 17 : 34) : null,
+                );
+                if (aPin == 255) {
+                  dPin = _pickFreePin(HardwareProfile.inputPinsFor(isEsp8266), used);
+                }
+              }
+              _mq2s[i] = g.copyWith(
+                type: nextType,
+                analogPin: aPin,
+                digitalPin: dPin,
+                i2cAddr: nextType.isI2c ? 0x59 : 0,
+              );
+              if (nextType.isI2c) {
+                _ensureI2cBusPins();
+              }
+            }),
           ),
-          if (isEsp8266 && g.analogPin == 255 && g.digitalPin != 255) ...[
+          const SizedBox(height: 8),
+          if (g.type.isI2c) ...[
+            _buildSharedI2cBusPinRow(isEsp8266),
             const SizedBox(height: 6),
             Text(
-              'Digital D0 mode active (ESP8266 A0 analog pin is allocated elsewhere).',
+              'Uses shared I2C bus at 0x59 (changing SDA/SCL updates the whole I2C bus).',
               style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
             ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: _buildPinDropdown(
+                    'Analog A0 (ADC1)',
+                    g.analogPin,
+                    HardwareProfile.adc1PinsFor(isEsp8266),
+                    (p) => setState(() {
+                      _enterCustomMode();
+                      _mq2s[i] = g.copyWith(analogPin: p);
+                    }),
+                    allowNone: true,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _buildPinDropdown(
+                    'Digital D0',
+                    g.digitalPin,
+                    HardwareProfile.inputPinsFor(isEsp8266),
+                    (p) => setState(() {
+                      _enterCustomMode();
+                      _mq2s[i] = g.copyWith(digitalPin: p);
+                    }),
+                    allowNone: true,
+                  ),
+                ),
+              ],
+            ),
+            if (isEsp8266 && g.analogPin == 255 && g.digitalPin != 255) ...[
+              const SizedBox(height: 6),
+              Text(
+                'Digital D0 mode active (ESP8266 A0 analog pin is allocated elsewhere).',
+                style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
+              ),
+            ],
           ],
         ],
         _buildSlotLabelField(

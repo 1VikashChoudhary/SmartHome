@@ -112,6 +112,7 @@ String wsDataProvider() {
     // Relays
     JsonArray relays = doc["relays"].to<JsonArray>();
     relayMgr.toJson(relays);
+    alarmSched.applyTimersToRelayArray(relays, relayMgr);
     for (uint8_t i = 0; i < relays.size(); i++) {
         String activeRule = ruleMgr.getActiveRuleForRelay(i);
         if (activeRule.length() > 0) {
@@ -180,7 +181,7 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 break;
             case ALARM_TYPE_SENSOR_FAULT:
                 buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
-                logger.logError("Sensor", F("DHT22 sensor fault detected"));
+                logger.logError("Sensor", F("Climate sensor fault detected"));
                 wsMgr.broadcastAlarm("sensor_fault", true);
                 // Activate failsafe relays
                 relayMgr.activateFailsafe();
@@ -225,9 +226,11 @@ void onRelayChange(uint8_t index, bool state) {
 
     // Broadcast via WebSocket (instant update)
     wsMgr.broadcastRelayChange(index, state);
-    if (!relayMgr.hasActiveTimer(index)) {
-        wsMgr.broadcastRelayTimer(index, false, false, 0);
-    }
+    bool timerActive = false;
+    bool timerTarget = false;
+    uint32_t timerRem = 0;
+    alarmSched.resolveEffectiveTimerForRelay(relayMgr, index, timerActive, timerTarget, timerRem);
+    wsMgr.broadcastRelayTimer(index, timerActive, timerTarget, timerRem);
 
     // Log the event
     logger.logInfo("Relay", relayMgr.getName(index) + " → " + (state ? "ON" : "OFF"));
@@ -570,7 +573,8 @@ void loop() {
 
         // Sensor data for LCD
         lcdMgr.updateSensorData(sensorMgr.getTemperature(), sensorMgr.getHumidity(),
-                                sensorMgr.isDHTFault(), sensorMgr.isDhtEnabled());
+                                sensorMgr.isDHTFault(), sensorMgr.isDhtEnabled(),
+                                sensorMgr.hasHumidity());
 
         // Relay states for LCD
         bool relayStates[MAX_RELAYS] = {false};
@@ -585,7 +589,8 @@ void loop() {
 
         // Gas data for LCD
         lcdMgr.updateGasData(sensorMgr.getMQ2Raw(), sensorMgr.getMQ2Threshold(),
-                             sensorMgr.isMQ2Alarm(), sensorMgr.isMQ2Warming(), sensorMgr.isMQ2Enabled());
+                             sensorMgr.isMQ2Alarm(), sensorMgr.isMQ2Warming(),
+                             sensorMgr.isMQ2Enabled(), sensorMgr.isPrimarySgp40());
 
         // MQTT + uptime for LCD
         lcdMgr.updateMqttStatus(mqttMgr.isConnected(), diag.getUptimeString());

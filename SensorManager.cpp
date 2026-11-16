@@ -4,20 +4,39 @@
  * ============================================================================
  * Supports:
  *  - Climate: DHT11, DHT22/AM2302 (1-Wire bit-bang),
+ *             DS18B20 (1-Wire GPIO Ambient Temperature),
  *             BME280/BMP280 (I2C 0x76/0x77),
  *             AHT20 (I2C 0x38),
- *             SHT31 / SHT3x (I2C 0x44/0x45)
+ *             SHT31 / SHT3x (I2C 0x44/0x45),
+ *             SHT40 / SHT45 (I2C 0x44/0x45)
  *  - Optics:  BH1750 Ambient Light (I2C 0x23/0x5C)
  *  - Motion:  PIR / LD2410 mmWave Radar (Digital GPIO)
  *  - Probe:   DS18B20 Submersible Water Temperature (1-Wire GPIO)
  *  - Tank:    HC-SR04P / HC-SR04 / JSN-SR04T Ultrasonic Distance & Water Level
- *  - Gas:     MQ-2 Analog Gas & Smoke (ADC1 + DO)
+ *  - Gas/VOC: MQ-2 Analog/Digital Gas & Smoke, SGP40 I2C (0x59) VOC Index
  * ============================================================================
  */
 
 #include "SensorManager.h"
 #include "HardwareManager.h"
 #include <Wire.h>
+#include <math.h>
+
+static bool isI2cClimateSlotType(uint8_t t) {
+    return (t == CLIMATE_BME280 || t == CLIMATE_AHT20 ||
+            t == CLIMATE_SHT3X || t == CLIMATE_SHT4X);
+}
+
+static uint8_t sensirionCrc8(const uint8_t* data, size_t len) {
+    uint8_t crc = 0xFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (uint8_t b = 0; b < 8; b++) {
+            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x31) : (uint8_t)(crc << 1);
+        }
+    }
+    return crc;
+}
 
 SensorManager::SensorManager()
     : _storage(nullptr),
@@ -117,8 +136,16 @@ void SensorManager::cleanup() {
     for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
         _mq2s[i].hwAllowed = false;
         _mq2s[i].enabled = false;
+        _mq2s[i].type = GAS_MQ2;
         _mq2s[i].analogPin = PIN_UNUSED;
         _mq2s[i].digitalPin = PIN_UNUSED;
+        _mq2s[i].i2cAddr = 0;
+        _mq2s[i].i2cDetected = false;
+        _mq2s[i].measPending = false;
+        _mq2s[i].measStartMs = 0;
+        _mq2s[i].lastReadMs = 0;
+        _mq2s[i].srawTicks = 0;
+        _mq2s[i].vocBaseline = 0.0f;
         _mq2s[i].raw = 0;
         _mq2s[i].baseline = MQ2_BASELINE_DEFAULT;
         _mq2s[i].threshold = MQ2_DEFAULT_THRESHOLD;
@@ -181,11 +208,11 @@ void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
     _climateCount = hw.getClimateCount();
     if (_climateCount > MAX_CLIMATE_SENSORS) _climateCount = MAX_CLIMATE_SENSORS;
 
-    auto climateAddrClaimedByOther = [&](uint8_t selfIdx, uint8_t type, uint8_t addr) -> bool {
+    auto climateAddrClaimedByOther = [&](uint8_t selfIdx, uint8_t addr) -> bool {
         for (uint8_t j = 0; j < _climateCount; j++) {
             if (j == selfIdx) continue;
             const ClimateSensorConfig* oc = hw.getClimate(j);
-            if (!oc || oc->type != type) continue;
+            if (!oc || !isI2cClimateSlotType(oc->type)) continue;
             uint8_t oAddr = oc->i2cAddr ? oc->i2cAddr : HardwareManager::defaultI2cAddrForClimate(oc->type);
             if (oAddr == addr || _climates[j].i2cAddr == addr) return true;
         }
@@ -213,10 +240,11 @@ void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
             s.enabled = true;
             if (!initBME280(s, s.i2cAddr)) {
                 uint8_t altAddr = (s.i2cAddr == 0x76) ? 0x77 : 0x76;
-                if (!climateAddrClaimedByOther(i, CLIMATE_BME280, altAddr) && initBME280(s, altAddr)) {
+                if (!climateAddrClaimedByOther(i, altAddr) && initBME280(s, altAddr)) {
                     // fallback succeeded
                 } else {
                     s.fault = true;
+                    s.lastFaultRetry = _bootTime;
                     SERIAL_PRINTF("[Sensor] Climate %u BME280/BMP280 not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
                 }
             }
@@ -224,18 +252,39 @@ void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
             s.enabled = true;
             if (!initAHT20(s, s.i2cAddr ? s.i2cAddr : 0x38)) {
                 s.fault = true;
+                s.lastFaultRetry = _bootTime;
                 SERIAL_PRINTF("[Sensor] Climate %u AHT20 not responding at 0x38\n", (unsigned)(i + 1));
             }
         } else if (cfg->type == CLIMATE_SHT3X) {
             s.enabled = true;
             if (!initSHT3x(s, s.i2cAddr)) {
                 uint8_t altAddr = (s.i2cAddr == 0x44) ? 0x45 : 0x44;
-                if (!climateAddrClaimedByOther(i, CLIMATE_SHT3X, altAddr) && initSHT3x(s, altAddr)) {
+                if (!climateAddrClaimedByOther(i, altAddr) && initSHT3x(s, altAddr)) {
                     // fallback succeeded
                 } else {
                     s.fault = true;
+                    s.lastFaultRetry = _bootTime;
                     SERIAL_PRINTF("[Sensor] Climate %u SHT3x not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
                 }
+            }
+        } else if (cfg->type == CLIMATE_SHT4X) {
+            s.enabled = true;
+            if (!initSHT4x(s, s.i2cAddr)) {
+                uint8_t altAddr = (s.i2cAddr == 0x44) ? 0x45 : 0x44;
+                if (!climateAddrClaimedByOther(i, altAddr) && initSHT4x(s, altAddr)) {
+                    // fallback succeeded
+                } else {
+                    s.fault = true;
+                    s.lastFaultRetry = _bootTime;
+                    SERIAL_PRINTF("[Sensor] Climate %u SHT40/SHT45 not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+                }
+            }
+        } else if (cfg->type == CLIMATE_DS18B20) {
+            if (cfg->pin != PIN_UNUSED) {
+                pinMode(cfg->pin, INPUT_PULLUP);
+                s.enabled = true;
+                s.humidity = 0.0f;
+                SERIAL_PRINTF("[Sensor] Climate %u DS18B20 1-Wire on GPIO %d\n", (unsigned)(i + 1), s.pin);
             }
         }
     }
@@ -334,21 +383,44 @@ void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
         SERIAL_PRINTF("[Sensor] Ultrasonic Tank #%u: Trig %d, Echo %d\n", (unsigned)(i + 1), s.trigPin, s.echoPin);
     }
 
-    // 6. MQ-2 Gas Sensors
+    // 6. Gas & Air Quality Sensors (MQ-2 / SGP40)
     _mq2Count = hw.getMq2Count();
     if (_mq2Count > MAX_MQ2_SENSORS) _mq2Count = MAX_MQ2_SENSORS;
     for (uint8_t i = 0; i < _mq2Count; i++) {
         const Mq2SensorConfig* cfg = hw.getMq2(i);
         if (!cfg) continue;
         Mq2SlotState& s = _mq2s[i];
-        s.analogPin = cfg->enabled ? cfg->analogPin : PIN_UNUSED;
-        s.digitalPin = cfg->enabled ? cfg->digitalPin : PIN_UNUSED;
-        s.hwAllowed = cfg->enabled && (s.analogPin != PIN_UNUSED || s.digitalPin != PIN_UNUSED);
-        s.enabled = s.hwAllowed;
-        strncpy(s.label, cfg->label[0] ? cfg->label : "Gas", sizeof(s.label) - 1);
-        s.label[sizeof(s.label) - 1] = '\0';
-        if (s.digitalPin != PIN_UNUSED) {
-            pinMode(s.digitalPin, INPUT);
+        s.type = cfg->type;
+        if (cfg->type == GAS_SGP40) {
+            s.analogPin = PIN_UNUSED;
+            s.digitalPin = PIN_UNUSED;
+            s.i2cAddr = cfg->i2cAddr ? cfg->i2cAddr : 0x59;
+            s.hwAllowed = cfg->enabled &&
+                          (hw.getI2cSdaPin() != PIN_UNUSED && hw.getI2cSclPin() != PIN_UNUSED);
+            s.enabled = s.hwAllowed;
+            s.baseline = 0;
+            s.threshold = 250; // Default SGP40 VOC Index alarm threshold (10..500)
+            s.vocBaseline = 0.0f;
+            strncpy(s.label, cfg->label[0] ? cfg->label : "SGP40", sizeof(s.label) - 1);
+            s.label[sizeof(s.label) - 1] = '\0';
+            if (s.enabled) {
+                if (initSGP40(s, s.i2cAddr)) {
+                    SERIAL_PRINTF("[Sensor] Gas #%u SGP40 VOC detected at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+                } else {
+                    SERIAL_PRINTF("[Sensor] Gas #%u SGP40 not responding at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+                }
+            }
+        } else {
+            s.i2cAddr = 0;
+            s.analogPin = cfg->enabled ? cfg->analogPin : PIN_UNUSED;
+            s.digitalPin = cfg->enabled ? cfg->digitalPin : PIN_UNUSED;
+            s.hwAllowed = cfg->enabled && (s.analogPin != PIN_UNUSED || s.digitalPin != PIN_UNUSED);
+            s.enabled = s.hwAllowed;
+            strncpy(s.label, cfg->label[0] ? cfg->label : "Gas", sizeof(s.label) - 1);
+            s.label[sizeof(s.label) - 1] = '\0';
+            if (s.digitalPin != PIN_UNUSED) {
+                pinMode(s.digitalPin, INPUT);
+            }
         }
     }
 
@@ -409,8 +481,53 @@ void SensorManager::loop() {
         }
     }
 
-    // --- 2. I2C Climate (BME280 / AHT20 / SHT3x) staggered round-robin ---
-    // Complete any pending non-blocking AHT20 / SHT3x conversions once their wait window elapses
+    // --- 1b. Climate DS18B20 (non-blocking 750ms conversion) ---
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        ClimateSlotState& s = _climates[i];
+        if (!s.enabled || s.type != CLIMATE_DS18B20 || s.pin == PIN_UNUSED) continue;
+        if (s.measPending) {
+            if (now - s.measStartMs >= 750UL) {
+                readClimateDS18B20(s);
+            }
+        } else {
+            unsigned long retryInt = s.fault ? 5000UL : DHT_READ_INTERVAL;
+            if (s.lastFaultRetry == 0 || (now - s.lastFaultRetry >= retryInt)) {
+                s.lastFaultRetry = now;
+                if (ds18b20Reset(s.pin)) {
+                    ds18b20WriteByte(s.pin, 0xCC); // SKIP ROM
+                    ds18b20WriteByte(s.pin, 0x44); // CONVERT T
+                    s.measPending = true;
+                    s.measStartMs = now;
+                } else {
+                    if (s.failCount < 255) s.failCount++;
+                    if (s.failCount >= DHT_FAIL_THRESHOLD && !s.fault) {
+                        s.fault = true;
+                        SERIAL_PRINTF("[Sensor] Climate #%u DS18B20 FAULT\n", (unsigned)(i + 1));
+                    }
+                }
+            }
+        }
+    }
+
+    // --- 2. I2C Climate (BME280 / AHT20 / SHT3x / SHT4x) staggered round-robin ---
+    // Periodically retry initialization for I2C climate sensors connected or recovered after boot
+    for (uint8_t i = 0; i < _climateCount; i++) {
+        ClimateSlotState& s = _climates[i];
+        if (!s.enabled || !isI2cClimateSlotType(s.type) || s.i2cDetected) continue;
+        if (now - s.lastFaultRetry < 5000UL) continue;
+        s.lastFaultRetry = now;
+        bool recovered = false;
+        if (s.type == CLIMATE_BME280)      recovered = initBME280(s, s.i2cAddr);
+        else if (s.type == CLIMATE_AHT20)  recovered = initAHT20(s, s.i2cAddr ? s.i2cAddr : 0x38);
+        else if (s.type == CLIMATE_SHT3X)  recovered = initSHT3x(s, s.i2cAddr);
+        else if (s.type == CLIMATE_SHT4X)  recovered = initSHT4x(s, s.i2cAddr);
+        if (recovered) {
+            s.fault = false;
+            SERIAL_PRINTF("[Sensor] Climate #%u I2C recovered at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
+        }
+    }
+
+    // Complete any pending non-blocking AHT20 / SHT3x / SHT4x conversions once their wait window elapses
     for (uint8_t i = 0; i < _climateCount; i++) {
         ClimateSlotState& s = _climates[i];
         if (!s.enabled || !s.i2cDetected || !s.measPending) continue;
@@ -418,12 +535,14 @@ void SensorManager::loop() {
             readAHT20(s);
         } else if (s.type == CLIMATE_SHT3X && (now - s.measStartMs >= 16UL)) {
             readSHT3x(s);
+        } else if (s.type == CLIMATE_SHT4X && (now - s.measStartMs >= 12UL)) {
+            readSHT4x(s);
         }
     }
 
     uint8_t i2cClimateSlots = 0;
     for (uint8_t i = 0; i < _climateCount; i++) {
-        if (_climates[i].enabled && _climates[i].type >= CLIMATE_BME280 && _climates[i].i2cDetected) {
+        if (_climates[i].enabled && isI2cClimateSlotType(_climates[i].type) && _climates[i].i2cDetected) {
             i2cClimateSlots++;
         }
     }
@@ -435,11 +554,12 @@ void SensorManager::loop() {
             for (uint8_t step = 0; step < _climateCount; step++) {
                 uint8_t idx = (_envPollCursor + step) % _climateCount;
                 ClimateSlotState& s = _climates[idx];
-                if (!s.enabled || s.type < CLIMATE_BME280 || !s.i2cDetected || s.measPending) continue;
+                if (!s.enabled || !isI2cClimateSlotType(s.type) || !s.i2cDetected || s.measPending) continue;
                 _envPollCursor = (idx + 1) % _climateCount;
                 if (s.type == CLIMATE_BME280)      readBME280(s);
                 else if (s.type == CLIMATE_AHT20)  readAHT20(s);
                 else if (s.type == CLIMATE_SHT3X)  readSHT3x(s);
+                else if (s.type == CLIMATE_SHT4X)  readSHT4x(s);
                 break;
             }
         }
@@ -521,14 +641,42 @@ void SensorManager::loop() {
         }
     }
 
-    // --- 7. MQ2 Gas Sensors (every 1 second) ---
+    // --- 7. Gas & Air Quality Sensors (MQ-2 / SGP40 I2C) ---
+    // Complete any pending non-blocking SGP40 measurements after 32ms conversion window
+    for (uint8_t i = 0; i < _mq2Count; i++) {
+        Mq2SlotState& g = _mq2s[i];
+        if (g.enabled && g.type == GAS_SGP40 && g.measPending && (now - g.measStartMs >= 32UL)) {
+            readSGP40(g);
+            if (!isMq2WarmingAt(i)) {
+                if (!g.alarmActive && g.raw >= g.threshold) {
+                    g.alarmActive = true;
+                } else if (g.alarmActive && g.raw < max(1, g.threshold - 20)) {
+                    g.alarmActive = false;
+                }
+            }
+        }
+    }
+
     if (now - _lastMQ2Read >= MQ2_READ_INTERVAL) {
         _lastMQ2Read = now;
-        bool warming = (now - _bootTime) < MQ2_WARMUP_TIME;
 
         for (uint8_t i = 0; i < _mq2Count; i++) {
             Mq2SlotState& g = _mq2s[i];
-            if (g.enabled && g.analogPin != PIN_UNUSED) {
+            if (!g.enabled) {
+                g.raw = 0;
+                g.digitalState = false;
+                g.alarmActive = false;
+                g.measPending = false;
+                continue;
+            }
+            if (g.type == GAS_SGP40) {
+                if (!g.measPending) {
+                    readSGP40(g);
+                }
+                continue;
+            }
+            bool warming = isMq2WarmingAt(i);
+            if (g.analogPin != PIN_UNUSED) {
                 g.raw = analogRead(g.analogPin);
                 g.digitalState = (g.digitalPin != PIN_UNUSED) ? (!digitalRead(g.digitalPin)) : false;
                 if (!warming) {
@@ -538,7 +686,7 @@ void SensorManager::loop() {
                         g.alarmActive = false;
                     }
                 }
-            } else if (g.enabled && g.digitalPin != PIN_UNUSED) {
+            } else if (g.digitalPin != PIN_UNUSED) {
                 g.digitalState = !digitalRead(g.digitalPin);
                 g.raw = g.digitalState ? MQ2_ADC_MAX : 0;
                 if (!warming) {
@@ -825,6 +973,11 @@ void SensorManager::readSHT3x(ClimateSlotState& s) {
     uint8_t b[6];
     for (int i = 0; i < 6; i++) b[i] = Wire.read();
 
+    if (sensirionCrc8(&b[0], 2) != b[2] || sensirionCrc8(&b[3], 2) != b[5]) {
+        s.fault = true;
+        return;
+    }
+
     uint16_t tRaw = ((uint16_t)b[0] << 8) | b[1];
     uint16_t hRaw = ((uint16_t)b[3] << 8) | b[4];
 
@@ -836,6 +989,171 @@ void SensorManager::readSHT3x(ClimateSlotState& s) {
     s.temperature = t + s.tempOffset;
     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
     s.fault = false;
+}
+
+bool SensorManager::initSHT4x(ClimateSlotState& s, uint8_t addr) {
+    Wire.beginTransmission(addr);
+    Wire.write(0x94); // Soft Reset command for SHT40 / SHT45
+    if (Wire.endTransmission() != 0) return false;
+
+    delay(2);
+    s.i2cDetected = true;
+    s.i2cAddr = addr;
+    SERIAL_PRINTF("[Sensor] SHT40/SHT45 detected at 0x%02X\n", addr);
+    return true;
+}
+
+void SensorManager::readSHT4x(ClimateSlotState& s) {
+    if (!s.measPending) {
+        Wire.beginTransmission(s.i2cAddr);
+        Wire.write(0xFD); // Measure T & RH with high precision (no heater)
+        if (Wire.endTransmission() != 0) {
+            if (s.failCount < 255) s.failCount++;
+            if (s.failCount >= DHT_FAIL_THRESHOLD) s.fault = true;
+            return;
+        }
+        s.measPending = true;
+        s.measStartMs = millis();
+        return;
+    }
+
+    if (millis() - s.measStartMs < 12UL) return;
+    s.measPending = false;
+
+    Wire.requestFrom((int)s.i2cAddr, 6);
+    if (Wire.available() < 6) {
+        if (s.failCount < 255) s.failCount++;
+        if (s.failCount >= DHT_FAIL_THRESHOLD) s.fault = true;
+        return;
+    }
+
+    uint8_t b[6];
+    for (int i = 0; i < 6; i++) b[i] = Wire.read();
+
+    if (sensirionCrc8(&b[0], 2) != b[2] || sensirionCrc8(&b[3], 2) != b[5]) {
+        if (s.failCount < 255) s.failCount++;
+        if (s.failCount >= DHT_FAIL_THRESHOLD) s.fault = true;
+        return;
+    }
+
+    uint16_t tRaw = ((uint16_t)b[0] << 8) | b[1];
+    uint16_t hRaw = ((uint16_t)b[3] << 8) | b[4];
+
+    float t = -45.0f + (175.0f * (float)tRaw / 65535.0f);
+    float h = constrain(-6.0f + (125.0f * (float)hRaw / 65535.0f), 0.0f, 100.0f);
+
+    s.failCount = 0;
+    s.rawTemperature = t;
+    s.rawHumidity = h;
+    s.temperature = t + s.tempOffset;
+    s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.fault = false;
+}
+
+bool SensorManager::initSGP40(Mq2SlotState& g, uint8_t addr) {
+    // Query SGP40 serial number (0x36 0x82, max 1ms, 9-byte response)
+    Wire.beginTransmission(addr);
+    Wire.write(0x36);
+    Wire.write(0x82);
+    if (Wire.endTransmission() != 0) {
+        g.i2cDetected = false;
+        return false;
+    }
+    delay(1);
+    Wire.requestFrom((int)addr, 9);
+    if (Wire.available() < 9) {
+        g.i2cDetected = false;
+        return false;
+    }
+    while (Wire.available()) (void)Wire.read();
+    g.i2cAddr = addr;
+    g.i2cDetected = true;
+    return true;
+}
+
+void SensorManager::readSGP40(Mq2SlotState& g) {
+    unsigned long now = millis();
+    if (!g.i2cDetected) {
+        if (g.lastReadMs != 0 && (now - g.lastReadMs < 5000UL)) return;
+        g.lastReadMs = now;
+        if (!initSGP40(g, g.i2cAddr ? g.i2cAddr : 0x59)) {
+            return;
+        }
+    }
+
+    if (!g.measPending) {
+        float tempC = 25.0f;
+        float rh = 50.0f;
+        if (_climateCount > 0) {
+            uint8_t pCli = primaryClimateIdx();
+            if (_climates[pCli].enabled && !_climates[pCli].fault &&
+                (_climates[pCli].temperature != 0.0f || _climates[pCli].humidity > 0.0f)) {
+                tempC = constrain(_climates[pCli].temperature, -45.0f, 130.0f);
+                if (hasHumidityAt(pCli)) {
+                    rh = constrain(_climates[pCli].humidity, 0.0f, 100.0f);
+                }
+            }
+        }
+
+        uint16_t rhTicks = (uint16_t)constrain((long)lroundf(rh * 65535.0f / 100.0f), 0L, 65535L);
+        uint16_t tTicks  = (uint16_t)constrain((long)lroundf((tempC + 45.0f) * 65535.0f / 175.0f), 0L, 65535L);
+
+        uint8_t rhBytes[2] = { (uint8_t)(rhTicks >> 8), (uint8_t)(rhTicks & 0xFF) };
+        uint8_t tBytes[2]  = { (uint8_t)(tTicks >> 8),  (uint8_t)(tTicks & 0xFF) };
+
+        Wire.beginTransmission(g.i2cAddr);
+        Wire.write(0x26);
+        Wire.write(0x0F);
+        Wire.write(rhBytes[0]);
+        Wire.write(rhBytes[1]);
+        Wire.write(sensirionCrc8(rhBytes, 2));
+        Wire.write(tBytes[0]);
+        Wire.write(tBytes[1]);
+        Wire.write(sensirionCrc8(tBytes, 2));
+        if (Wire.endTransmission() != 0) {
+            g.i2cDetected = false;
+            g.lastReadMs = now;
+            return;
+        }
+        g.measPending = true;
+        g.measStartMs = now;
+        return;
+    }
+
+    if (now - g.measStartMs < 32UL) return;
+    g.measPending = false;
+    g.lastReadMs = now;
+
+    Wire.requestFrom((int)g.i2cAddr, 3);
+    if (Wire.available() < 3) {
+        g.i2cDetected = false;
+        return;
+    }
+    uint8_t b[3];
+    for (int i = 0; i < 3; i++) b[i] = Wire.read();
+    if (sensirionCrc8(&b[0], 2) != b[2]) return;
+
+    uint16_t sraw = ((uint16_t)b[0] << 8) | b[1];
+    if (sraw < 1000) return;
+
+    g.srawTicks = sraw;
+    bool earlyBoot = (now - _bootTime) < 30000UL;
+    if (g.vocBaseline < 1000.0f) {
+        g.vocBaseline = (g.baseline >= 1000 && g.baseline <= 65000)
+            ? (float)g.baseline
+            : (float)sraw;
+    } else if ((float)sraw > g.vocBaseline) {
+        float alpha = earlyBoot ? 0.15f : 0.02f;
+        g.vocBaseline += ((float)sraw - g.vocBaseline) * alpha;
+    } else {
+        g.vocBaseline += ((float)sraw - g.vocBaseline) * 0.0005f;
+    }
+
+    float delta = g.vocBaseline - (float)sraw;
+    int vocIdx = constrain((int)lroundf(100.0f + (delta / 15.0f)), 1, 500);
+    g.raw = (g.raw == 0)
+        ? vocIdx
+        : constrain((int)lroundf((float)g.raw * 0.4f + (float)vocIdx * 0.6f), 1, 500);
 }
 
 bool SensorManager::initBH1750(LightSlotState& s, uint8_t addr) {
@@ -909,28 +1227,51 @@ uint8_t SensorManager::ds18b20ReadByte(uint8_t pin) {
     return res;
 }
 
-void SensorManager::readDS18B20(ProbeSlotState& s) {
-    if (!ds18b20Reset(s.pin)) {
-        s.fault = true;
-        return;
-    }
-    ds18b20WriteByte(s.pin, 0xCC); // SKIP ROM
-    ds18b20WriteByte(s.pin, 0xBE); // READ SCRATCHPAD
+bool SensorManager::readDS18B20Scratchpad(uint8_t pin, float& outTempC) {
+    if (!ds18b20Reset(pin)) return false;
+    ds18b20WriteByte(pin, 0xCC); // SKIP ROM
+    ds18b20WriteByte(pin, 0xBE); // READ SCRATCHPAD
 
-    uint8_t lsb = ds18b20ReadByte(s.pin);
-    uint8_t msb = ds18b20ReadByte(s.pin);
-    ds18b20Reset(s.pin); // Release 1-Wire bus from remaining scratchpad bytes
+    uint8_t lsb = ds18b20ReadByte(pin);
+    uint8_t msb = ds18b20ReadByte(pin);
+    ds18b20Reset(pin); // Release 1-Wire bus from remaining scratchpad bytes
 
     int16_t raw = (int16_t)((msb << 8) | lsb);
-    if (raw == -1 || (lsb == 0xFF && msb == 0xFF)) {
-        s.fault = true;
+    if (raw == -1 || (lsb == 0xFF && msb == 0xFF)) return false;
+    float c = (float)raw / 16.0f;
+    if (c < -55.0f || c > 125.0f) return false;
+    outTempC = c;
+    return true;
+}
+
+void SensorManager::readDS18B20(ProbeSlotState& s) {
+    float c = -127.0f;
+    if (readDS18B20Scratchpad(s.pin, c)) {
+        s.temperature = c;
+        s.fault = false;
     } else {
-        float c = (float)raw / 16.0f;
-        if (c >= -55.0f && c <= 125.0f) {
-            s.temperature = c;
+        s.fault = true;
+    }
+}
+
+void SensorManager::readClimateDS18B20(ClimateSlotState& s) {
+    s.measPending = false;
+    float c = 0.0f;
+    if (readDS18B20Scratchpad(s.pin, c)) {
+        s.failCount = 0;
+        if (s.fault) {
             s.fault = false;
-        } else {
+            SERIAL_PRINTF("[Sensor] Climate DS18B20 recovered\n");
+        }
+        s.rawTemperature = c;
+        s.rawHumidity = 0.0f;
+        s.temperature = c + s.tempOffset;
+        s.humidity = 0.0f;
+    } else {
+        if (s.failCount < 255) s.failCount++;
+        if (s.failCount >= DHT_FAIL_THRESHOLD && !s.fault) {
             s.fault = true;
+            SERIAL_PRINTF("[Sensor] Climate DS18B20 FAULT\n");
         }
     }
 }
@@ -969,12 +1310,14 @@ void SensorManager::readUltrasonic(UltrasonicSlotState& s) {
 
 static const char* climateTypeLabel(uint8_t t, bool isBmp) {
     switch (t) {
-        case CLIMATE_DHT11:  return "DHT11";
-        case CLIMATE_DHT22:  return "DHT22";
-        case CLIMATE_BME280: return isBmp ? "BMP280" : "BME280";
-        case CLIMATE_AHT20:  return "AHT20";
-        case CLIMATE_SHT3X:  return "SHT3x";
-        default:             return "None";
+        case CLIMATE_DHT11:   return "DHT11";
+        case CLIMATE_DHT22:   return "DHT22";
+        case CLIMATE_BME280:  return isBmp ? "BMP280" : "BME280";
+        case CLIMATE_AHT20:   return "AHT20";
+        case CLIMATE_SHT3X:   return "SHT3x";
+        case CLIMATE_SHT4X:   return "SHT40/SHT45";
+        case CLIMATE_DS18B20: return "DS18B20";
+        default:              return "None";
     }
 }
 
@@ -1042,6 +1385,10 @@ bool SensorManager::hasBarometerAt(uint8_t idx) const {
     return idx < _climateCount && _climates[idx].enabled &&
            _climates[idx].type == CLIMATE_BME280 && _climates[idx].i2cDetected;
 }
+bool SensorManager::hasHumidityAt(uint8_t idx) const {
+    return idx < _climateCount && _climates[idx].enabled &&
+           !_climates[idx].bmpDetected && _climates[idx].type != CLIMATE_DS18B20;
+}
 bool SensorManager::isClimateFaultAt(uint8_t idx) const {
     return idx < _climateCount && _climates[idx].enabled && _climates[idx].fault;
 }
@@ -1096,11 +1443,19 @@ int SensorManager::getTankLevelPercentAt(uint8_t idx) const {
     return (idx < _ultrasonicCount) ? _ultrasonics[idx].tankLevelPct : 0;
 }
 
+uint8_t SensorManager::getMq2TypeAt(uint8_t idx) const {
+    return (idx < _mq2Count) ? _mq2s[idx].type : GAS_MQ2;
+}
 bool SensorManager::isMq2ActiveAt(uint8_t idx) const {
     return idx < _mq2Count && _mq2s[idx].enabled;
 }
 bool SensorManager::isMq2HwAllowedAt(uint8_t idx) const {
     return idx < _mq2Count && _mq2s[idx].hwAllowed;
+}
+bool SensorManager::isMq2WarmingAt(uint8_t idx) const {
+    if (idx >= _mq2Count || !_mq2s[idx].enabled) return false;
+    unsigned long warmupMs = (_mq2s[idx].type == GAS_SGP40) ? 15000UL : MQ2_WARMUP_TIME;
+    return (millis() - _bootTime) < warmupMs;
 }
 int SensorManager::getMQ2RawAt(uint8_t idx) const {
     return (idx < _mq2Count) ? _mq2s[idx].raw : 0;
@@ -1108,6 +1463,9 @@ int SensorManager::getMQ2RawAt(uint8_t idx) const {
 int SensorManager::getMQ2PercentAt(uint8_t idx) const {
     if (idx >= _mq2Count) return 0;
     const Mq2SlotState& g = _mq2s[idx];
+    if (g.type == GAS_SGP40) {
+        return constrain((g.raw * 100) / 500, 0, 100);
+    }
     if (g.raw <= g.baseline) return 0;
     int range = MQ2_ADC_MAX - g.baseline;
     if (range <= 0) return 0;
@@ -1126,11 +1484,14 @@ bool SensorManager::isMQ2DigitalTriggerAt(uint8_t idx) const {
     return idx < _mq2Count && _mq2s[idx].digitalState;
 }
 void SensorManager::setMQ2ThresholdAt(int idx, int threshold) {
-    int c = constrain(threshold, 10, MQ2_ADC_MAX);
     if (idx < 0) {
-        for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) _mq2s[i].threshold = c;
+        for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
+            int maxTh = (_mq2s[i].type == GAS_SGP40) ? 500 : MQ2_ADC_MAX;
+            _mq2s[i].threshold = constrain(threshold, 10, maxTh);
+        }
     } else if (idx < MAX_MQ2_SENSORS) {
-        _mq2s[idx].threshold = c;
+        int maxTh = (_mq2s[idx].type == GAS_SGP40) ? 500 : MQ2_ADC_MAX;
+        _mq2s[idx].threshold = constrain(threshold, 10, maxTh);
     }
 }
 void SensorManager::setMQ2EnabledAt(int idx, bool enabled) {
@@ -1143,18 +1504,28 @@ void SensorManager::setMQ2EnabledAt(int idx, bool enabled) {
     }
 }
 void SensorManager::calibrateMQ2At(int idx) {
-    if (idx < 0) {
-        for (uint8_t i = 0; i < _mq2Count; i++) {
-            if (_mq2s[i].enabled) {
-                _mq2s[i].baseline = _mq2s[i].raw;
-                SERIAL_PRINTF("[Sensor] MQ2 #%u baseline calibrated to %d\n", (unsigned)(i + 1), _mq2s[i].baseline);
+    auto applyCal = [&](uint8_t slotIdx) {
+        Mq2SlotState& g = _mq2s[slotIdx];
+        if (!g.enabled) return;
+        if (g.type == GAS_SGP40) {
+            if (g.srawTicks >= 1000) {
+                g.vocBaseline = (float)g.srawTicks;
+                g.baseline = (int)g.srawTicks;
+                g.raw = 100;
+                SERIAL_PRINTF("[Sensor] Gas #%u (SGP40) clean-air baseline calibrated to %u ticks (VOC Index = 100)\n",
+                              (unsigned)(slotIdx + 1), g.srawTicks);
             }
+        } else {
+            g.baseline = g.raw;
+            SERIAL_PRINTF("[Sensor] MQ2 #%u baseline calibrated to %d\n", (unsigned)(slotIdx + 1), g.baseline);
         }
+    };
+    if (idx < 0) {
+        for (uint8_t i = 0; i < _mq2Count; i++) applyCal(i);
         saveCalibration();
     } else if (idx < _mq2Count && _mq2s[idx].enabled) {
-        _mq2s[idx].baseline = _mq2s[idx].raw;
+        applyCal((uint8_t)idx);
         saveCalibration();
-        SERIAL_PRINTF("[Sensor] MQ2 #%d baseline calibrated to %d\n", idx + 1, _mq2s[idx].baseline);
     }
 }
 
@@ -1174,6 +1545,12 @@ float SensorManager::getPressure()           {
 bool SensorManager::hasBarometer() const {
     for (uint8_t i = 0; i < _climateCount; i++) if (hasBarometerAt(i)) return true;
     return false;
+}
+bool SensorManager::hasHumidity() const {
+    return isDhtEnabled() && hasHumidityAt(primaryClimateIdx());
+}
+bool SensorManager::isPrimarySgp40() const {
+    return _mq2Count > 0 && _mq2s[primaryMq2Idx()].type == GAS_SGP40;
 }
 bool SensorManager::isDHTFault() {
     for (uint8_t i = 0; i < _climateCount; i++) if (isClimateFaultAt(i)) return true;
@@ -1269,7 +1646,7 @@ void SensorManager::setMQ2Enabled(bool e)  { setMQ2EnabledAt(-1, e); }
 int  SensorManager::getMQ2Percent()        { return isMQ2Enabled() ? getMQ2PercentAt(primaryMq2Idx()) : 0; }
 bool SensorManager::isMQ2Warming() {
     if (!isMQ2Enabled()) return false;
-    return (millis() - _bootTime) < MQ2_WARMUP_TIME;
+    return isMq2WarmingAt(primaryMq2Idx());
 }
 void SensorManager::calibrateMQ2() { calibrateMQ2At(-1); }
 
@@ -1304,10 +1681,12 @@ void SensorManager::saveCalibration() {
     JsonArray gTh = doc["mq2_thresholds"].to<JsonArray>();
     JsonArray gBs = doc["mq2_baselines"].to<JsonArray>();
     JsonArray gEn = doc["mq2_enables"].to<JsonArray>();
+    JsonArray gTp = doc["mq2_types"].to<JsonArray>();
     for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
         gTh.add(_mq2s[i].threshold);
         gBs.add(_mq2s[i].baseline);
         gEn.add(_mq2s[i].enabled);
+        gTp.add(_mq2s[i].type);
     }
 
     _storage->saveJson(PATH_SENSORS, doc);
@@ -1315,9 +1694,12 @@ void SensorManager::saveCalibration() {
 }
 
 void SensorManager::appendStatusJson(JsonObject& obj) {
+    bool priSgp40 = isPrimarySgp40();
+
     // Primary / Aggregate Scalar Compatibility Keys
     obj["temperature"]      = serialized(String(getTemperature(), 1));
     obj["humidity"]         = serialized(String(getHumidity(), 1));
+    obj["humidity_enabled"] = hasHumidity();
     obj["pressure"]         = serialized(String(getPressure(), 1));
     obj["pressure_enabled"] = hasBarometer();
     obj["dht_enabled"]      = isDhtEnabled();
@@ -1341,7 +1723,8 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
 
     obj["gas_raw"]          = getMQ2Raw();
     obj["gas_percent"]      = getMQ2Percent();
-    obj["gas_max"]          = MQ2_ADC_MAX;
+    obj["gas_max"]          = priSgp40 ? 500 : MQ2_ADC_MAX;
+    obj["gas_unit"]         = priSgp40 ? "VOC" : "ADC";
     obj["gas_alarm"]        = isMQ2Alarm();
     obj["gas_enabled"]      = isMQ2Enabled();
     obj["gas_hw_allowed"]   = isMQ2HardwareAllowed();
@@ -1353,19 +1736,20 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
     for (uint8_t i = 0; i < _climateCount; i++) {
         const ClimateSlotState& c = _climates[i];
         JsonObject it = climatesArr.add<JsonObject>();
-        it["index"]       = i;
-        it["enabled"]     = c.enabled;
-        it["type"]        = c.type;
-        it["type_name"]   = climateTypeLabel(c.type, c.bmpDetected);
-        it["label"]       = c.label;
-        it["temperature"] = serialized(String(c.temperature, 1));
-        it["humidity"]    = serialized(String(c.humidity, 1));
-        it["pressure"]    = serialized(String(hasBarometerAt(i) ? c.pressure : 0.0f, 1));
-        it["barometer"]   = hasBarometerAt(i);
-        it["fault"]       = c.fault;
-        it["temp_alarm"]  = c.enabled && !c.fault && (c.temperature >= _tempAlarmThreshold);
-        it["temp_offset"] = c.tempOffset;
-        it["hum_offset"]  = c.humOffset;
+        it["index"]            = i;
+        it["enabled"]          = c.enabled;
+        it["type"]             = c.type;
+        it["type_name"]        = climateTypeLabel(c.type, c.bmpDetected);
+        it["label"]            = c.label;
+        it["temperature"]      = serialized(String(c.temperature, 1));
+        it["humidity"]         = serialized(String(c.humidity, 1));
+        it["humidity_enabled"] = hasHumidityAt(i);
+        it["pressure"]         = serialized(String(hasBarometerAt(i) ? c.pressure : 0.0f, 1));
+        it["barometer"]        = hasBarometerAt(i);
+        it["fault"]            = c.fault;
+        it["temp_alarm"]       = c.enabled && !c.fault && (c.temperature >= _tempAlarmThreshold);
+        it["temp_offset"]      = c.tempOffset;
+        it["hum_offset"]       = c.humOffset;
     }
 
     JsonArray lightsArr = obj["lights"].to<JsonArray>();
@@ -1415,13 +1799,18 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
     }
 
     JsonArray mq2Arr = obj["mq2s"].to<JsonArray>();
-    bool warming = isMQ2Warming();
     for (uint8_t i = 0; i < _mq2Count; i++) {
         const Mq2SlotState& g = _mq2s[i];
+        bool isSgp = (g.type == GAS_SGP40);
         JsonObject it = mq2Arr.add<JsonObject>();
         it["index"]      = i;
         it["enabled"]    = g.enabled;
         it["hw_allowed"] = g.hwAllowed;
+        it["type"]       = g.type;
+        it["type_name"]  = isSgp ? "SGP40" : "MQ-2";
+        it["i2c_addr"]   = isSgp ? g.i2cAddr : 0;
+        it["unit"]       = isSgp ? "VOC" : "ADC";
+        it["gas_max"]    = isSgp ? 500 : MQ2_ADC_MAX;
         it["label"]      = g.label;
         it["raw"]        = g.raw;
         it["percent"]    = getMQ2PercentAt(i);
@@ -1429,7 +1818,7 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
         it["baseline"]   = g.baseline;
         it["alarm"]      = g.alarmActive;
         it["digital"]    = g.digitalState;
-        it["warming"]    = warming && g.enabled;
+        it["warming"]    = isMq2WarmingAt(i);
     }
 }
 
@@ -1468,10 +1857,35 @@ void SensorManager::loadCalibration() {
         JsonArrayConst gTh = doc["mq2_thresholds"].as<JsonArrayConst>();
         JsonArrayConst gBs = doc["mq2_baselines"].as<JsonArrayConst>();
         JsonArrayConst gEn = doc["mq2_enables"].as<JsonArrayConst>();
+        JsonArrayConst gTp = doc["mq2_types"].as<JsonArrayConst>();
         for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
-            _mq2s[i].threshold = constrain((!gTh.isNull() && i < gTh.size()) ? (int)gTh[i] : defMq2Th, 10, MQ2_ADC_MAX);
-            _mq2s[i].baseline  = constrain((!gBs.isNull() && i < gBs.size()) ? (int)gBs[i] : defMq2Base, 0, MQ2_ADC_MAX);
-            _mq2s[i].enabled   = (!gEn.isNull() && i < gEn.size()) ? (bool)gEn[i] : defMq2En;
+            _mq2s[i].enabled = (!gEn.isNull() && i < gEn.size()) ? (bool)gEn[i] : defMq2En;
+            uint8_t savedType = (!gTp.isNull() && i < gTp.size()) ? (uint8_t)gTp[i] : (uint8_t)GAS_MQ2;
+            bool typeMatched = (savedType == _mq2s[i].type);
+
+            if (_mq2s[i].type == GAS_SGP40) {
+                if (typeMatched) {
+                    int rawTh = (!gTh.isNull() && i < gTh.size()) ? (int)gTh[i] : 250;
+                    int rawBs = (!gBs.isNull() && i < gBs.size()) ? (int)gBs[i] : 0;
+                    _mq2s[i].threshold = constrain(rawTh, 10, 500);
+                    _mq2s[i].baseline  = constrain(rawBs, 0, 65535);
+                    if (_mq2s[i].baseline >= 1000) {
+                        _mq2s[i].vocBaseline = (float)_mq2s[i].baseline;
+                    }
+                } else {
+                    _mq2s[i].threshold   = 250;
+                    _mq2s[i].baseline    = 0;
+                    _mq2s[i].vocBaseline = 0.0f;
+                }
+            } else {
+                if (typeMatched) {
+                    _mq2s[i].threshold = constrain((!gTh.isNull() && i < gTh.size()) ? (int)gTh[i] : defMq2Th, 10, MQ2_ADC_MAX);
+                    _mq2s[i].baseline  = constrain((!gBs.isNull() && i < gBs.size()) ? (int)gBs[i] : defMq2Base, 0, MQ2_ADC_MAX);
+                } else {
+                    _mq2s[i].threshold = MQ2_DEFAULT_THRESHOLD;
+                    _mq2s[i].baseline  = MQ2_BASELINE_DEFAULT;
+                }
+            }
         }
     }
 }

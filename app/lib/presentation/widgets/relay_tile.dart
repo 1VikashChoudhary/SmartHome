@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/models/relay_channel.dart';
+import '../../core/models/scheduled_alarm.dart';
 import '../../core/theme/app_colors.dart';
 import 'quick_timer_sheet.dart';
 
@@ -69,15 +70,7 @@ class RelayTile extends StatelessWidget {
     }
   }
 
-  String _formatSeconds(int sec) {
-    if (sec <= 0) return '0s';
-    final h = sec ~/ 3600;
-    final m = (sec % 3600) ~/ 60;
-    final s = sec % 60;
-    if (h > 0) return '${h}h ${m}m';
-    if (m > 0) return '${m}m ${s}s';
-    return '${s}s';
-  }
+  String _formatSeconds(int sec) => ScheduledAlarm.formatDurationSeconds(sec);
 
   void _showTileOptions(BuildContext context) {
     showModalBottomSheet(

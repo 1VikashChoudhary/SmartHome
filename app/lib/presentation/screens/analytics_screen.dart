@@ -285,28 +285,31 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
             AppColors.tempAmber,
           ),
         );
-        chips.add(
-          _valueChip(
-            Icons.water_drop_rounded,
-            '${telemetry.humidity.toStringAsFixed(0)} %',
-            AppColors.cyan,
-          ),
-        );
+        if (telemetry.humidityEnabled) {
+          chips.add(
+            _valueChip(
+              Icons.water_drop_rounded,
+              '${telemetry.humidity.toStringAsFixed(0)} %',
+              AppColors.cyan,
+            ),
+          );
+        }
       }
 
+      final isVoc = telemetry.gasUnit.toUpperCase() == 'VOC';
       if (telemetry.gasWarming) {
         chips.add(
           _valueChip(
             Icons.hourglass_top_rounded,
-            'MQ-2 warming',
+            isVoc ? 'SGP40 warming' : 'MQ-2 warming',
             AppColors.warning,
           ),
         );
       } else {
         chips.add(
           _valueChip(
-            Icons.local_fire_department_rounded,
-            '${telemetry.gasRaw} ADC',
+            isVoc ? Icons.air_rounded : Icons.local_fire_department_rounded,
+            '${telemetry.gasRaw} ${telemetry.gasUnit}',
             telemetry.gasAlarm ? AppColors.danger : AppColors.success,
           ),
         );
@@ -494,14 +497,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                     AppColors.tempAmber,
                   ),
                 ),
-                _divider(),
-                Expanded(
-                  child: _largeValue(
-                    'Humidity',
-                    '${telemetry.humidity.toStringAsFixed(0)} %',
-                    AppColors.cyan,
+                if (telemetry.humidityEnabled) ...[
+                  _divider(),
+                  Expanded(
+                    child: _largeValue(
+                      'Humidity',
+                      '${telemetry.humidity.toStringAsFixed(0)} %',
+                      AppColors.cyan,
+                    ),
                   ),
-                ),
+                ],
                 _divider(),
                 Expanded(
                   child: _largeValue(
@@ -515,8 +520,12 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           ),
         const SizedBox(height: 14),
         _sectionTitle(
-          Icons.local_fire_department_rounded,
-          'Air Safety',
+          telemetry.gasUnit.toUpperCase() == 'VOC'
+              ? Icons.air_rounded
+              : Icons.local_fire_department_rounded,
+          telemetry.gasUnit.toUpperCase() == 'VOC'
+              ? 'Air Quality (VOC)'
+              : 'Air Safety',
           telemetry.gasAlarm ? AppColors.danger : AppColors.success,
         ),
         const SizedBox(height: 8),
@@ -524,7 +533,9 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           child: telemetry.gasWarming
               ? _notice(
                   Icons.hourglass_top_rounded,
-                  'MQ-2 warming up',
+                  telemetry.gasUnit.toUpperCase() == 'VOC'
+                      ? 'SGP40 warming up'
+                      : 'MQ-2 warming up',
                   'Alarm decisions wait until the ESP sensor warm-up completes.',
                   AppColors.warning,
                 )
@@ -536,7 +547,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                         Expanded(
                           child: _largeValue(
                             'Current level',
-                            '${telemetry.gasRaw} ADC',
+                            '${telemetry.gasRaw} ${telemetry.gasUnit}',
                             telemetry.gasAlarm
                                 ? AppColors.danger
                                 : AppColors.success,
@@ -546,7 +557,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                         Expanded(
                           child: _largeValue(
                             'ESP threshold',
-                            '${telemetry.gasThreshold} ADC',
+                            '${telemetry.gasThreshold} ${telemetry.gasUnit}',
                             AppColors.textPrimary,
                           ),
                         ),
@@ -644,14 +655,15 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                       telemetry.climates[i].displayName,
                       telemetry.climates[i].fault
                           ? 'Fault / Disconnected'
-                          : '${telemetry.climates[i].temperature.toStringAsFixed(1)} °C • ${telemetry.climates[i].humidity.toStringAsFixed(0)} %'
+                          : '${telemetry.climates[i].temperature.toStringAsFixed(1)} °C'
+                              '${telemetry.climates[i].humidityEnabled ? " • ${telemetry.climates[i].humidity.toStringAsFixed(0)} %" : ""}'
                               '${telemetry.climates[i].barometer && telemetry.climates[i].pressure > 300 ? " • ${telemetry.climates[i].pressure.toStringAsFixed(1)} hPa" : ""}',
                     ),
                 for (int i = 1; i < telemetry.mq2s.length; i++)
                   if (telemetry.mq2s[i].enabled)
                     _detail(
                       telemetry.mq2s[i].displayName,
-                      '${telemetry.mq2s[i].raw} ADC (${telemetry.mq2s[i].alarm ? "ALERT" : "Normal"})',
+                      '${telemetry.mq2s[i].raw} ${telemetry.mq2s[i].unit} (${telemetry.mq2s[i].alarm ? "ALERT" : "Normal"})',
                     ),
                 if (telemetry.lights.isNotEmpty)
                   for (final l in telemetry.lights.where((x) => x.enabled))

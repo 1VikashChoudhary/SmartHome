@@ -283,14 +283,24 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                     for (JsonObjectConst c : subDoc["climates"].as<JsonArrayConst>()) {
                         uint8_t dt = c["type"] | 0;
                         uint8_t dp = c["pin"] | PIN_UNUSED;
-                        if ((dt == 1 || dt == 2) && !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
-                        if (dt >= 3) anyI2c = true;
+                        if (dt > 7) {
+                            isEsp8266Compatible = false;
+                        } else if (dt == 1 || dt == 2 || dt == 7) {
+                            if (!isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                        } else if (dt >= 3) {
+                            anyI2c = true;
+                        }
                     }
                 } else {
                     uint8_t dhtType = subDoc["dht"]["type"] | 0;
                     uint8_t dhtPin = subDoc["dht"]["pin"] | PIN_UNUSED;
-                    if ((dhtType == 1 || dhtType == 2) && !isValid8266DigitalPin(dhtPin)) isEsp8266Compatible = false;
-                    if (dhtType >= 3) anyI2c = true;
+                    if (dhtType > 7) {
+                        isEsp8266Compatible = false;
+                    } else if (dhtType == 1 || dhtType == 2 || dhtType == 7) {
+                        if (!isValid8266DigitalPin(dhtPin)) isEsp8266Compatible = false;
+                    } else if (dhtType >= 3) {
+                        anyI2c = true;
+                    }
                 }
                 if (subDoc.containsKey("lights")) {
                     for (JsonObjectConst l : subDoc["lights"].as<JsonArrayConst>()) {
@@ -332,9 +342,16 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 if (subDoc.containsKey("mq2_sensors")) {
                     for (JsonObjectConst g : subDoc["mq2_sensors"].as<JsonArrayConst>()) {
                         if (!(g["enabled"] | true)) continue;
-                        uint8_t ap = g["analog_pin"] | PIN_UNUSED;
-                        uint8_t dp = g["digital_pin"] | PIN_UNUSED;
-                        if ((ap != PIN_UNUSED && ap != 17) || !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                        uint8_t gt = g["type"] | 0;
+                        if (gt == 1) { // SGP40 (I2C)
+                            anyI2c = true;
+                        } else if (gt == 0) { // MQ-2 (Analog/Digital)
+                            uint8_t ap = g["analog_pin"] | PIN_UNUSED;
+                            uint8_t dp = g["digital_pin"] | PIN_UNUSED;
+                            if ((ap != PIN_UNUSED && ap != 17) || !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
+                        } else {
+                            isEsp8266Compatible = false;
+                        }
                     }
                 } else if (subDoc["mq2"]["enabled"] | false) {
                     uint8_t ap = subDoc["mq2"]["analog_pin"] | PIN_UNUSED;
@@ -344,7 +361,9 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 if (anyI2c) {
                     uint8_t sda = subDoc["lcd"]["sda_pin"] | PIN_UNUSED;
                     uint8_t scl = subDoc["lcd"]["scl_pin"] | PIN_UNUSED;
-                    if (!isValid8266DigitalPin(sda) || !isValid8266DigitalPin(scl)) {
+                    bool explicitI2cPins = subDoc["lcd"].containsKey("sda_pin") && subDoc["lcd"].containsKey("scl_pin");
+                    if (!isValid8266DigitalPin(sda) || !isValid8266DigitalPin(scl) ||
+                        (explicitI2cPins && (sda == PIN_UNUSED || scl == PIN_UNUSED || sda == scl))) {
                         isEsp8266Compatible = false;
                     }
                 }
@@ -396,14 +415,24 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                     for (JsonObjectConst c : subDoc["climates"].as<JsonArrayConst>()) {
                         uint8_t dt = c["type"] | 0;
                         uint8_t dp = c["pin"] | PIN_UNUSED;
-                        if ((dt == 1 || dt == 2) && !isValidEsp32OutPin(dp)) isEsp32Compatible = false;
-                        if (dt >= 3) anyI2c = true;
+                        if (dt > 7) {
+                            isEsp32Compatible = false;
+                        } else if (dt == 1 || dt == 2 || dt == 7) {
+                            if (!isValidEsp32OutPin(dp)) isEsp32Compatible = false;
+                        } else if (dt >= 3) {
+                            anyI2c = true;
+                        }
                     }
                 } else {
                     uint8_t dhtType = subDoc["dht"]["type"] | 0;
                     uint8_t dhtPin = subDoc["dht"]["pin"] | PIN_UNUSED;
-                    if ((dhtType == 1 || dhtType == 2) && !isValidEsp32OutPin(dhtPin)) isEsp32Compatible = false;
-                    if (dhtType >= 3) anyI2c = true;
+                    if (dhtType > 7) {
+                        isEsp32Compatible = false;
+                    } else if (dhtType == 1 || dhtType == 2 || dhtType == 7) {
+                        if (!isValidEsp32OutPin(dhtPin)) isEsp32Compatible = false;
+                    } else if (dhtType >= 3) {
+                        anyI2c = true;
+                    }
                 }
                 if (subDoc.containsKey("lights")) {
                     for (JsonObjectConst l : subDoc["lights"].as<JsonArrayConst>()) {
@@ -445,9 +474,16 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 if (subDoc.containsKey("mq2_sensors")) {
                     for (JsonObjectConst g : subDoc["mq2_sensors"].as<JsonArrayConst>()) {
                         if (!(g["enabled"] | true)) continue;
-                        uint8_t ap = g["analog_pin"] | PIN_UNUSED;
-                        uint8_t dp = g["digital_pin"] | PIN_UNUSED;
-                        if (ap == 17 || !isValidEsp32InPin(ap) || !isValidEsp32InPin(dp)) isEsp32Compatible = false;
+                        uint8_t gt = g["type"] | 0;
+                        if (gt == 1) { // SGP40 (I2C)
+                            anyI2c = true;
+                        } else if (gt == 0) { // MQ-2 (Analog/Digital)
+                            uint8_t ap = g["analog_pin"] | PIN_UNUSED;
+                            uint8_t dp = g["digital_pin"] | PIN_UNUSED;
+                            if (ap == 17 || !isValidEsp32InPin(ap) || !isValidEsp32InPin(dp)) isEsp32Compatible = false;
+                        } else {
+                            isEsp32Compatible = false;
+                        }
                     }
                 } else if (subDoc["mq2"]["enabled"] | false) {
                     uint8_t ap = subDoc["mq2"]["analog_pin"] | PIN_UNUSED;
@@ -457,7 +493,9 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 if (anyI2c) {
                     uint8_t sda = subDoc["lcd"]["sda_pin"] | PIN_UNUSED;
                     uint8_t scl = subDoc["lcd"]["scl_pin"] | PIN_UNUSED;
-                    if (!isValidEsp32OutPin(sda) || !isValidEsp32OutPin(scl)) {
+                    bool explicitI2cPins = subDoc["lcd"].containsKey("sda_pin") && subDoc["lcd"].containsKey("scl_pin");
+                    if (!isValidEsp32OutPin(sda) || !isValidEsp32OutPin(scl) ||
+                        (explicitI2cPins && (sda == PIN_UNUSED || scl == PIN_UNUSED || sda == scl))) {
                         isEsp32Compatible = false;
                     }
                 }

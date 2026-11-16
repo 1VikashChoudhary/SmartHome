@@ -43,23 +43,65 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     });
     _selectedDeviceId = widget.preselectedDeviceId;
     int tickCount = 0;
-    _countdownTicker = Timer.periodic(const Duration(seconds: 2), (_) async {
+    bool isSyncingAlarms = false;
+    Set<int> prevActiveCountdownIds = <int>{};
+    _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) async {
       if (!mounted) return;
+      final currentActiveIds = _alarms
+          .where((a) => a.hasLiveCountdown)
+          .map((a) => a.id)
+          .toSet();
+      final bool justExpired = prevActiveCountdownIds.any(
+        (id) =>
+            !currentActiveIds.contains(id) &&
+            _alarms.any((a) => a.id == id && a.enabled && !a.fired),
+      );
+      prevActiveCountdownIds = currentActiveIds;
       setState(() {});
       tickCount++;
-      if (tickCount % 8 != 0) return;
-      // Silently refresh alarm fired status from device if connected
+      if (!justExpired && tickCount % 15 != 0) return;
+      if (isSyncingAlarms) return;
+      // Silently refresh alarm status from device if connected
       final devices = ref.read(deviceManagerProvider);
       final dev = _resolveDevice(devices);
       if (dev != null && dev.isOnline && _alarms.isNotEmpty) {
-        final rawAlarms = await _api.fetchAlarms(
-          dev.ip,
-          password: dev.authPassword,
-        );
-        if (mounted && rawAlarms != null && _selectedDeviceId == dev.id) {
-          setState(() {
-            _alarms = rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList();
-          });
+        isSyncingAlarms = true;
+        try {
+          var synced = await _api.fetchAlarms(
+            dev.ip,
+            password: dev.authPassword,
+          );
+          if (justExpired &&
+              mounted &&
+              synced != null &&
+              synced.any(
+                (m) =>
+                    (m['en'] == true) &&
+                    (m['fired'] != true) &&
+                    ((m['mode'] as num?)?.toInt() == 1) &&
+                    (((m['rem_sec'] as num?)?.toInt() ?? 0) == 0),
+              )) {
+            await Future.delayed(const Duration(milliseconds: 1100));
+            if (!mounted) return;
+            synced =
+                await _api.fetchAlarms(dev.ip, password: dev.authPassword) ??
+                synced;
+          }
+          if (mounted && synced != null && _selectedDeviceId == dev.id) {
+            final latestAlarms = synced.map((m) => ScheduledAlarm.fromJson(m)).toList();
+            setState(() {
+              _alarms = latestAlarms;
+              prevActiveCountdownIds = _alarms
+                  .where((a) => a.hasLiveCountdown)
+                  .map((a) => a.id)
+                  .toSet();
+            });
+          }
+          if (justExpired && mounted) {
+            ref.read(deviceManagerProvider.notifier).refreshAllDevices();
+          }
+        } finally {
+          isSyncingAlarms = false;
         }
       }
     });
@@ -272,6 +314,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
           _alarms = rawAlarms.map((m) => ScheduledAlarm.fromJson(m)).toList();
         });
       }
+      if (mounted) {
+        ref.read(deviceManagerProvider.notifier).refreshAllDevices();
+      }
     } else {
       final revertIdx = _alarms.indexWhere((a) => a.id == alarm.id);
       if (revertIdx >= 0) {
@@ -327,6 +372,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       if (!mounted) return;
       if (ok) {
         setState(() => _alarms.removeWhere((a) => a.id == alarm.id));
+        if (mounted) {
+          ref.read(deviceManagerProvider.notifier).refreshAllDevices();
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Schedule deleted'),
@@ -441,10 +489,10 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   const SizedBox(height: 8),
                   LuxurySegmentedSelector<int>(
                     values: const [0, 1, 2],
-                    labels: const {
+                    labels: {
                       0: 'Temp (°C)',
                       1: 'Hum (%)',
-                      2: 'Gas (ADC)',
+                      2: 'Gas (${AutomationRule.gasSpecFor(dev.telemetry, 0, isEsp8266: dev.isEsp8266).unit})',
                     },
                     icons: const {
                       0: Icons.thermostat,
@@ -462,8 +510,13 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           thresholdValue = 70.0;
                           hystValue = 2.0;
                         } else {
-                          thresholdValue = 800.0;
-                          hystValue = 30.0;
+                          final spec = AutomationRule.gasSpecFor(
+                            dev.telemetry,
+                            0,
+                            isEsp8266: dev.isEsp8266,
+                          );
+                          thresholdValue = spec.defaultThreshold;
+                          hystValue = double.parse(spec.defaultHyst);
                         }
                       });
                     },
@@ -517,7 +570,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           ),
                         ),
                         child: Text(
-                          '${thresholdValue.toStringAsFixed(selectedSensor == 2 ? 0 : 1)} ${selectedSensor == 0 ? "°C" : (selectedSensor == 1 ? "%" : "ADC")}',
+                          '${thresholdValue.toStringAsFixed(selectedSensor == 2 ? 0 : 1)} ${selectedSensor == 0 ? "°C" : (selectedSensor == 1 ? "%" : AutomationRule.gasSpecFor(dev.telemetry, 0, isEsp8266: dev.isEsp8266).unit)}',
                           style: TextStyle(
                             color: AppColors.primaryLight,
                             fontWeight: FontWeight.bold,
@@ -529,21 +582,24 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   ),
                   Builder(
                     builder: (context) {
+                      final gasSpec = AutomationRule.gasSpecFor(
+                        dev.telemetry,
+                        0,
+                        isEsp8266: dev.isEsp8266,
+                      );
                       final maxVal = selectedSensor == 0
                           ? 60.0
-                          : (selectedSensor == 1
-                              ? 100.0
-                              : (dev.telemetry.gasMax > 0
-                                  ? dev.telemetry.gasMax.toDouble()
-                                  : (dev.isEsp8266 ? 1023.0 : 4095.0)));
+                          : (selectedSensor == 1 ? 100.0 : gasSpec.maxVal);
                       return Slider(
                         value: thresholdValue.clamp(0.0, maxVal),
                         min: 0.0,
                         max: maxVal,
-                        divisions: selectedSensor == 2 ? 80 : 60,
+                        divisions: selectedSensor == 2
+                            ? (gasSpec.isSgp40 ? 50 : 80)
+                            : 60,
                         activeColor: AppColors.primary,
-                        onChanged: (val) =>
-                            setSheetState(() => thresholdValue = val),
+                        onChanged: (value) =>
+                            setSheetState(() => thresholdValue = value),
                       );
                     },
                   ),
@@ -1430,7 +1486,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           children: [
                             Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 20),
                             SizedBox(width: 10),
-                            Text('Gas / MQ-2 (ADC)', style: TextStyle(fontWeight: FontWeight.w600)),
+                            Text('Gas / Air Quality (MQ-2 / SGP40)', style: TextStyle(fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),
@@ -1490,8 +1546,13 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                             hysteresisController.text = '2.0';
                             break;
                           case 2:
-                            threshold = 800.0;
-                            hysteresisController.text = '30';
+                            final spec = AutomationRule.gasSpecFor(
+                              dev.telemetry,
+                              0,
+                              isEsp8266: dev.isEsp8266,
+                            );
+                            threshold = spec.defaultThreshold;
+                            hysteresisController.text = spec.defaultHyst;
                             break;
                           case 3:
                             threshold = 200.0;
@@ -1556,8 +1617,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           ),
                         ),
                       ),
-                      onChanged: (value) =>
-                          setSheetState(() => sensorIndex = value ?? sensorIndex),
+                      onChanged: (value) => setSheetState(() {
+                        sensorIndex = value ?? sensorIndex;
+                        if (sensor == 2) {
+                          final spec = AutomationRule.gasSpecFor(
+                            dev.telemetry,
+                            sensorIndex,
+                            isEsp8266: dev.isEsp8266,
+                          );
+                          threshold = threshold.clamp(0.0, spec.maxVal);
+                        }
+                      }),
                     ),
                   ],
                   const SizedBox(height: 14),
@@ -1612,11 +1682,16 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         divisionsVal = 100;
                         decimals = 0;
                       } else if (sensor == 2) {
-                        unitStr = 'ADC';
-                        maxVal = dev.telemetry.gasMax > 0
-                            ? dev.telemetry.gasMax.toDouble()
-                            : (dev.isEsp8266 ? 1023.0 : 4095.0);
-                        divisionsVal = dev.isEsp8266 ? 50 : 80;
+                        final gasSpec = AutomationRule.gasSpecFor(
+                          dev.telemetry,
+                          clampedSensorIdx,
+                          isEsp8266: dev.isEsp8266,
+                        );
+                        unitStr = gasSpec.unit;
+                        maxVal = gasSpec.maxVal;
+                        divisionsVal = gasSpec.isSgp40
+                            ? 50
+                            : (dev.isEsp8266 ? 50 : 80);
                         decimals = 0;
                       } else if (sensor == 3) {
                         unitStr = 'lx';
@@ -1902,9 +1977,11 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                             : (sensor == 1 || sensor == 5
                                   ? 100.0
                                   : (sensor == 2
-                                        ? (dev.telemetry.gasMax > 0
-                                              ? dev.telemetry.gasMax.toDouble()
-                                              : (dev.isEsp8266 ? 1023.0 : 4095.0))
+                                        ? AutomationRule.gasSpecFor(
+                                            dev.telemetry,
+                                            clampedSensorIdx,
+                                            isEsp8266: dev.isEsp8266,
+                                          ).maxVal
                                         : (sensor == 3
                                               ? 2000.0
                                               : (sensor == 6 ? 1.0 : 100.0))));
@@ -2947,6 +3024,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                         if (ok) {
                           Navigator.pop(sheetContext);
                           await _loadAlarms(dev);
+                          if (mounted) {
+                            ref.read(deviceManagerProvider.notifier).refreshAllDevices();
+                          }
                         } else {
                           ScaffoldMessenger.of(sheetContext).showSnackBar(
                             const SnackBar(
@@ -3414,7 +3494,8 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
           final gasVal = (sIdx >= 0 && sIdx < tel.mq2s.length)
               ? tel.mq2s[sIdx].raw
               : (sIdx == 0 ? tel.gasRaw : null);
-          liveSensorValue = gasVal != null ? '$gasVal ADC' : 'N/A';
+          final gasUnit = rule.unitFor(tel);
+          liveSensorValue = gasVal != null ? '$gasVal $gasUnit' : 'N/A';
         } else if (rule.sensor == 3) {
           sColor = Colors.amber;
           sIcon = Icons.wb_sunny;
@@ -3576,7 +3657,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                                 const SizedBox(width: 4),
                                 Flexible(
                                   child: Text(
-                                    'IF ${rule.sensorLabel} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed((rule.sensor == 2 || rule.sensor == 6) ? 0 : 1)}${rule.unit}',
+                                    'IF ${rule.sensorLabelFor(dev.telemetry)} ${rule.condition == 0 ? "≥" : "≤"} ${rule.threshold.toStringAsFixed((rule.sensor == 2 || rule.sensor == 6) ? 0 : 1)}${rule.sensor == 2 ? ' ' : ''}${rule.unitFor(dev.telemetry)}',
                                     style: TextStyle(
                                       fontSize: 11.5,
                                       color: AppColors.textSecondary,
@@ -3805,8 +3886,10 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         final a = _alarms[idx];
         final rName = _relayLabel(dev, a.targetRelay);
         final isDelay = a.mode == 1;
+        final hasCountdown = a.hasLiveCountdown;
+        final double? progress = a.countdownProgress;
         final title = isDelay
-            ? _delayLabel(a.delayMinutes)
+            ? (hasCountdown ? a.formattedCountdown : _delayLabel(a.delayMinutes))
             : _formatAlarmTime(a.hour, a.minute);
         final actionText = a.action <= 2
             ? '${a.actionLabel} $rName'
@@ -3858,7 +3941,9 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
 
         // Subtitle pieces
         final String typeLabel = isDelay
-            ? 'One-shot countdown'
+            ? ((a.enabled && !isFired && hasCountdown)
+                  ? 'Set for ${_delayLabel(a.delayMinutes)}'
+                  : 'One-shot countdown')
             : a.typeLabel;
 
         // Only show next run badge for fixed-time armed timers
@@ -3930,8 +4015,13 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                                       fontSize: isDelay ? 24 : 22,
                                       fontWeight: FontWeight.w900,
                                       letterSpacing: isDelay ? -0.5 : -0.3,
+                                      fontFeatures: const [
+                                        FontFeature.tabularFigures(),
+                                      ],
                                       color: a.enabled
-                                          ? AppColors.textPrimary
+                                          ? (isDelay && hasCountdown
+                                                ? AppColors.warning
+                                                : AppColors.textPrimary)
                                           : AppColors.textMuted,
                                     ),
                                   ),
@@ -4024,12 +4114,17 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                                       fontSize: 11,
                                     ),
                                   ),
-                                  Text(
-                                    'Counting down',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.primaryLight,
+                                  Flexible(
+                                    child: Text(
+                                      'Counting down',
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: hasCountdown
+                                            ? AppColors.warning
+                                            : AppColors.primaryLight,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -4050,6 +4145,24 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                   ),
                 ),
 
+                if (progress != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: progress,
+                        minHeight: 3.5,
+                        backgroundColor: AppColors.cardBorder.withValues(
+                          alpha: 0.4,
+                        ),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          AppColors.warning,
+                        ),
+                      ),
+                    ),
+                  ),
+
                 const SizedBox(height: 12),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -4060,53 +4173,98 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 ),
                 const SizedBox(height: 10),
 
-                // ═══ Bottom Section: Action chip + Edit/Delete ═══
+                // ═══ Bottom Section: Action chip + Countdown pill + Edit/Delete ═══
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
                   child: Row(
                     children: [
-                      // Action chip (content-hugging, not stretched)
+                      // Action chip + live countdown pill (content-hugging wrap)
                       Expanded(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: effectiveActionColor.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: effectiveActionColor.withValues(
-                                  alpha: a.enabled ? 0.3 : 0.15,
-                                ),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 6,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
                               ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  actionIcon,
-                                  size: 14,
-                                  color: effectiveActionColor,
-                                ),
-                                const SizedBox(width: 6),
-                                Flexible(
-                                  child: Text(
-                                    actionText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      color: effectiveActionColor,
-                                    ),
+                              decoration: BoxDecoration(
+                                color: effectiveActionColor.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: effectiveActionColor.withValues(
+                                    alpha: a.enabled ? 0.3 : 0.15,
                                   ),
                                 ),
-                              ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    actionIcon,
+                                    size: 14,
+                                    color: effectiveActionColor,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Flexible(
+                                    child: Text(
+                                      actionText,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w700,
+                                        color: effectiveActionColor,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
+                            if (hasCountdown)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.warning.withValues(
+                                    alpha: 0.16,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: AppColors.warning.withValues(
+                                      alpha: 0.4,
+                                    ),
+                                    width: 0.8,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.alarm,
+                                      size: 11,
+                                      color: AppColors.warning,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      a.formattedCountdown,
+                                      style: const TextStyle(
+                                        fontSize: 10.5,
+                                        color: AppColors.warning,
+                                        fontWeight: FontWeight.w800,
+                                        fontFeatures: [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                       const SizedBox(width: 8),

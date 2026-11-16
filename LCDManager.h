@@ -84,12 +84,12 @@ public:
     void setDimmedBrightness(uint8_t brightness);
 
     // Data update methods (called from main loop)
-    void updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled = true);
+    void updateSensorData(float temp, float hum, bool dhtFault, bool dhtEnabled = true, bool hasHumidity = true);
     void updateRelayStates(const bool states[5]);
     void updateRelayStates(const bool states[], uint8_t count);
     void updateNetworkInfo(const String& ip, const String& date, const String& dayOfWeek,
                            bool isAP = false, const String& apSSID = "", const String& apPass = "");
-    void updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled = true);
+    void updateGasData(int gasValue, int threshold, bool alarm, bool warming, bool mq2Enabled = true, bool isSgp40 = false);
     void updateMqttStatus(bool connected, const String& uptime);
 
 private:
@@ -135,11 +135,12 @@ private:
     float _temp, _hum;
     bool _dhtFault;
     bool _dhtEnabled;
+    bool _hasHumidity;
     uint8_t _numRelays;
     bool _relayStates[MAX_RELAYS];
     String _ipAddr, _dateStr, _dowStr;
     int _gasValue, _gasThreshold;
-    bool _gasAlarm, _gasWarming, _mq2Enabled;
+    bool _gasAlarm, _gasWarming, _mq2Enabled, _gasIsSgp40;
     bool _mqttConnected;
     String _uptimeStr;
     bool _isAPMode;

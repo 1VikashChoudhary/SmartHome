@@ -70,15 +70,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       for (final r in enabledRelays) {
         if (r.state) totalActiveRelays++;
       }
+      final activeClimates =
+          dev.telemetry.climates.where((c) => c.enabled).toList();
+      final hasPrimaryHum = activeClimates.isNotEmpty
+          ? activeClimates.first.humidityEnabled
+          : dev.telemetry.humidityEnabled;
       if (dev.isOnline &&
           dev.telemetry.dhtEnabled &&
           !dev.telemetry.dhtError &&
-          (dev.telemetry.temperature != 0 || dev.telemetry.humidity > 0)) {
+          (dev.telemetry.temperature != 0 ||
+              (hasPrimaryHum && dev.telemetry.humidity > 0))) {
         tempSum += dev.telemetry.temperature;
         tempCount++;
       }
       if (dev.isOnline &&
           dev.telemetry.dhtEnabled &&
+          hasPrimaryHum &&
           dev.telemetry.humidity > 0 &&
           !dev.telemetry.dhtError) {
         humSum += dev.telemetry.humidity;
@@ -320,7 +327,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                         fontSize: 13),
                                   ),
                                   Text(
-                                    'MQ-2 Reading: ${gasDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
+                                    gasDevice.telemetry.gasUnit.toUpperCase() ==
+                                            'VOC'
+                                        ? 'SGP40 VOC Reading: ${gasDevice.telemetry.gasRaw} VOC. Tap to inspect controller.'
+                                        : 'MQ-2 Reading: ${gasDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
                                     style: TextStyle(
                                         color: AppColors.textSecondary,
                                         fontSize: 11),
@@ -958,6 +968,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     final primaryCliFault = activeClimates.isNotEmpty
                         ? activeClimates.first.fault
                         : dev.telemetry.dhtError;
+                    final hasPrimaryHum = activeClimates.isNotEmpty
+                        ? activeClimates.first.humidityEnabled
+                        : dev.telemetry.humidityEnabled;
                     final pTemp = activeClimates.isNotEmpty
                         ? activeClimates.first.temperature
                         : dev.telemetry.temperature;
@@ -966,7 +979,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         : dev.telemetry.humidity;
                     if (!dev.telemetry.hasActiveClimate ||
                         primaryCliFault ||
-                        (pTemp == 0 && pHum <= 0)) {
+                        (pTemp == 0 && (!hasPrimaryHum || pHum <= 0))) {
                       return const <Widget>[];
                     }
                     return [
@@ -989,13 +1002,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                               '${pTemp.toStringAsFixed(1)}°',
                               style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.tempAmber),
                             ),
-                            const SizedBox(width: 6),
-                            const Icon(Icons.water_drop, size: 12, color: AppColors.cyan),
-                            const SizedBox(width: 2),
-                            Text(
-                              '${pHum.toStringAsFixed(0)}%',
-                              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.cyan),
-                            ),
+                            if (hasPrimaryHum) ...[
+                              const SizedBox(width: 6),
+                              const Icon(Icons.water_drop, size: 12, color: AppColors.cyan),
+                              const SizedBox(width: 2),
+                              Text(
+                                '${pHum.toStringAsFixed(0)}%',
+                                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.cyan),
+                              ),
+                            ],
                           ],
                         ),
                       ),

@@ -1,3 +1,5 @@
+import 'sensor_telemetry.dart';
+
 class AutomationRule {
   final int id;
   final bool enabled;
@@ -98,6 +100,58 @@ class AutomationRule {
       default:
         return '';
     }
+  }
+
+  /// Resolves the unit (`VOC` vs `ADC`), ceiling, and defaults for Gas slot [slotIndex].
+  static ({
+    String unit,
+    bool isSgp40,
+    double maxVal,
+    double defaultThreshold,
+    String defaultHyst,
+  }) gasSpecFor(
+    SensorTelemetry? telemetry,
+    int slotIndex, {
+    bool isEsp8266 = false,
+  }) {
+    bool isSgp = false;
+    int rawMax = 0;
+    if (telemetry != null) {
+      if (slotIndex >= 0 && slotIndex < telemetry.mq2s.length) {
+        final slot = telemetry.mq2s[slotIndex];
+        isSgp = slot.isSgp40;
+        rawMax = slot.gasMax;
+      } else if (slotIndex == 0 && telemetry.mq2s.isEmpty) {
+        isSgp = telemetry.gasUnit.toUpperCase() == 'VOC';
+        rawMax = telemetry.gasMax;
+      }
+    }
+    final maxVal = isSgp
+        ? (rawMax > 0 ? rawMax.toDouble() : 500.0)
+        : (rawMax > 0 ? rawMax.toDouble() : (isEsp8266 ? 1023.0 : 4095.0));
+    return (
+      unit: isSgp ? 'VOC' : 'ADC',
+      isSgp40: isSgp,
+      maxVal: maxVal,
+      defaultThreshold: isSgp ? 250.0 : (isEsp8266 ? 400.0 : 800.0),
+      defaultHyst: isSgp ? '25' : '30',
+    );
+  }
+
+  String sensorLabelFor(SensorTelemetry? telemetry) {
+    if (sensor == 2 && telemetry != null) {
+      final spec = gasSpecFor(telemetry, sensorIndex);
+      final idxSuffix = sensorIndex > 0 ? ' #${sensorIndex + 1}' : '';
+      return '${spec.isSgp40 ? 'SGP40 VOC' : 'Gas Sensor'}$idxSuffix';
+    }
+    return sensorLabel;
+  }
+
+  String unitFor(SensorTelemetry? telemetry) {
+    if (sensor == 2) {
+      return gasSpecFor(telemetry, sensorIndex).unit;
+    }
+    return unit;
   }
 
   String get actionLabel => action == 0 ? 'Turn ON' : 'Turn OFF';

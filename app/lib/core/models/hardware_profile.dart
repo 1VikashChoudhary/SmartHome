@@ -23,13 +23,27 @@ enum ClimateSensorType {
   dht22(2, 'DHT22 / AM2302'),
   bme280(3, 'BME280 (I2C Temp/Hum/Baro)'),
   aht20(4, 'AHT20 (I2C Temp/Hum)'),
-  sht31(5, 'SHT31 / SHT3x (I2C High Accuracy)');
+  sht31(5, 'SHT31 / SHT3x (I2C High Accuracy)'),
+  sht4x(6, 'SHT40 / SHT45 (I2C High Accuracy)'),
+  ds18b20(7, 'DS18B20 (1-Wire Temp)');
 
   final int value;
   final String label;
   const ClimateSensorType(this.value, this.label);
 
-  bool get isI2c => value >= 3;
+  bool get isI2c =>
+      this == ClimateSensorType.bme280 ||
+      this == ClimateSensorType.aht20 ||
+      this == ClimateSensorType.sht31 ||
+      this == ClimateSensorType.sht4x;
+
+  bool get isOneWire =>
+      this == ClimateSensorType.dht11 ||
+      this == ClimateSensorType.dht22 ||
+      this == ClimateSensorType.ds18b20;
+
+  bool get hasHumidity =>
+      this != ClimateSensorType.none && this != ClimateSensorType.ds18b20;
 
   List<int> get allowedI2cAddrs {
     switch (this) {
@@ -38,6 +52,7 @@ enum ClimateSensorType {
       case ClimateSensorType.aht20:
         return const [0x38];
       case ClimateSensorType.sht31:
+      case ClimateSensorType.sht4x:
         return const [0x44, 0x45];
       default:
         return const [];
@@ -398,45 +413,79 @@ class UltrasonicSensorSlotConfig {
   }
 }
 
+enum GasSensorType {
+  mq2(0, 'MQ-2 (Analog / DO Smoke & Gas)'),
+  sgp40(1, 'SGP40 (I2C VOC Air Quality 0x59)');
+
+  final int value;
+  final String label;
+  const GasSensorType(this.value, this.label);
+
+  bool get isI2c => this == GasSensorType.sgp40;
+
+  static GasSensorType fromValue(int val) {
+    return GasSensorType.values.firstWhere(
+      (m) => m.value == val,
+      orElse: () => GasSensorType.mq2,
+    );
+  }
+}
+
 class Mq2SensorSlotConfig {
+  final GasSensorType type;
   final bool enabled;
   final int analogPin;
   final int digitalPin;
+  final int i2cAddr;
   final String label;
 
   const Mq2SensorSlotConfig({
+    this.type = GasSensorType.mq2,
     this.enabled = true,
     this.analogPin = 34,
     this.digitalPin = 35,
+    this.i2cAddr = 0,
     this.label = '',
   });
 
   factory Mq2SensorSlotConfig.fromJson(Map<String, dynamic> json) {
+    final type = GasSensorType.fromValue((json['type'] as num?)?.toInt() ?? 0);
+    final rawAddr = (json['i2c_addr'] as num?)?.toInt() ?? 0;
     return Mq2SensorSlotConfig(
+      type: type,
       enabled: json['enabled'] as bool? ?? true,
-      analogPin: (json['analog_pin'] as num?)?.toInt() ?? 255,
-      digitalPin: (json['digital_pin'] as num?)?.toInt() ?? 255,
+      analogPin: type.isI2c ? 255 : ((json['analog_pin'] as num?)?.toInt() ?? 255),
+      digitalPin: type.isI2c ? 255 : ((json['digital_pin'] as num?)?.toInt() ?? 255),
+      i2cAddr: type.isI2c ? (rawAddr > 0 ? rawAddr : 0x59) : 0,
       label: json['label'] as String? ?? '',
     );
   }
 
   Map<String, dynamic> toJson() => {
+    'type': type.value,
     'enabled': enabled,
-    'analog_pin': analogPin,
-    'digital_pin': digitalPin,
+    'analog_pin': type.isI2c ? 255 : analogPin,
+    'digital_pin': type.isI2c ? 255 : digitalPin,
+    'i2c_addr': type.isI2c ? (i2cAddr > 0 ? i2cAddr : 0x59) : 0,
     'label': label,
   };
 
   Mq2SensorSlotConfig copyWith({
+    GasSensorType? type,
     bool? enabled,
     int? analogPin,
     int? digitalPin,
+    int? i2cAddr,
     String? label,
   }) {
+    final nextType = type ?? this.type;
+    final nextAddr = i2cAddr ?? this.i2cAddr;
     return Mq2SensorSlotConfig(
+      type: nextType,
       enabled: enabled ?? this.enabled,
-      analogPin: analogPin ?? this.analogPin,
-      digitalPin: digitalPin ?? this.digitalPin,
+      analogPin: nextType.isI2c ? 255 : (analogPin ?? this.analogPin),
+      digitalPin: nextType.isI2c ? 255 : (digitalPin ?? this.digitalPin),
+      i2cAddr: nextType.isI2c ? (nextAddr > 0 ? nextAddr : 0x59) : 0,
       label: label ?? this.label,
     );
   }
@@ -679,7 +728,8 @@ class HardwareProfile {
 
   bool get hasAnyI2cSensor =>
       climates.any((c) => c.type.isI2c) ||
-      lights.any((l) => l.type != LightSensorType.none);
+      lights.any((l) => l.type != LightSensorType.none) ||
+      mq2Sensors.any((g) => g.enabled && g.type.isI2c);
 
   factory HardwareProfile.fromJson(Map<String, dynamic> json) {
     final rawChannels = json['channels'] as List<dynamic>? ?? [];
@@ -799,9 +849,12 @@ class HardwareProfile {
         'air_gap': tankAirGapCm,
       },
       'mq2': {
+        'type': gList.isNotEmpty ? gList.first.type.value : 0,
         'enabled': mq2Enabled,
         'analog_pin': mq2AnalogPin,
         'digital_pin': mq2DigitalPin,
+        if (gList.isNotEmpty && gList.first.type.isI2c)
+          'i2c_addr': gList.first.i2cAddr,
       },
       'buzzer': {
         'enabled': buzzerEnabled,

@@ -118,16 +118,24 @@ struct UltrasonicSlotState {
 };
 
 struct Mq2SlotState {
-    bool     hwAllowed;
-    bool     enabled;
-    uint8_t  analogPin;
-    uint8_t  digitalPin;
-    char     label[16];
-    int      raw;
-    int      baseline;
-    int      threshold;
-    bool     digitalState;
-    bool     alarmActive;
+    bool          hwAllowed;
+    bool          enabled;
+    uint8_t       type;         // GAS_MQ2 (0) or GAS_SGP40 (1)
+    uint8_t       analogPin;
+    uint8_t       digitalPin;
+    uint8_t       i2cAddr;
+    bool          i2cDetected;
+    bool          measPending;
+    unsigned long measStartMs;
+    unsigned long lastReadMs;
+    uint16_t      srawTicks;
+    float         vocBaseline;
+    char          label[16];
+    int           raw;
+    int           baseline;
+    int           threshold;
+    bool          digitalState;
+    bool          alarmActive;
 };
 
 class SensorManager {
@@ -146,6 +154,7 @@ public:
     float   getHumidityAt(uint8_t idx) const;
     float   getPressureAt(uint8_t idx) const;
     bool    hasBarometerAt(uint8_t idx) const;
+    bool    hasHumidityAt(uint8_t idx) const;
     bool    isClimateFaultAt(uint8_t idx) const;
     float   getTempOffsetAt(uint8_t idx) const;
     float   getHumOffsetAt(uint8_t idx) const;
@@ -172,8 +181,10 @@ public:
     int     getTankLevelPercentAt(uint8_t idx) const;
 
     uint8_t getMq2Count() const { return _mq2Count; }
+    uint8_t getMq2TypeAt(uint8_t idx) const;
     bool    isMq2ActiveAt(uint8_t idx) const;
     bool    isMq2HwAllowedAt(uint8_t idx) const;
+    bool    isMq2WarmingAt(uint8_t idx) const;
     int     getMQ2RawAt(uint8_t idx) const;
     int     getMQ2PercentAt(uint8_t idx) const;
     int     getMQ2BaselineAt(uint8_t idx) const;
@@ -192,6 +203,8 @@ public:
     float getRawHumidity();
     float getPressure();
     bool  hasBarometer() const;
+    bool  hasHumidity() const;
+    bool  isPrimarySgp40() const;
     bool  isDHTFault();
     float getTempOffset();
     float getHumOffset();
@@ -291,14 +304,20 @@ private:
     void readAHT20(ClimateSlotState& slot);
     bool initSHT3x(ClimateSlotState& slot, uint8_t addr);
     void readSHT3x(ClimateSlotState& slot);
+    bool initSHT4x(ClimateSlotState& slot, uint8_t addr);
+    void readSHT4x(ClimateSlotState& slot);
     bool initBH1750(LightSlotState& slot, uint8_t addr);
     void readBH1750(LightSlotState& slot);
+    bool initSGP40(Mq2SlotState& slot, uint8_t addr);
+    void readSGP40(Mq2SlotState& slot);
 
     // 1-Wire DS18B20
     bool    ds18b20Reset(uint8_t pin);
     void    ds18b20WriteByte(uint8_t pin, uint8_t b);
     uint8_t ds18b20ReadByte(uint8_t pin);
+    bool    readDS18B20Scratchpad(uint8_t pin, float& outTempC);
     void    readDS18B20(ProbeSlotState& slot);
+    void    readClimateDS18B20(ClimateSlotState& slot);
 
     // Ultrasonic
     void readUltrasonic(UltrasonicSlotState& slot);

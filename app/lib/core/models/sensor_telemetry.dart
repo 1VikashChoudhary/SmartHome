@@ -33,6 +33,7 @@ class ClimateReading {
   final double humidity;
   final double pressure;
   final bool barometer;
+  final bool humidityEnabled;
   final bool fault;
   final bool tempAlarm;
   final double tempOffset;
@@ -48,6 +49,7 @@ class ClimateReading {
     this.humidity = 0.0,
     this.pressure = 0.0,
     this.barometer = false,
+    this.humidityEnabled = true,
     this.fault = false,
     this.tempAlarm = false,
     this.tempOffset = 0.0,
@@ -59,21 +61,25 @@ class ClimateReading {
 
   bool get hasCustomLabel => isCustomSensorLabel(label, 'Climate');
 
-  factory ClimateReading.fromJson(Map<String, dynamic> json) => ClimateReading(
-    index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
-    type: _parseInt(json['type'], 0),
-    typeName: json['type_name']?.toString() ?? '',
-    label: json['label']?.toString() ?? '',
-    temperature: _parseDouble(json['temperature'], 0.0),
-    humidity: _parseDouble(json['humidity'], 0.0),
-    pressure: _parseDouble(json['pressure'], 0.0),
-    barometer: json['barometer'] as bool? ?? false,
-    fault: json['fault'] as bool? ?? false,
-    tempAlarm: json['temp_alarm'] as bool? ?? false,
-    tempOffset: _parseDouble(json['temp_offset'], 0.0),
-    humOffset: _parseDouble(json['hum_offset'], 0.0),
-  );
+  factory ClimateReading.fromJson(Map<String, dynamic> json) {
+    final parsedType = _parseInt(json['type'], 0);
+    return ClimateReading(
+      index: _parseInt(json['index'], 0),
+      enabled: json['enabled'] as bool? ?? false,
+      type: parsedType,
+      typeName: json['type_name']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      temperature: _parseDouble(json['temperature'], 0.0),
+      humidity: _parseDouble(json['humidity'], 0.0),
+      pressure: _parseDouble(json['pressure'], 0.0),
+      barometer: json['barometer'] as bool? ?? false,
+      humidityEnabled: json['humidity_enabled'] as bool? ?? (parsedType != 7),
+      fault: json['fault'] as bool? ?? false,
+      tempAlarm: json['temp_alarm'] as bool? ?? false,
+      tempOffset: _parseDouble(json['temp_offset'], 0.0),
+      humOffset: _parseDouble(json['hum_offset'], 0.0),
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'index': index,
@@ -85,6 +91,7 @@ class ClimateReading {
     'humidity': humidity,
     'pressure': pressure,
     'barometer': barometer,
+    'humidity_enabled': humidityEnabled,
     'fault': fault,
     'temp_alarm': tempAlarm,
     'temp_offset': tempOffset,
@@ -250,9 +257,14 @@ class TankReading {
 
 class Mq2Reading {
   final int index;
+  final int type;
+  final String typeName;
+  final int i2cAddr;
   final bool enabled;
   final bool hwAllowed;
   final String label;
+  final String unit;
+  final int gasMax;
   final int raw;
   final int percent;
   final int threshold;
@@ -263,9 +275,14 @@ class Mq2Reading {
 
   const Mq2Reading({
     this.index = 0,
+    this.type = 0,
+    this.typeName = 'MQ-2',
+    this.i2cAddr = 0,
     this.enabled = false,
     this.hwAllowed = false,
     this.label = '',
+    this.unit = 'ADC',
+    this.gasMax = 4095,
     this.raw = 0,
     this.percent = 0,
     this.threshold = 400,
@@ -275,30 +292,50 @@ class Mq2Reading {
     this.warming = false,
   });
 
+  bool get isSgp40 => type == 1 || unit.toUpperCase() == 'VOC';
+
   String get displayName =>
       label.trim().isNotEmpty ? label.trim() : 'Gas #${index + 1}';
 
   bool get hasCustomLabel => isCustomSensorLabel(label, 'Gas');
 
-  factory Mq2Reading.fromJson(Map<String, dynamic> json) => Mq2Reading(
-    index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
-    hwAllowed: json['hw_allowed'] as bool? ?? false,
-    label: json['label']?.toString() ?? '',
-    raw: _parseInt(json['raw'], 0),
-    percent: _parseInt(json['percent'], 0),
-    threshold: _parseInt(json['threshold'], 400),
-    baseline: _parseInt(json['baseline'], 0),
-    alarm: json['alarm'] as bool? ?? false,
-    digital: json['digital'] as bool? ?? false,
-    warming: json['warming'] as bool? ?? false,
-  );
+  factory Mq2Reading.fromJson(Map<String, dynamic> json) {
+    final parsedType = _parseInt(json['type'], 0);
+    final parsedUnit =
+        json['unit']?.toString() ?? (parsedType == 1 ? 'VOC' : 'ADC');
+    final parsedGasMax =
+        _parseInt(json['gas_max'], parsedType == 1 ? 500 : 4095);
+    return Mq2Reading(
+      index: _parseInt(json['index'], 0),
+      type: parsedType,
+      typeName: json['type_name']?.toString() ??
+          (parsedType == 1 ? 'SGP40' : 'MQ-2'),
+      i2cAddr: _parseInt(json['i2c_addr'], parsedType == 1 ? 0x59 : 0),
+      enabled: json['enabled'] as bool? ?? false,
+      hwAllowed: json['hw_allowed'] as bool? ?? false,
+      label: json['label']?.toString() ?? '',
+      unit: parsedUnit,
+      gasMax: parsedGasMax,
+      raw: _parseInt(json['raw'], 0),
+      percent: _parseInt(json['percent'], 0),
+      threshold: _parseInt(json['threshold'], parsedType == 1 ? 250 : 400),
+      baseline: _parseInt(json['baseline'], 0),
+      alarm: json['alarm'] as bool? ?? false,
+      digital: json['digital'] as bool? ?? false,
+      warming: json['warming'] as bool? ?? false,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'index': index,
+    'type': type,
+    'type_name': typeName,
+    'i2c_addr': i2cAddr,
     'enabled': enabled,
     'hw_allowed': hwAllowed,
     'label': label,
+    'unit': unit,
+    'gas_max': gasMax,
     'raw': raw,
     'percent': percent,
     'threshold': threshold,
@@ -314,6 +351,7 @@ class SensorTelemetry {
   final double humidity;
   final bool dhtFault;
   final bool dhtEnabled;
+  final bool humidityEnabled;
   bool get dhtError => dhtFault;
   final double tempThreshold;
 
@@ -338,13 +376,14 @@ class SensorTelemetry {
   final int tankLevelPct;
   final bool tankEnabled;
 
-  // Gas MQ-2
+  // Gas & Air Quality (MQ-2 / SGP40)
   final int gasRaw;
   final int gasPercent;
   final bool gasAlarm;
   final bool gasWarming;
   final int gasThreshold;
   final int gasMax;
+  final String gasUnit;
   final bool gasEnabled;
   final bool gasHwAllowed;
 
@@ -384,6 +423,7 @@ class SensorTelemetry {
     this.humidity = 0.0,
     this.dhtFault = false,
     this.dhtEnabled = true,
+    this.humidityEnabled = true,
     this.tempThreshold = 45.0,
     this.pressure = 0.0,
     this.pressureEnabled = false,
@@ -404,6 +444,7 @@ class SensorTelemetry {
     this.gasWarming = false,
     this.gasThreshold = 600,
     this.gasMax = 4095,
+    this.gasUnit = 'ADC',
     this.gasEnabled = false,
     this.gasHwAllowed = false,
     this.climates = const [],
@@ -426,7 +467,12 @@ class SensorTelemetry {
           .toList();
     }
 
+    final climatesList = parseList(json['climates'], ClimateReading.fromJson);
     final mq2sList = parseList(json['mq2s'], Mq2Reading.fromJson);
+    final parsedHumidityEnabled = json['humidity_enabled'] as bool? ??
+        (climatesList.isNotEmpty ? climatesList.first.humidityEnabled : true);
+    final parsedGasUnit = json['gas_unit']?.toString() ??
+        (mq2sList.isNotEmpty ? mq2sList.first.unit : 'ADC');
     final parsedGasEnabled = json['gas_enabled'] as bool? ??
         (mq2sList.isNotEmpty
             ? mq2sList.any((m) => m.enabled)
@@ -441,6 +487,7 @@ class SensorTelemetry {
       humidity: _parseDouble(json['humidity'], 0.0),
       dhtFault: json['dht_fault'] as bool? ?? false,
       dhtEnabled: json['dht_enabled'] as bool? ?? true,
+      humidityEnabled: parsedHumidityEnabled,
       tempThreshold: _parseDouble(json['temp_threshold'], 45.0),
       pressure: _parseDouble(json['pressure'], 0.0),
       pressureEnabled: json['pressure_enabled'] as bool? ?? false,
@@ -460,10 +507,11 @@ class SensorTelemetry {
       gasAlarm: json['gas_alarm'] as bool? ?? false,
       gasWarming: json['gas_warming'] as bool? ?? false,
       gasThreshold: _parseInt(json['gas_threshold'], 600),
-      gasMax: _parseInt(json['gas_max'], 4095),
+      gasMax: _parseInt(json['gas_max'], parsedGasUnit == 'VOC' ? 500 : 4095),
+      gasUnit: parsedGasUnit,
       gasEnabled: parsedGasEnabled,
       gasHwAllowed: parsedGasHwAllowed,
-      climates: parseList(json['climates'], ClimateReading.fromJson),
+      climates: climatesList,
       lights: parseList(json['lights'], LightReading.fromJson),
       motions: parseList(json['motions'], MotionReading.fromJson),
       probes: parseList(json['probes'], ProbeReading.fromJson),
@@ -477,6 +525,7 @@ class SensorTelemetry {
     'humidity': humidity,
     'dht_fault': dhtFault,
     'dht_enabled': dhtEnabled,
+    'humidity_enabled': humidityEnabled,
     'temp_threshold': tempThreshold,
     'pressure': pressure,
     'pressure_enabled': pressureEnabled,
@@ -497,6 +546,7 @@ class SensorTelemetry {
     'gas_warming': gasWarming,
     'gas_threshold': gasThreshold,
     'gas_max': gasMax,
+    'gas_unit': gasUnit,
     'gas_enabled': gasEnabled,
     'gas_hw_allowed': gasHwAllowed,
     if (climates.isNotEmpty)

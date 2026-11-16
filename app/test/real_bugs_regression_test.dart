@@ -10,12 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smarthome_app/core/models/relay_channel.dart';
 import 'package:smarthome_app/core/models/sensor_telemetry.dart';
 import 'package:smarthome_app/core/models/smart_device.dart';
+import 'package:smarthome_app/core/models/automation_rule.dart';
 import 'package:smarthome_app/core/models/hardware_profile.dart';
 import 'package:smarthome_app/core/models/scheduled_alarm.dart';
+import 'package:smarthome_app/core/network/api_client.dart';
 import 'package:smarthome_app/core/network/ws_client.dart';
 import 'package:smarthome_app/core/theme/app_theme.dart';
 import 'package:smarthome_app/presentation/screens/device_screen.dart';
+import 'package:smarthome_app/presentation/screens/home_screen.dart';
 import 'package:smarthome_app/presentation/widgets/emergency_alarm_dialog.dart';
+import 'package:smarthome_app/presentation/widgets/hardware_config_sheet.dart';
 import 'package:smarthome_app/services/device_manager.dart';
 import 'package:smarthome_app/services/device_storage_service.dart';
 
@@ -282,6 +286,78 @@ void main() {
       expect(rearmed.fired, false);
       expect(rearmed.nextRunBadge, 'Runs within 1m');
     });
+
+    test('parses rem_sec and computes live second-by-second countdown and progress', () {
+      final t0 = DateTime(2026, 11, 15, 18, 0, 0);
+      final parsed = ScheduledAlarm.fromJson({
+        'id': 9,
+        'en': true,
+        'mode': 1,
+        'delay': 10,
+        'action': 0,
+        'relay': 0,
+        'fired': false,
+        'rem_sec': 595,
+      });
+      expect(parsed.remainingSeconds, 595);
+
+      final anchored = parsed.copyWith(fetchedAt: t0);
+      expect(anchored.liveRemainingAt(t0), 595);
+      expect(anchored.liveRemainingAt(t0.add(const Duration(seconds: 25))), 570);
+      expect(anchored.liveRemainingAt(t0.add(const Duration(seconds: 700))), 0);
+      expect(anchored.liveRemainingAt(t0.subtract(const Duration(seconds: 5))), 595);
+      expect(anchored.formattedCountdownAt(t0), '9m 55s');
+      expect(anchored.countdownProgressAt(t0), closeTo(595 / 600, 0.001));
+
+      // Disabled or fired delay timers stop counting down
+      expect(anchored.copyWith(enabled: false).liveRemainingAt(t0), 0);
+      expect(anchored.copyWith(fired: true).liveRemainingAt(t0), 0);
+      expect(anchored.copyWith(enabled: false).countdownProgressAt(t0), isNull);
+    });
+
+    test('supports rem_sec live countdown for clock schedules and formats Xh Ym Zs', () {
+      final t0 = DateTime(2026, 11, 15, 18, 0, 0);
+      final clockFromEsp = ScheduledAlarm(
+        id: 10,
+        enabled: true,
+        mode: 0,
+        type: 1,
+        hour: 19,
+        minute: 2,
+        remainingSeconds: 3725, // 1h 2m 5s
+        fetchedAt: t0,
+      );
+      expect(clockFromEsp.liveRemainingAt(t0), 3725);
+      expect(clockFromEsp.liveRemainingAt(t0.add(const Duration(seconds: 10))), 3715);
+      expect(clockFromEsp.formattedCountdownAt(t0), '1h 2m 5s');
+      expect(ScheduledAlarm.formatDurationSeconds(0), '0s');
+      expect(ScheduledAlarm.formatDurationSeconds(45), '45s');
+      expect(ScheduledAlarm.formatDurationSeconds(595), '9m 55s');
+      expect(ScheduledAlarm.formatDurationSeconds(3725), '1h 2m 5s');
+
+      // Legacy clock fallback without rem_sec computes remaining seconds locally
+      final legacyClock = ScheduledAlarm(
+        id: 11,
+        enabled: true,
+        mode: 0,
+        type: 1,
+        hour: 18,
+        minute: 1,
+      );
+      expect(legacyClock.liveRemainingAt(t0), 60);
+
+      // Existing nextRunBadge behavior preserved
+      final delayBadge = ScheduledAlarm(
+        id: 12,
+        enabled: true,
+        mode: 1,
+        delayMinutes: 75,
+        remainingSeconds: 4500,
+      );
+      expect(delayBadge.nextRunBadge, 'Runs within 1h 15m');
+      expect(delayBadge.copyWith(enabled: false).nextRunBadge, 'Paused');
+      expect(delayBadge.copyWith(fired: true).nextRunBadge, 'Completed');
+    });
   });
 
   group('EmergencyAlarmDialog Alert Type Differentiation Regressions', () {
@@ -331,6 +407,34 @@ void main() {
       expect(find.text('HIGH TEMPERATURE ALARM'), findsOneWidget);
       expect(find.textContaining('Temperature: 48.5°C'), findsOneWidget);
       expect(find.byIcon(Icons.thermostat_rounded), findsOneWidget);
+    });
+
+    testWidgets('Displays VOC AIR QUALITY HAZARD DETECTED for SGP40 VOC alarm', (
+      WidgetTester tester,
+    ) async {
+      final vocDevice = SmartDevice(
+        id: 'dev_voc_alarm',
+        mac: 'AA:BB:CC:11:22:99',
+        ip: '192.168.1.43',
+        hostname: 'smarthome-voc',
+        name: 'Bedroom Hub',
+        room: 'Bedroom',
+        isOnline: true,
+        telemetry: SensorTelemetry(
+          gasRaw: 340,
+          gasPercent: 68,
+          gasThreshold: 250,
+          gasMax: 500,
+          gasUnit: 'VOC',
+          gasEnabled: true,
+          gasAlarm: true,
+        ),
+      );
+      await _pumpEmergencyDialog(tester, vocDevice, 'gas');
+
+      expect(find.text('VOC AIR QUALITY HAZARD DETECTED'), findsOneWidget);
+      expect(find.textContaining('SGP40 VOC Sensor: 340 VOC'), findsOneWidget);
+      expect(find.textContaining('Limit: 250 VOC'), findsOneWidget);
     });
   });
 
@@ -802,6 +906,710 @@ void main() {
       },
     );
   });
+
+  group('Additional Sensors (SHT40/SHT45, DS18B20 Climate, SGP40 VOC) Regressions', () {
+    test(
+      'ClimateSensorType enum & slot serialization support SHT40/SHT45 and DS18B20',
+      () {
+        final sht4x = ClimateSensorType.fromValue(6);
+        expect(sht4x, ClimateSensorType.sht4x);
+        expect(sht4x.isI2c, isTrue);
+        expect(sht4x.isOneWire, isFalse);
+        expect(sht4x.hasHumidity, isTrue);
+        expect(sht4x.allowedI2cAddrs, [0x44, 0x45]);
+        expect(sht4x.defaultI2cAddr, 0x44);
+
+        final ds = ClimateSensorType.fromValue(7);
+        expect(ds, ClimateSensorType.ds18b20);
+        expect(ds.isI2c, isFalse);
+        expect(ds.isOneWire, isTrue);
+        expect(ds.hasHumidity, isFalse);
+        expect(ds.allowedI2cAddrs, isEmpty);
+
+        const shtSlot = ClimateSensorSlotConfig(
+          type: ClimateSensorType.sht4x,
+          pin: 255,
+          i2cAddr: 0x45,
+          label: 'Office',
+        );
+        final shtJson = shtSlot.toJson();
+        expect(shtJson['type'], 6);
+        expect(shtJson['pin'], 255);
+        expect(shtJson['i2c_addr'], 0x45);
+        expect(ClimateSensorSlotConfig.fromJson(shtJson).type, ClimateSensorType.sht4x);
+
+        const dsSlot = ClimateSensorSlotConfig(
+          type: ClimateSensorType.ds18b20,
+          pin: 14,
+          i2cAddr: 0x44,
+          label: 'Ambient',
+        );
+        final dsJson = dsSlot.toJson();
+        expect(dsJson['type'], 7);
+        expect(dsJson['pin'], 14);
+        expect(dsJson['i2c_addr'], 0);
+        expect(ClimateSensorSlotConfig.fromJson(dsJson).type, ClimateSensorType.ds18b20);
+      },
+    );
+
+    test(
+      'GasSensorType SGP40 triggers hasAnyI2cSensor and strips analog/digital pins',
+      () {
+        final sgp = GasSensorType.fromValue(1);
+        expect(sgp, GasSensorType.sgp40);
+        expect(sgp.isI2c, isTrue);
+
+        final parsedSgp = Mq2SensorSlotConfig.fromJson({
+          'type': 1,
+          'enabled': true,
+          'analog_pin': 34,
+          'digital_pin': 35,
+          'label': 'VOC',
+        });
+        expect(parsedSgp.type, GasSensorType.sgp40);
+        expect(parsedSgp.analogPin, 255);
+        expect(parsedSgp.digitalPin, 255);
+        expect(parsedSgp.i2cAddr, 0x59);
+        expect(parsedSgp.toJson()['i2c_addr'], 0x59);
+
+        final profileEnabled = HardwareProfile(
+          boardName: 'Test',
+          numRelays: 1,
+          channels: const [
+            ChannelHardwareConfig(enabled: true, switchEnabled: false, relayPin: 16, switchPin: 255),
+          ],
+          climates: const [
+            ClimateSensorSlotConfig(type: ClimateSensorType.ds18b20, pin: 4),
+          ],
+          mq2Sensors: [parsedSgp],
+          lcdEnabled: false,
+        );
+        expect(profileEnabled.hasAnyI2cSensor, isTrue);
+
+        final profileDisabled = profileEnabled.copyWith(
+          mq2Sensors: [parsedSgp.copyWith(enabled: false)],
+        );
+        expect(profileDisabled.hasAnyI2cSensor, isFalse);
+      },
+    );
+
+    test(
+      'SensorTelemetry parses DS18B20 humidity_enabled=false and SGP40 VOC telemetry',
+      () {
+        final telemetry = SensorTelemetry.fromJson({
+          'temperature': 26.5,
+          'humidity': 0,
+          'dht_enabled': true,
+          'humidity_enabled': false,
+          'gas_raw': 135,
+          'gas_percent': 27,
+          'gas_threshold': 250,
+          'gas_max': 500,
+          'gas_unit': 'VOC',
+          'gas_enabled': true,
+          'gas_hw_allowed': true,
+          'climates': [
+            {
+              'index': 0,
+              'enabled': true,
+              'type': 7,
+              'type_name': 'DS18B20',
+              'temperature': 26.5,
+              'humidity': 0,
+              'humidity_enabled': false,
+              'fault': false,
+            },
+          ],
+          'mq2s': [
+            {
+              'index': 0,
+              'type': 1,
+              'type_name': 'SGP40',
+              'i2c_addr': 89,
+              'enabled': true,
+              'hw_allowed': true,
+              'unit': 'VOC',
+              'gas_max': 500,
+              'raw': 135,
+              'percent': 27,
+              'threshold': 250,
+              'alarm': false,
+              'warming': false,
+            },
+          ],
+        });
+
+        expect(telemetry.humidityEnabled, isFalse);
+        expect(telemetry.climates.single.humidityEnabled, isFalse);
+        expect(telemetry.gasUnit, 'VOC');
+        expect(telemetry.gasMax, 500);
+        expect(telemetry.mq2s.single.isSgp40, isTrue);
+        expect(telemetry.mq2s.single.typeName, 'SGP40');
+        expect(telemetry.mq2s.single.unit, 'VOC');
+        expect(telemetry.mq2s.single.gasMax, 500);
+        expect(telemetry.mq2s.single.threshold, 250);
+      },
+    );
+  });
+
+  group('HardwareConfigSheet I2C Auto-Assignment Regressions', () {
+    testWidgets(
+      'Switching Slot #2 to SHT3x auto-selects 0x45 when Slot #1 uses SHT40 at 0x44 and moves I2C SDA/SCL off occupied Relay GPIOs 4 & 5',
+      (tester) async {
+        tester.view.physicalSize = const Size(420, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final fakeApi = _HwSheetFakeApiClient(
+          const HardwareProfile(
+            boardName: 'SmartHome ESP8266 Custom DIY',
+            numRelays: 2,
+            channels: [
+              ChannelHardwareConfig(
+                enabled: true,
+                switchEnabled: true,
+                relayPin: 5,
+                switchPin: 13,
+              ),
+              ChannelHardwareConfig(
+                enabled: true,
+                switchEnabled: true,
+                relayPin: 4,
+                switchPin: 16,
+              ),
+            ],
+            climates: [
+              ClimateSensorSlotConfig(
+                type: ClimateSensorType.sht4x,
+                pin: 255,
+                i2cAddr: 0x44,
+              ),
+              ClimateSensorSlotConfig(
+                type: ClimateSensorType.dht22,
+                pin: 12,
+                i2cAddr: 0,
+              ),
+            ],
+            mq2Sensors: [],
+            buzzerEnabled: true,
+            buzzerPin: 2,
+            lcdEnabled: false,
+            i2cSdaPin: 4,
+            i2cSclPin: 5,
+            btnMultiPin: 0,
+          ),
+        );
+
+        final esp8266Dev = SmartDevice(
+          id: 'dev_8266_i2c_auto',
+          mac: 'AA:BB:CC:11:22:99',
+          ip: '192.168.29.143',
+          hostname: 'smarthome-1848',
+          name: 'Office',
+          platform: 'ESP8266',
+          numRelays: 2,
+          authRequired: true,
+          authRole: 'admin',
+          authUsername: 'admin',
+          authPassword: 'secret',
+        );
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final provider = NotifierProvider<DeviceManager, List<SmartDevice>>(
+          () => _HwSheetTestDeviceManager([esp8266Dev], fakeApi),
+        );
+        final manager = container.read(provider.notifier);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: HardwareConfigSheet(device: esp8266Dev, manager: manager),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final vertScroll = find.byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+        ).first;
+
+        // Switch Slot #2 (index 1) from DHT22 (2) to SHT31 / SHT3x (5)
+        final slot2Type = find.byKey(const ValueKey('climate_type_1_2'));
+        await tester.scrollUntilVisible(slot2Type, 200, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.tap(slot2Type);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(ClimateSensorType.sht31.label).last);
+        await tester.pumpAndSettle();
+
+        // Slot #2 auto-selected unused 0x45 instead of colliding with Slot #1's 0x44
+        expect(find.byKey(const ValueKey('climate_addr_1_69')), findsOneWidget);
+
+        // Shared I2C SDA & SCL dropdowns appear directly inside both I2C climate sensor cards
+        final sdaInCard = find.text('I2C SDA Pin (Shared)');
+        final sclInCard = find.text('I2C SCL Pin (Shared)');
+        await tester.scrollUntilVisible(sdaInCard.last, 150, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        expect(sdaInCard, findsNWidgets(2));
+        expect(sclInCard, findsNWidgets(2));
+
+        // Customize shared bus pins directly from inside the I2C sensor card (SDA -> GPIO 14, SCL -> GPIO 12)
+        await tester.tap(
+          find.ancestor(
+            of: sdaInCard.last,
+            matching: find.bySubtype<DropdownButtonFormField<int>>(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('GPIO 14 (D5)').last);
+        await tester.pumpAndSettle();
+
+        await tester.tap(
+          find.ancestor(
+            of: sclInCard.last,
+            matching: find.bySubtype<DropdownButtonFormField<int>>(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('GPIO 12 (D6)').last);
+        await tester.pumpAndSettle();
+
+        // Save button is enabled because I2C SDA/SCL are free and non-conflicting
+        await tester.tap(find.text('Save & Reboot Controller'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save & Reboot'));
+        await tester.pumpAndSettle();
+
+        final saved = fakeApi.lastSavedProfile;
+        expect(saved, isNotNull);
+        expect(saved!.climates[0].type, ClimateSensorType.sht4x);
+        expect(saved.climates[0].i2cAddr, 0x44);
+        expect(saved.climates[1].type, ClimateSensorType.sht31);
+        expect(saved.climates[1].i2cAddr, 0x45);
+        expect(saved.i2cSdaPin, 14);
+        expect(saved.i2cSclPin, 12);
+      },
+    );
+
+    testWidgets(
+      'Re-enabling Light Sensor #2 (BH1750) auto-selects 0x5C when Light Sensor #1 uses 0x23',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(480, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final fakeApi = _HwSheetFakeApiClient(
+          const HardwareProfile(
+            boardName: 'SmartHome Light Test',
+            numRelays: 1,
+            channels: [
+              ChannelHardwareConfig(
+                enabled: true,
+                switchEnabled: false,
+                relayPin: 16,
+                switchPin: 255,
+              ),
+            ],
+            climates: [],
+            lights: [
+              LightSensorSlotConfig(
+                type: LightSensorType.bh1750,
+                i2cAddr: 0x23,
+              ),
+              LightSensorSlotConfig(
+                type: LightSensorType.none,
+                i2cAddr: 0,
+              ),
+            ],
+            lcdEnabled: false,
+            buzzerEnabled: false,
+            i2cSdaPin: 21,
+            i2cSclPin: 22,
+            btnMultiPin: 33,
+          ),
+        );
+        final device = SmartDevice(
+          id: 'dev_lgt_auto',
+          mac: 'AA:BB:CC:22:33:55',
+          ip: '192.168.1.90',
+          hostname: 'smarthome-lgt',
+          name: 'Porch Node',
+          platform: 'ESP32',
+          numRelays: 1,
+          isOnline: true,
+        );
+        final manager = _HwSheetTestDeviceManager([device], fakeApi);
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(
+              body: HardwareConfigSheet(device: device, manager: manager),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final vertScroll = find
+            .byWidgetPredicate(
+              (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+            )
+            .first;
+
+        final lightModel2 = find.byKey(const ValueKey('light_type_1_0'));
+        await tester.scrollUntilVisible(
+          lightModel2,
+          200,
+          scrollable: vertScroll,
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(lightModel2);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(LightSensorType.bh1750.label).last);
+        await tester.pumpAndSettle();
+
+        expect(find.byKey(const ValueKey('light_addr_1_92')), findsOneWidget);
+
+        await tester.tap(find.text('Save & Reboot Controller'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save & Reboot'));
+        await tester.pumpAndSettle();
+
+        final saved = fakeApi.lastSavedProfile;
+        expect(saved, isNotNull);
+        expect(saved!.lights.length, 2);
+        expect(saved.lights[0].i2cAddr, 0x23);
+        expect(saved.lights[1].type, LightSensorType.bh1750);
+        expect(saved.lights[1].i2cAddr, 0x5C);
+      },
+    );
+
+    testWidgets(
+      'HomeScreen hides humidity pill for DS18B20 and displays SGP40 VOC reading in gas banner',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(420, 900);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.reset);
+
+        final device = SmartDevice(
+          id: 'dev_ds_sgp_home',
+          mac: 'AA:BB:CC:22:33:66',
+          ip: '192.168.1.91',
+          hostname: 'smarthome-home',
+          name: 'Utility Room',
+          platform: 'ESP32',
+          numRelays: 1,
+          isOnline: true,
+          telemetry: SensorTelemetry(
+            dhtEnabled: true,
+            dhtFault: false,
+            humidityEnabled: false,
+            temperature: 24.5,
+            humidity: 0.0,
+            climates: const [
+              ClimateReading(
+                index: 0,
+                enabled: true,
+                type: 7,
+                typeName: 'DS18B20',
+                temperature: 24.5,
+                humidity: 0.0,
+                humidityEnabled: false,
+              ),
+            ],
+            gasRaw: 340,
+            gasPercent: 68,
+            gasThreshold: 250,
+            gasMax: 500,
+            gasUnit: 'VOC',
+            gasEnabled: true,
+            gasAlarm: true,
+          ),
+        );
+
+        final manager = _AlarmDialogTestDeviceManager([device]);
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(() => manager),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const HomeScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('24.5°'), findsWidgets);
+        expect(find.text('0%'), findsNothing);
+        expect(
+          find.textContaining('SGP40 VOC Reading: 340 VOC'),
+          findsOneWidget,
+        );
+      },
+    );
+  });
+
+  group('Backup & Restore Regressions', () {
+    HttpOverrides? previousHttpOverrides;
+
+    setUp(() {
+      previousHttpOverrides = HttpOverrides.current;
+      HttpOverrides.global = null;
+      SharedPreferences.setMockInitialValues({});
+      FlutterSecureStorage.setMockInitialValues({});
+    });
+
+    tearDown(() {
+      HttpOverrides.global = previousHttpOverrides;
+    });
+
+    test(
+      'Hub exportHubBackupJson and importHubBackupJson round-trip devices, rooms, icons, and secure credentials',
+      () async {
+        final storage = DeviceStorageService();
+        final secure = const FlutterSecureStorage();
+
+        await storage.saveRooms(['Bedroom', 'Office', 'Terrace']);
+        await storage.saveMonitoringDeviceId('dev_hub_1');
+        await storage.saveMonitoringLiveMode(false);
+
+        final device = SmartDevice(
+          id: 'dev_hub_1',
+          mac: 'AA:BB:CC:11:22:33',
+          ip: '192.168.29.105',
+          hostname: 'smarthome-bedroom',
+          name: 'Bedroom',
+          room: 'Bedroom',
+          fwVersion: '1.1.0',
+          numRelays: 2,
+          authRequired: true,
+          authRole: 'admin',
+          authUsername: 'admin',
+          authPassword: 'hub_secret_password',
+          relays: [
+            RelayChannel(index: 0, name: 'Fan', state: false, iconType: 'fan'),
+            RelayChannel(
+              index: 1,
+              name: 'Ceiling Light',
+              state: true,
+              iconType: 'light',
+            ),
+          ],
+        );
+
+        final exported = await storage.exportHubBackupJson([device]);
+        final decoded = jsonDecode(exported) as Map<String, dynamic>;
+        expect(decoded['type'], 'smarthome_pro_hub_backup');
+
+        // Wipe local storage to simulate restoring on a fresh device
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+
+        // Reject controller backup in Hub restore
+        final invalid = await storage.importHubBackupJson(
+          jsonEncode({
+            '_backup_version': 1,
+            'config.json': {'device_name': 'Bedroom'},
+          }),
+        );
+        expect(invalid, isNull);
+
+        final restored = await storage.importHubBackupJson(exported);
+        expect(restored, isNotNull);
+        expect(restored!.length, 1);
+        expect(restored.first.name, 'Bedroom');
+        expect(restored.first.relays[0].iconType, 'fan');
+        expect(await storage.loadRooms(), ['Bedroom', 'Office', 'Terrace']);
+        expect(await storage.loadMonitoringDeviceId(), 'dev_hub_1');
+        expect(await storage.loadMonitoringLiveMode(), isFalse);
+        expect(
+          await secure.read(key: 'smarthome_device_pass_dev_hub_1'),
+          'hub_secret_password',
+        );
+
+        final reloaded = await storage.loadDevices();
+        expect(reloaded.length, 1);
+        expect(reloaded.first.authPassword, 'hub_secret_password');
+      },
+    );
+
+    test(
+      'restoreBackup sends full controller payload and syncs device_name locally without redundant POST /api/config',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+
+        final requestedPaths = <String>[];
+        Map<String, dynamic>? receivedRestoreBody;
+
+        server.listen((request) async {
+          requestedPaths.add('${request.method} ${request.uri.path}');
+          final raw = await utf8.decoder.bind(request).join();
+          if (request.uri.path == '/api/restore') {
+            receivedRestoreBody = jsonDecode(raw) as Map<String, dynamic>;
+            request.response.statusCode = HttpStatus.ok;
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(jsonEncode({'status': 'ok'}));
+          } else {
+            request.response.statusCode = HttpStatus.notFound;
+          }
+          await request.response.close();
+        });
+
+        final initialDev = SmartDevice(
+          id: 'dev_restore_1',
+          mac: 'AA:BB:CC:44:55:66',
+          ip: '127.0.0.1:${server.port}',
+          hostname: 'smarthome',
+          name: 'Old Name',
+          platform: 'ESP32',
+        );
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final provider = NotifierProvider<DeviceManager, List<SmartDevice>>(
+          () => _RoamingTestDeviceManager([initialDev]),
+        );
+        final manager = container.read(provider.notifier);
+
+        final backupPayload = jsonEncode({
+          '_backup_version': 2,
+          'config.json': {'device_name': 'Restored Bedroom'},
+          'hardware.json': {
+            'climates': [
+              {'type': 6, 'i2c_addr': 0x44, 'label': 'SHT40'},
+              {'type': 7, 'pin': 4, 'label': 'DS18B20'},
+            ],
+            'mq2_sensors': [
+              {'enabled': true, 'type': 1, 'i2c_addr': 0x59, 'label': 'SGP40'},
+            ],
+            'lcd': {'enabled': false, 'sda_pin': 21, 'scl_pin': 22},
+          },
+          'alarms.json': {
+            'alarms': [
+              {
+                'id': 1,
+                'en': true,
+                'mode': 1,
+                'delay': 10,
+                'created': 1794744000,
+                'act': 0,
+                'relay': 0,
+                'fired': false,
+              },
+            ],
+          },
+        });
+
+        final ok = await manager.restoreBackup(initialDev.id, backupPayload);
+        expect(ok, isTrue);
+        expect(requestedPaths, ['POST /api/restore']);
+        expect(receivedRestoreBody, isNotNull);
+        expect(
+          (receivedRestoreBody!['hardware.json'] as Map)['mq2_sensors'],
+          hasLength(1),
+        );
+        expect(container.read(provider).first.name, 'Restored Bedroom');
+      },
+    );
+
+    test(
+      'AutomationRule resolves SGP40 VOC unit and ceiling per gas slot instead of hardcoding ADC',
+      () {
+        final telemetry = SensorTelemetry.fromJson({
+          'mq2s': [
+            {
+              'index': 0,
+              'type': 0,
+              'type_name': 'MQ-2',
+              'unit': 'ADC',
+              'gas_max': 4095,
+              'enabled': true,
+              'hw_allowed': true,
+              'raw': 180,
+            },
+            {
+              'index': 1,
+              'type': 1,
+              'type_name': 'SGP40',
+              'unit': 'VOC',
+              'gas_max': 500,
+              'enabled': true,
+              'hw_allowed': true,
+              'raw': 210,
+            },
+          ],
+        });
+
+        final mq2Spec = AutomationRule.gasSpecFor(telemetry, 0);
+        final sgpSpec = AutomationRule.gasSpecFor(telemetry, 1);
+        expect(mq2Spec.unit, 'ADC');
+        expect(mq2Spec.maxVal, 4095.0);
+        expect(sgpSpec.unit, 'VOC');
+        expect(sgpSpec.maxVal, 500.0);
+        expect(sgpSpec.defaultThreshold, 250.0);
+
+        final sgpRule = AutomationRule(
+          id: 1,
+          enabled: true,
+          name: 'High VOC',
+          sensor: 2,
+          sensorIndex: 1,
+          condition: 0,
+          threshold: 250,
+          hysteresis: 25,
+          targetRelay: 0,
+          action: 0,
+        );
+        expect(sgpRule.unitFor(telemetry), 'VOC');
+        expect(sgpRule.sensorLabelFor(telemetry), 'SGP40 VOC #2');
+      },
+    );
+  });
+}
+
+class _HwSheetFakeApiClient extends ApiClient {
+  final HardwareProfile profileToReturn;
+  HardwareProfile? lastSavedProfile;
+
+  _HwSheetFakeApiClient(this.profileToReturn);
+
+  @override
+  Future<HardwareProfile?> fetchHardwareProfile(
+    String ip, {
+    String? password,
+    String? username,
+  }) async =>
+      profileToReturn;
+
+  @override
+  Future<bool> saveHardwareProfile(
+    String ip,
+    HardwareProfile profile, {
+    String? password,
+    String? username,
+  }) async {
+    lastSavedProfile = profile;
+    return true;
+  }
+}
+
+class _HwSheetTestDeviceManager extends DeviceManager {
+  final List<SmartDevice> _devices;
+  final ApiClient _api;
+
+  _HwSheetTestDeviceManager(this._devices, this._api);
+
+  @override
+  List<SmartDevice> build() => _devices;
+
+  @override
+  ApiClient get apiClient => _api;
 }
 
 class _RoamingTestDeviceManager extends DeviceManager {

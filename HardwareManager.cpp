@@ -82,11 +82,22 @@ static void assignDefaultLabel(char* dst, size_t dstSize, const char* raw, const
     }
 }
 
+static bool isI2cClimateType(ClimateSensorType t) {
+    return (t == CLIMATE_BME280 || t == CLIMATE_AHT20 ||
+            t == CLIMATE_SHT3X || t == CLIMATE_SHT4X);
+}
+
+static bool isOneWireClimateType(ClimateSensorType t) {
+    return (t == CLIMATE_DHT11 || t == CLIMATE_DHT22 ||
+            t == CLIMATE_DS18B20);
+}
+
 uint8_t HardwareManager::defaultI2cAddrForClimate(ClimateSensorType t) {
     switch (t) {
         case CLIMATE_BME280: return 0x76;
         case CLIMATE_AHT20:  return 0x38;
-        case CLIMATE_SHT3X:  return 0x44;
+        case CLIMATE_SHT3X:
+        case CLIMATE_SHT4X:  return 0x44;
         default:             return 0;
     }
 }
@@ -116,10 +127,13 @@ const Mq2SensorConfig* HardwareManager::getMq2(uint8_t idx) const {
 
 bool HardwareManager::hasAnyI2cSensor() const {
     for (uint8_t i = 0; i < _config.numClimates; i++) {
-        if (_config.climates[i].type >= CLIMATE_BME280) return true;
+        if (isI2cClimateType(_config.climates[i].type)) return true;
     }
     for (uint8_t i = 0; i < _config.numLights; i++) {
         if (_config.lights[i].type == LIGHT_BH1750) return true;
+    }
+    for (uint8_t i = 0; i < _config.numMq2s; i++) {
+        if (_config.mq2Sensors[i].enabled && _config.mq2Sensors[i].type == GAS_SGP40) return true;
     }
     return false;
 }
@@ -128,7 +142,10 @@ ClimateSensorType HardwareManager::getDhtType() const {
     return (_config.numClimates > 0) ? _config.climates[0].type : CLIMATE_NONE;
 }
 uint8_t HardwareManager::getDhtPin() const {
-    return (_config.numClimates > 0) ? _config.climates[0].pin : PIN_UNUSED;
+    if (_config.numClimates > 0 && isOneWireClimateType(_config.climates[0].type)) {
+        return _config.climates[0].pin;
+    }
+    return PIN_UNUSED;
 }
 LightSensorType HardwareManager::getLightType() const {
     return (_config.numLights > 0) ? _config.lights[0].type : LIGHT_NONE;
@@ -164,10 +181,16 @@ bool HardwareManager::isMq2Enabled() const {
     return (_config.numMq2s > 0) && _config.mq2Sensors[0].enabled;
 }
 uint8_t HardwareManager::getMq2AnalogPin() const {
-    return (_config.numMq2s > 0) ? _config.mq2Sensors[0].analogPin : PIN_UNUSED;
+    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type == GAS_MQ2) {
+        return _config.mq2Sensors[0].analogPin;
+    }
+    return PIN_UNUSED;
 }
 uint8_t HardwareManager::getMq2DigitalPin() const {
-    return (_config.numMq2s > 0) ? _config.mq2Sensors[0].digitalPin : PIN_UNUSED;
+    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type == GAS_MQ2) {
+        return _config.mq2Sensors[0].digitalPin;
+    }
+    return PIN_UNUSED;
 }
 
 void HardwareManager::resetToDefault() {
@@ -389,18 +412,24 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
 
     bool i2cActive = cfg.lcdEnabled;
 
-    // 2. Climate Sensors (DHT11/22 per-GPIO, BME280/AHT20/SHT3X shared I2C)
+    // 2. Climate Sensors (DHT11/22/DS18B20 per-GPIO, BME280/AHT20/SHT3X/SHT4X shared I2C)
     for (uint8_t i = 0; i < cfg.numClimates; i++) {
         const ClimateSensorConfig& c = cfg.climates[i];
         String tag = "Climate " + String(i + 1);
         if (c.type == CLIMATE_NONE) continue;
-        if (c.type == CLIMATE_DHT11 || c.type == CLIMATE_DHT22) {
+        if (c.type > CLIMATE_DS18B20) {
+            outError = tag + F(": Invalid climate sensor type");
+            return false;
+        }
+        if (isOneWireClimateType(c.type)) {
             if (c.pin == PIN_UNUSED) {
                 outError = tag + F(": Please select a bidirectional GPIO pin");
                 return false;
             }
             if (!isSafeOutputPin(c.pin)) {
-                outError = tag + F(": GPIO ") + String(c.pin) + F(" cannot be an input-only pin (requires bidirectional output)");
+                outError = (c.type == CLIMATE_DS18B20)
+                    ? (tag + F(": Climate DS18B20 1-Wire pin GPIO ") + String(c.pin) + F(" must support bidirectional output"))
+                    : (tag + F(": GPIO ") + String(c.pin) + F(" cannot be an input-only pin (requires bidirectional output)"));
                 return false;
             }
             if (!claimPin(c.pin, tag.c_str())) return false;
@@ -414,8 +443,10 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
                 outError = tag + F(": AHT20 uses fixed I2C address 0x38");
                 return false;
             }
-            if (c.type == CLIMATE_SHT3X && addr != 0x44 && addr != 0x45) {
-                outError = tag + F(": SHT3x supports I2C address 0x44 or 0x45");
+            if ((c.type == CLIMATE_SHT3X || c.type == CLIMATE_SHT4X) && addr != 0x44 && addr != 0x45) {
+                outError = tag + (c.type == CLIMATE_SHT4X
+                    ? F(": SHT40/SHT45 supports I2C address 0x44 or 0x45")
+                    : F(": SHT3x supports I2C address 0x44 or 0x45"));
                 return false;
             }
             if (!claimI2cAddr(addr, tag)) return false;
@@ -496,10 +527,25 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
         if (!claimPin(u.echoPin, (tag + " Echo").c_str())) return false;
     }
 
-    // 3. MQ-2 Gas Sensors
+    // 3. Gas & Air Quality Sensors (MQ-2 / SGP40 I2C)
     for (uint8_t i = 0; i < cfg.numMq2s; i++) {
         const Mq2SensorConfig& g = cfg.mq2Sensors[i];
         if (!g.enabled) continue;
+        if (g.type > GAS_SGP40) {
+            outError = String(F("Gas ")) + String(i + 1) + F(": Invalid gas sensor type");
+            return false;
+        }
+        if (g.type == GAS_SGP40) {
+            String tag = "SGP40 " + String(i + 1);
+            uint8_t addr = (g.i2cAddr == 0) ? 0x59 : g.i2cAddr;
+            if (addr != 0x59) {
+                outError = tag + F(": Invalid I2C address for SGP40 sensor (must be 0x59)");
+                return false;
+            }
+            if (!claimI2cAddr(addr, tag)) return false;
+            i2cActive = true;
+            continue;
+        }
         String tag = "MQ-2 " + String(i + 1);
         if (g.analogPin == PIN_UNUSED && g.digitalPin == PIN_UNUSED) {
             outError = tag + F(": Enable requires at least an Analog or Digital GPIO pin");
@@ -589,8 +635,8 @@ void HardwareManager::toJson(JsonObject& obj) const {
     for (uint8_t i = 0; i < _config.numClimates; i++) {
         JsonObject c = climatesArr.add<JsonObject>();
         c["type"]     = (uint8_t)_config.climates[i].type;
-        c["pin"]      = _config.climates[i].pin;
-        c["i2c_addr"] = _config.climates[i].i2cAddr;
+        c["pin"]      = isOneWireClimateType(_config.climates[i].type) ? _config.climates[i].pin : PIN_UNUSED;
+        c["i2c_addr"] = isI2cClimateType(_config.climates[i].type) ? _config.climates[i].i2cAddr : 0;
         c["label"]    = _config.climates[i].label;
     }
 
@@ -633,8 +679,12 @@ void HardwareManager::toJson(JsonObject& obj) const {
     for (uint8_t i = 0; i < _config.numMq2s; i++) {
         JsonObject g = mq2Arr.add<JsonObject>();
         g["enabled"]     = _config.mq2Sensors[i].enabled;
-        g["analog_pin"]  = _config.mq2Sensors[i].analogPin;
-        g["digital_pin"] = _config.mq2Sensors[i].digitalPin;
+        g["type"]        = _config.mq2Sensors[i].type;
+        g["analog_pin"]  = (_config.mq2Sensors[i].type == GAS_SGP40) ? PIN_UNUSED : _config.mq2Sensors[i].analogPin;
+        g["digital_pin"] = (_config.mq2Sensors[i].type == GAS_SGP40) ? PIN_UNUSED : _config.mq2Sensors[i].digitalPin;
+        g["i2c_addr"]    = (_config.mq2Sensors[i].type == GAS_SGP40)
+            ? (_config.mq2Sensors[i].i2cAddr ? _config.mq2Sensors[i].i2cAddr : 0x59)
+            : 0;
         g["label"]       = _config.mq2Sensors[i].label;
     }
 
@@ -765,12 +815,18 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         uint8_t cIdx = 0;
         for (JsonObjectConst c : arr) {
             uint8_t dType = c["type"] | (uint8_t)CLIMATE_NONE;
-            if (dType > CLIMATE_SHT3X) { outError = "Invalid climate sensor type"; return false; }
+            if (dType > CLIMATE_DS18B20) { outError = "Invalid climate sensor type"; return false; }
             ClimateSensorType ct = (ClimateSensorType)dType;
-            uint8_t addr = c["i2c_addr"] | (uint8_t)0;
-            if (addr == 0 && ct >= CLIMATE_BME280) addr = defaultI2cAddrForClimate(ct);
+            uint8_t addr = 0;
+            uint8_t pin = PIN_UNUSED;
+            if (isI2cClimateType(ct)) {
+                addr = c["i2c_addr"] | (uint8_t)0;
+                if (addr == 0) addr = defaultI2cAddrForClimate(ct);
+            } else if (isOneWireClimateType(ct)) {
+                pin = c["pin"] | PIN_UNUSED;
+            }
             newCfg.climates[cIdx].type    = ct;
-            newCfg.climates[cIdx].pin     = c["pin"] | PIN_UNUSED;
+            newCfg.climates[cIdx].pin     = pin;
             newCfg.climates[cIdx].i2cAddr = addr;
             assignDefaultLabel(newCfg.climates[cIdx].label, sizeof(newCfg.climates[cIdx].label),
                                c["label"] | "", "Climate", cIdx);
@@ -781,14 +837,20 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         JsonObjectConst dht = obj["dht"];
         uint8_t dPin = dht["pin"] | defDhtPin;
         uint8_t dType = dht["type"] | (uint8_t)(dPin != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE);
-        if (dType > CLIMATE_SHT3X) { outError = "Invalid climate sensor type"; return false; }
+        if (dType > CLIMATE_DS18B20) { outError = "Invalid climate sensor type"; return false; }
         if (dType != CLIMATE_NONE) {
             ClimateSensorType ct = (ClimateSensorType)dType;
-            uint8_t addr = dht["i2c_addr"] | (uint8_t)0;
-            if (addr == 0 && ct >= CLIMATE_BME280) addr = defaultI2cAddrForClimate(ct);
+            uint8_t addr = 0;
+            uint8_t pin = PIN_UNUSED;
+            if (isI2cClimateType(ct)) {
+                addr = dht["i2c_addr"] | (uint8_t)0;
+                if (addr == 0) addr = defaultI2cAddrForClimate(ct);
+            } else if (isOneWireClimateType(ct)) {
+                pin = dPin;
+            }
             newCfg.numClimates = 1;
             newCfg.climates[0].type    = ct;
-            newCfg.climates[0].pin     = dPin;
+            newCfg.climates[0].pin     = pin;
             newCfg.climates[0].i2cAddr = addr;
             assignDefaultLabel(newCfg.climates[0].label, sizeof(newCfg.climates[0].label), nullptr, "Climate", 0);
         }
@@ -944,20 +1006,32 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
     }
 
-    // 6. MQ-2 Gas Sensors
+    // 6. Gas & Air Quality Sensors (MQ-2 / SGP40)
     if (obj.containsKey("mq2_sensors") && obj["mq2_sensors"].is<JsonArrayConst>()) {
         JsonArrayConst arr = obj["mq2_sensors"].as<JsonArrayConst>();
         if (arr.size() > MAX_MQ2_SENSORS) {
-            outError = "Number of MQ-2 gas sensors exceeds maximum limit (" + String(MAX_MQ2_SENSORS) + ")";
+            outError = "Number of gas sensors exceeds maximum limit (" + String(MAX_MQ2_SENSORS) + ")";
             return false;
         }
         uint8_t gIdx = 0;
         for (JsonObjectConst g : arr) {
-            newCfg.mq2Sensors[gIdx].enabled    = g["enabled"] | true;
-            newCfg.mq2Sensors[gIdx].analogPin  = g["analog_pin"] | PIN_UNUSED;
-            newCfg.mq2Sensors[gIdx].digitalPin = g["digital_pin"] | PIN_UNUSED;
+            uint8_t gType = g["type"] | (uint8_t)GAS_MQ2;
+            if (gType > GAS_SGP40) { outError = "Invalid gas sensor type"; return false; }
+            newCfg.mq2Sensors[gIdx].enabled = g["enabled"] | true;
+            newCfg.mq2Sensors[gIdx].type    = gType;
+            if (gType == GAS_SGP40) {
+                uint8_t addr = g["i2c_addr"] | (uint8_t)0x59;
+                if (addr == 0) addr = 0x59;
+                newCfg.mq2Sensors[gIdx].analogPin  = PIN_UNUSED;
+                newCfg.mq2Sensors[gIdx].digitalPin = PIN_UNUSED;
+                newCfg.mq2Sensors[gIdx].i2cAddr    = addr;
+            } else {
+                newCfg.mq2Sensors[gIdx].analogPin  = g["analog_pin"] | PIN_UNUSED;
+                newCfg.mq2Sensors[gIdx].digitalPin = g["digital_pin"] | PIN_UNUSED;
+                newCfg.mq2Sensors[gIdx].i2cAddr    = 0;
+            }
             assignDefaultLabel(newCfg.mq2Sensors[gIdx].label, sizeof(newCfg.mq2Sensors[gIdx].label),
-                               g["label"] | "", "Gas", gIdx);
+                               g["label"] | "", gType == GAS_SGP40 ? "SGP40" : "Gas", gIdx);
             gIdx++;
         }
         newCfg.numMq2s = gIdx;
@@ -967,15 +1041,19 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         if (en) {
             newCfg.numMq2s = 1;
             newCfg.mq2Sensors[0].enabled    = true;
+            newCfg.mq2Sensors[0].type       = GAS_MQ2;
             newCfg.mq2Sensors[0].analogPin  = mq2["analog_pin"] | defMq2APin;
             newCfg.mq2Sensors[0].digitalPin = mq2["digital_pin"] | defMq2DPin;
+            newCfg.mq2Sensors[0].i2cAddr    = 0;
             assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
         }
     } else {
         newCfg.numMq2s = 1;
         newCfg.mq2Sensors[0].enabled    = true;
+        newCfg.mq2Sensors[0].type       = GAS_MQ2;
         newCfg.mq2Sensors[0].analogPin  = defMq2APin;
         newCfg.mq2Sensors[0].digitalPin = defMq2DPin;
+        newCfg.mq2Sensors[0].i2cAddr    = 0;
         assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
     }
 
@@ -1084,8 +1162,10 @@ static void addPresetMq2(HardwareConfig& cfg, uint8_t aPin, uint8_t dPin) {
     if (cfg.numMq2s >= MAX_MQ2_SENSORS) return;
     uint8_t idx = cfg.numMq2s++;
     cfg.mq2Sensors[idx].enabled    = true;
+    cfg.mq2Sensors[idx].type       = GAS_MQ2;
     cfg.mq2Sensors[idx].analogPin  = aPin;
     cfg.mq2Sensors[idx].digitalPin = dPin;
+    cfg.mq2Sensors[idx].i2cAddr    = 0;
     assignDefaultLabel(cfg.mq2Sensors[idx].label, sizeof(cfg.mq2Sensors[idx].label), nullptr, "Gas", idx);
 }
 

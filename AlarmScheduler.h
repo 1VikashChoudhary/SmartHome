@@ -13,6 +13,8 @@
 #include "Config.h"
 #include "StorageManager.h"
 
+class RelayManager;
+
 enum AlarmType : uint8_t {
     ALARM_ONCE    = 0,
     ALARM_DAILY   = 1,
@@ -67,8 +69,17 @@ public:
 
     void save();
     void setActionCallback(void (*cb)(AlarmAction action, uint8_t relay));
-    void toJson(JsonArray& arr);
+    void toJson(JsonArray& arr, bool includeRuntime = true);
     bool fromJson(const JsonObject& obj, ScheduledAlarm& alarm);
+
+    uint32_t getAlarmRemainingSeconds(uint8_t index) const;
+    bool getActiveTimerForRelay(uint8_t relayIndex, bool currentRelayState,
+                                bool& targetState, uint32_t& remainingSec) const;
+    bool resolveEffectiveTimerForRelay(RelayManager& relay, uint8_t relayIndex,
+                                       bool& active, bool& targetState,
+                                       uint32_t& remainingSec) const;
+    void applyTimersToRelayArray(JsonArray& relays, RelayManager& relay) const;
+    bool cancelDelayTimersForRelay(uint8_t relayIndex);
 
 private:
     StorageManager* _storage;
@@ -82,9 +93,14 @@ private:
     void (*_actionCallback)(AlarmAction, uint8_t);
 
     void loadAlarms();
+    static bool matchesDayOfWeek(AlarmType type, uint8_t alarmDow, int dow);
     bool shouldFire(const ScheduledAlarm& alarm, int hour, int minute, int dow);
-    uint32_t getCurrentEpoch();
-    void armDelayAlarm(ScheduledAlarm& alarm, bool resetStart);
+    uint32_t getCurrentEpoch() const;
+    uint32_t computeAlarmRemainingSeconds(uint8_t index, uint32_t epochNow,
+                                          bool hasLocalTime, const struct tm& timeInfo,
+                                          unsigned long nowMillis) const;
+    static bool targetsRelay(const ScheduledAlarm& alarm, uint8_t relayIndex);
+    void armDelayAlarm(uint8_t index, bool resetStart);
     int findAlarmIndex(uint8_t id);
 };
 

@@ -85,8 +85,12 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
     final isGas = widget.alarmType == 'gas';
     final isFault = widget.alarmType == 'sensor_fault';
 
+    final isVocGas =
+        isGas && (dev?.telemetry.gasUnit.toUpperCase() == 'VOC');
     final title = isGas
-        ? 'GAS / SMOKE HAZARD DETECTED'
+        ? (isVocGas
+              ? 'VOC AIR QUALITY HAZARD DETECTED'
+              : 'GAS / SMOKE HAZARD DETECTED')
         : isFault
             ? 'SENSOR HARDWARE FAULT DETECTED'
             : 'HIGH TEMPERATURE ALARM';
@@ -95,7 +99,9 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
     final metricText = dev == null
         ? 'Emergency threshold exceeded on controller.'
         : isGas
-            ? 'MQ-2 Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)'
+            ? (isVocGas
+                  ? 'SGP40 VOC Sensor: ${dev.telemetry.gasRaw} VOC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} VOC)'
+                  : 'MQ-2 Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)')
             : isFault
                 ? 'Climate sensor failed to respond across consecutive reads. Failsafe relays have been activated.'
                 : 'Temperature: ${dev.telemetry.temperature.toStringAsFixed(1)}°C (Safety Limit: ${dev.telemetry.tempThreshold.toStringAsFixed(1)}°C)';

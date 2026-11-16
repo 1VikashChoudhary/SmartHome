@@ -351,7 +351,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="card-title" id="sensorClimateTitle">Climate &mdash; Temperature &amp; Humidity</div>
 <div class="gauge-row">
 <div class="gauge"><div class="gauge-value"><span id="temp2">--</span><span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>
-<div class="gauge"><div class="gauge-value"><span id="hum2">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
+<div class="gauge" id="sensorHumGauge"><div class="gauge-value"><span id="hum2">--</span><span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>
 </div>
 <div class="status-row"><span class="status-label">Sensor Status</span><span id="dhtStatus" class="badge badge-ok">OK</span></div>
 <div class="status-row"><span class="status-label">Temp Alarm Threshold</span><span class="status-value"><span id="tempTh">45</span>&deg;C</span></div>
@@ -359,15 +359,15 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div id="climateCalSlotRow" style="display:none;margin-top:10px" class="form-group"><label>Climate Sensor Slot</label><select id="climateCalIdx" onchange="onClimateCalSlotChange()"></select></div>
 <div class="form-row" style="margin-top:12px">
 <div class="form-group"><label>Temp Offset (&deg;C)</label><input type="number" step="0.1" id="tempOffset" value="0"></div>
-<div class="form-group"><label>Humidity Offset (%)</label><input type="number" step="0.1" id="humOffset" value="0"></div>
+<div class="form-group" id="humOffsetGroup"><label>Humidity Offset (%)</label><input type="number" step="0.1" id="humOffset" value="0"></div>
 </div>
 <div class="form-group"><label>Temp Alarm Threshold (&deg;C)</label><input type="number" step="0.5" id="tempAlarmTh" value="45"></div>
 <button class="btn btn-primary btn-sm" onclick="saveSensorCal()">Save Calibration</button>
 </div>
 </div>
 <div class="card" id="sensorMq2Card">
-<div class="card-title" id="sensorMq2Title">MQ2 &mdash; Gas Sensor</div>
-<div class="gauge"><div class="gauge-value"><span id="gasVal">--</span><span class="gauge-unit" id="gasMaxUnit"> /4095</span></div><div class="gauge-label">Raw ADC Value</div></div>
+<div class="card-title" id="sensorMq2Title">Gas &amp; Air Quality Sensor</div>
+<div class="gauge"><div class="gauge-value"><span id="gasVal">--</span><span class="gauge-unit" id="gasMaxUnit"> /4095</span></div><div class="gauge-label" id="gasValLabel">Raw ADC Value</div></div>
 <div style="margin-top:12px">
 <div class="gas-bar-wrap" style="height:32px">
 <div class="gas-bar" id="gasBar2" style="width:0%"></div>
@@ -377,7 +377,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 </div>
 <div class="status-row" style="margin-top:8px"><span class="status-label">Warming Up</span><span id="gasWarm" class="badge badge-warn">--</span></div>
 <div class="admin-only" id="sensorMq2Controls">
-<div id="mq2HwNote" style="display:none;font-size:0.74rem;color:var(--orange);margin-top:8px;">MQ-2 Gas sensor is disabled or pins unassigned in Hardware Profile.</div>
+<div id="mq2HwNote" style="display:none;font-size:0.74rem;color:var(--orange);margin-top:8px;">Gas/VOC sensor is disabled or pins/I2C unassigned in Hardware Profile.</div>
 <div id="mq2CalSlotRow" style="display:none;margin-top:10px" class="form-group"><label>Gas Sensor Slot</label><select id="mq2CalIdx" onchange="onMq2CalSlotChange()"></select></div>
 <div class="form-group" style="margin-top:12px"><label>Gas Sensor</label>
 <div style="display:flex;gap:8px;align-items:center">
@@ -649,7 +649,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x) <span id="hwClimatesCount" class="badge badge-info">0 / 4</span></div>
+<div style="font-weight:600;color:var(--accent2)">Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x / SHT40 / SHT45 / DS18B20) <span id="hwClimatesCount" class="badge badge-info">0 / 4</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('climates')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('climates')">&minus; Remove</button>
@@ -704,7 +704,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Gas &amp; Smoke Sensors (MQ-2) <span id="hwMq2sCount" class="badge badge-info">0 / 4</span></div>
+<div style="font-weight:600;color:var(--accent2)">Gas &amp; Air Quality Sensors (MQ-2 / SGP40) <span id="hwMq2sCount" class="badge badge-info">0 / 4</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('mq2s')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('mq2s')">&minus; Remove</button>
@@ -724,15 +724,15 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 </div>
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
-<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">I2C LCD Display (1602/2004)</div>
+<div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">I2C Shared Bus &amp; LCD Display (1602/2004)</div>
 <div class="form-group"><label>LCD Status</label><select id="hwLcdEn" onchange="onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
 <div class="form-row">
 <div class="form-group"><label>I2C Address</label><select id="hwLcdAddr" onchange="checkHwConflicts()"><option value="39">0x27 (Standard)</option><option value="63">0x3F</option></select></div>
 <div class="form-group"><label>Size</label><select id="hwLcdSize"><option value="16x2" selected>16 &times; 2</option><option value="20x4">20 &times; 4</option></select></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>SDA Pin</label><select id="hwLcdSda" onchange="checkHwConflicts()"></select></div>
-<div class="form-group"><label>SCL Pin</label><select id="hwLcdScl" onchange="checkHwConflicts()"></select></div>
+<div class="form-group"><label>SDA Pin</label><select id="hwLcdSda" onchange="onSharedI2cBusPinChange(this.value, null)"></select></div>
+<div class="form-group"><label>SCL Pin</label><select id="hwLcdScl" onchange="onSharedI2cBusPinChange(null, this.value)"></select></div>
 </div>
 </div>
 
@@ -1127,7 +1127,7 @@ View Project on GitHub
 <select id="ruleSensor" onchange="updateRuleSensorFields()">
 <option value="0">Temperature (&deg;C)</option>
 <option value="1">Humidity (%)</option>
-<option value="2">Gas Sensor (MQ2 ADC)</option>
+<option value="2">Gas / Air Quality (MQ-2 / SGP40)</option>
 <option value="3">Ambient Light (Lux)</option>
 <option value="4">Water Probe Temp (&deg;C)</option>
 <option value="5">Water Tank Level (%)</option>
@@ -1140,7 +1140,7 @@ View Project on GitHub
 </select></div>
 </div>
 <div class="form-group" id="ruleSensorIdxGroup"><label>Sensor Instance</label>
-<select id="ruleSensorIdx"></select></div>
+<select id="ruleSensorIdx" onchange="onRuleSensorIdxChange()"></select></div>
 <div class="form-row">
 <div class="form-group"><label>Threshold Value</label>
 <input type="number" step="0.5" id="ruleThreshold" value="30.0"></div>
@@ -1315,9 +1315,11 @@ const activeMq2s=(d.mq2s||[]).filter(g=>g&&(g.enabled||g.hw_allowed));
 
 // Temperature & humidity
 const cliEn=(d.dht_enabled!==false);
+const hasPrimaryHum=cliEn&&(d.humidity_enabled!==false)&&!(activeClimates.length>0&&activeClimates[0].humidity_enabled===false);
 const cardT=document.getElementById('cardTemp');if(cardT)cardT.style.display=cliEn?'block':'none';
-const cardH=document.getElementById('cardHum');if(cardH)cardH.style.display=cliEn?'block':'none';
+const cardH=document.getElementById('cardHum');if(cardH)cardH.style.display=hasPrimaryHum?'block':'none';
 const sCliCard=document.getElementById('sensorClimateCard');if(sCliCard)sCliCard.style.display=cliEn?'block':'none';
+const sHumGauge=document.getElementById('sensorHumGauge');if(sHumGauge)sHumGauge.style.display=hasPrimaryHum?'block':'none';
 if(!cliEn){
 setText('temp','--');setText('temp2','--');
 setText('hum','--');setText('hum2','--');
@@ -1327,13 +1329,14 @@ if(ds){ds.className='badge badge-info';setText('dhtStatus','Disabled');}
 const primaryCliFault=activeClimates.length>0?!!activeClimates[0].fault:!!d.dht_fault;
 const pTemp=activeClimates.length>0?parseFloat(activeClimates[0].temperature):parseFloat(d.temperature);
 const pHum=activeClimates.length>0?parseFloat(activeClimates[0].humidity):parseFloat(d.humidity);
-const hasCliRead=(!isNaN(pTemp)&&pTemp!==0)||(!isNaN(pHum)&&pHum>0);
+const hasCliRead=(!isNaN(pTemp)&&pTemp!==0)||(hasPrimaryHum&&!isNaN(pHum)&&pHum>0);
 if(primaryCliFault){
 setText('temp','ERR');setText('temp2','ERR');
 setText('hum','ERR');setText('hum2','ERR');
 }else if(hasCliRead){
 setText('temp',pTemp.toFixed(1));setText('temp2',pTemp.toFixed(1));
-setText('hum',pHum.toFixed(1));setText('hum2',pHum.toFixed(1));
+if(hasPrimaryHum){setText('hum',pHum.toFixed(1));setText('hum2',pHum.toFixed(1));}
+else{setText('hum','--');setText('hum2','--');}
 }else{
 setText('temp','--');setText('temp2','--');
 setText('hum','--');setText('hum2','--');
@@ -1347,7 +1350,7 @@ const cliCustom=activeClimates.length>=1&&isCustomSensorLabel(activeClimates[0].
 setText('lblTemp',cliCustom?(activeClimates[0].label+' Temp'):'Temperature');
 setText('lblHum',cliCustom?(activeClimates[0].label+' Humidity'):'Humidity');
 const sCliTitle=document.getElementById('sensorClimateTitle');
-if(sCliTitle)sCliTitle.textContent=cliCustom?('Climate \u2014 '+activeClimates[0].label):'Climate \u2014 Temperature & Humidity';
+if(sCliTitle)sCliTitle.textContent=cliCustom?('Climate \u2014 '+activeClimates[0].label):(hasPrimaryHum?'Climate \u2014 Temperature & Humidity':'Climate \u2014 Temperature');
 }
 setText('tempTh',d.temp_threshold||'45');
 
@@ -1426,14 +1429,18 @@ const sMq2Card=document.getElementById('sensorMq2Card');if(sMq2Card)sMq2Card.sty
 const sPriGrid=document.getElementById('sensorPrimaryGrid');if(sPriGrid)sPriGrid.style.display=(cliEn||hasMq2)?'':'none';
 if(hasMq2){
 const gasCustom=activeMq2s.length>=1&&isCustomSensorLabel(activeMq2s[0].label,'Gas');
-setText('lblGas',gasCustom?(activeMq2s[0].label+' (Gas)'):'Gas Level');
+const gasTypeName=(activeMq2s.length>=1&&activeMq2s[0].type_name)?activeMq2s[0].type_name:(d.gas_unit==='VOC'?'SGP40':'MQ-2');
+const isSgp=gasTypeName==='SGP40'||d.gas_unit==='VOC';
+setText('lblGas',gasCustom?(activeMq2s[0].label+(isSgp?' (VOC)':' (Gas)')):(isSgp?'VOC Air Quality':'Gas Level'));
 const sMq2Title=document.getElementById('sensorMq2Title');
-if(sMq2Title)sMq2Title.textContent=gasCustom?('MQ2 \u2014 '+activeMq2s[0].label):'MQ2 \u2014 Gas Sensor';
+if(sMq2Title)sMq2Title.textContent=gasCustom?(gasTypeName+' \u2014 '+activeMq2s[0].label):(gasTypeName+(isSgp?' \u2014 Air Quality (VOC)':' \u2014 Gas Sensor'));
 }
 if(hasMq2&&d.gas_raw!==undefined){
-const gasMax=d.gas_max||(d.platform==='ESP8266'?1023:4095);
-const gUnit=document.getElementById('gasMaxUnit');if(gUnit)gUnit.textContent=' /'+gasMax;
-const gLbl=document.getElementById('gasThLabel');if(gLbl)gLbl.textContent='Alarm Threshold (0-'+gasMax+')';
+const isSgp=(d.gas_unit==='VOC')||(activeMq2s.length>=1&&activeMq2s[0].type===1);
+const gasMax=d.gas_max||(isSgp?500:(d.platform==='ESP8266'?1023:4095));
+const gUnit=document.getElementById('gasMaxUnit');if(gUnit)gUnit.textContent=' /'+gasMax+(isSgp?' VOC':'');
+const gValLbl=document.getElementById('gasValLabel');if(gValLbl)gValLbl.textContent=isSgp?'VOC Index (100 = Clean)':'Raw ADC Value';
+const gLbl=document.getElementById('gasThLabel');if(gLbl)gLbl.textContent=(isSgp?'VOC Alarm Threshold (10-':'Alarm Threshold (10-')+gasMax+')';
 const gSlider=document.getElementById('gasThSlider');if(gSlider){gSlider.min=10;if(gSlider.max!==String(gasMax)){gSlider.max=gasMax;}}
 setText('gasRaw',d.gas_raw);setText('gasVal',d.gas_raw);
 setText('gasPct',d.gas_percent||0);
@@ -1479,10 +1486,12 @@ const climates=(d.climates||[]).filter(c=>c&&c.enabled);
 if(climates.length>1){
 climates.forEach(c=>{
 const nm=escapeHtml(c.label||('Climate #'+(c.index+1)));
-const val=c.fault?'FAULT':(parseFloat(c.temperature||0).toFixed(1)+'°C / '+parseFloat(c.humidity||0).toFixed(1)+'%'+(c.barometer?(' / '+parseFloat(c.pressure||0).toFixed(0)+' hPa'):''));
+const hasH=(c.humidity_enabled!==false);
+const val=c.fault?'FAULT':(parseFloat(c.temperature||0).toFixed(1)+'°C'+(hasH?(' / '+parseFloat(c.humidity||0).toFixed(1)+'%'):'')+(c.barometer?(' / '+parseFloat(c.pressure||0).toFixed(0)+' hPa'):''));
+const humGauge=hasH?`<div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.humidity||0).toFixed(1)}<span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>`:'';
 const baroGauge=c.barometer?`<div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.pressure||0).toFixed(0)}<span class="gauge-unit">hPa</span></div><div class="gauge-label">Pressure</div></div>`:'';
 chips.push(`<span><b>${nm}:</b> ${val}</span>`);
-cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${c.fault?'badge-err':'badge-ok'}">${escapeHtml(c.type_name||'Climate')}</span></div><div class="gauge-row"><div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.temperature||0).toFixed(1)}<span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div><div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.humidity||0).toFixed(1)}<span class="gauge-unit">%</span></div><div class="gauge-label">Humidity</div></div>${baroGauge}</div></div>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${c.fault?'badge-err':'badge-ok'}">${escapeHtml(c.type_name||'Climate')}</span></div><div class="gauge-row"><div class="gauge"><div class="gauge-value">${c.fault?'--':parseFloat(c.temperature||0).toFixed(1)}<span class="gauge-unit">&deg;C</span></div><div class="gauge-label">Temperature</div></div>${humGauge}${baroGauge}</div></div>`);
 });
 }
 const lights=(d.lights||[]).filter(l=>l&&l.enabled);
@@ -1524,10 +1533,12 @@ const mq2s=(d.mq2s||[]).filter(g=>g&&(g.enabled||g.hw_allowed));
 if(mq2s.length>1){
 mq2s.forEach(g=>{
 const nm=escapeHtml(g.label||('Gas #'+(g.index+1)));
+const unit=escapeHtml(g.unit||(g.type===1?'VOC':'ADC'));
+const typeTag=escapeHtml(g.type_name||(g.type===1?'SGP40':'MQ-2'));
 const st=!g.enabled?'Disabled':(g.warming?'Warming':(g.alarm?'DANGER':'Safe'));
 const bCls=!g.enabled?'badge-info':(g.alarm?'badge-err':(g.warming?'badge-warn':'badge-ok'));
-chips.push(`<span><b>${nm}:</b> ${g.raw||0} <span class="badge ${bCls}">${st}</span></span>`);
-cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge ${bCls}">${st}</span></div><div class="gauge"><div class="gauge-value">${g.raw||0}<span class="gauge-unit"> (${g.percent||0}%)</span></div><div class="gauge-label">Threshold: ${g.threshold||0}</div></div></div>`);
+chips.push(`<span><b>${nm}:</b> ${g.raw||0} ${unit} <span class="badge ${bCls}">${st}</span></span>`);
+cards.push(`<div class="card"><div class="card-title">${nm} <span class="badge badge-info">${typeTag}</span> <span class="badge ${bCls}">${st}</span></div><div class="gauge"><div class="gauge-value">${g.raw||0}<span class="gauge-unit"> ${unit} (${g.percent||0}%)</span></div><div class="gauge-label">Threshold: ${g.threshold||0}</div></div></div>`);
 });
 }
 if(wrap){
@@ -1679,6 +1690,8 @@ const c=gSensorCalData.climates.find(x=>x.index===idx)||gSensorCalData.climates[
 if(c){
 document.getElementById('tempOffset').value=c.temp_offset||0;
 document.getElementById('humOffset').value=c.hum_offset||0;
+const hg=document.getElementById('humOffsetGroup');
+if(hg)hg.style.display=(c.humidity_enabled===false)?'none':'';
 }
 }
 function onMq2CalSlotChange(){
@@ -1687,15 +1700,21 @@ const idx=getSelectedCalIdx('mq2CalIdx');
 const m=gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[0];
 if(m){
 const allowed=(m.hw_allowed!==false);
+const isSgp=(m.type===1);
 document.getElementById('gasEn').value=(allowed&&m.enabled!==false)?'1':'0';
 document.getElementById('gasEn').disabled=!allowed;
-const sGasMax=gIsEsp8266?1023:4095;
+const sGasMax=m.gas_max||(isSgp?500:(gIsEsp8266?1023:4095));
+const defTh=isSgp?250:(gIsEsp8266?100:1500);
 const gThSlider=document.getElementById('gasThSlider');
 if(gThSlider){
 gThSlider.min=10;gThSlider.max=sGasMax;gThSlider.disabled=!allowed;
-gThSlider.value=Math.min(sGasMax,Math.max(10,m.threshold||(gIsEsp8266?100:1500)));
+gThSlider.value=Math.min(sGasMax,Math.max(10,m.threshold||defTh));
 }
-document.getElementById('gasThVal').textContent=(gThSlider?gThSlider.value:400);
+document.getElementById('gasThVal').textContent=(gThSlider?gThSlider.value:defTh);
+const gLbl=document.getElementById('gasThLabel');
+if(gLbl)gLbl.textContent=(isSgp?'VOC Alarm Threshold (10-':'Alarm Threshold (10-')+sGasMax+')';
+const bCal=document.getElementById('btnGasCal');
+if(bCal)bCal.textContent=isSgp?'Calibrate Clean Air (VOC 100)':'Calibrate Baseline';
 const mq2Note=document.getElementById('mq2HwNote');if(mq2Note)mq2Note.style.display=allowed?'none':'block';
 ['btnGasSave','btnGasThSave','btnGasCal'].forEach(id=>{const b=document.getElementById(id);if(b)b.disabled=!allowed;});
 }
@@ -1747,7 +1766,9 @@ toast('Threshold saved','ok');
 }
 function calibrateMQ2(){
 const idx=getSelectedCalIdx('mq2CalIdx');
-api('POST','/api/config/sensor',{sensor_index:idx,calibrate_mq2:true}).then(()=>toast('MQ2 calibrated','ok'));
+const m=(gSensorCalData&&Array.isArray(gSensorCalData.mq2_sensors))?(gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[idx]):null;
+const isSgp=(m&&m.type===1)||(gSensorCalData&&gSensorCalData.gas_unit==='VOC');
+api('POST','/api/config/sensor',{sensor_index:idx,calibrate_mq2:true}).then(()=>toast(isSgp?'SGP40 clean-air VOC baseline calibrated':'MQ-2 clean-air baseline calibrated','ok'));
 }
 function saveWiFi(){
 api('POST','/api/config/wifi',{ssid:document.getElementById('wifiSSID').value,pass:document.getElementById('wifiPass').value})
@@ -1860,10 +1881,12 @@ const json=document.getElementById('restoreJson').value.trim();
 if(!json){toast('Paste or select config JSON first','warn');return;}
 let parsed;
 try{parsed=JSON.parse(json);}catch(e){toast('Invalid JSON syntax: '+e.message,'err');return;}
+if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)){toast('Backup root must be a JSON object','err');return;}
+if(parsed.type==='smarthome_pro_hub_backup'){toast('App Hub backups must be restored in the mobile app Settings','err');return;}
 api('POST','/api/restore',parsed).then(()=>{
 toast('Config restored, restarting...','ok');
 setTimeout(()=>location.reload(),3500);
-});
+}).catch(()=>{});
 }
 
 // Logs
@@ -1990,7 +2013,8 @@ const cnt=Math.max(1,mArr.length);
 for(let i=0;i<cnt;i++){
 const opt=document.createElement('option');opt.value=i;
 const wsLabel=(wsData&&Array.isArray(wsData.mq2s)&&wsData.mq2s[i]&&wsData.mq2s[i].label)?wsData.mq2s[i].label:'';
-opt.textContent='Gas MQ-2 #'+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
+const isSgp=(mArr[i]&&mArr[i].type===1);
+opt.textContent=(isSgp?'Gas SGP40 #':'Gas MQ-2 #')+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
 mSel.appendChild(opt);
 }
 }
@@ -1999,13 +2023,13 @@ if(mRow)mRow.style.display=(mArr.length>1)?'block':'none';
 const mq2Allowed=(d.sensor.mq2_hw_allowed!==false);
 document.getElementById('gasEn').value=(mq2Allowed&&d.sensor.mq2_enabled!==false)?'1':'0';
 document.getElementById('gasEn').disabled=!mq2Allowed;
-const sGasMax = gIsEsp8266 ? 1023 : 4095;
+const sGasMax = d.sensor.gas_max || (gIsEsp8266 ? 1023 : 4095);
 const gThSlider = document.getElementById('gasThSlider');
 if (gThSlider) {
 gThSlider.min = 10;
 gThSlider.max = sGasMax;
 gThSlider.disabled = !mq2Allowed;
-const rawTh = d.sensor.mq2_threshold || (gIsEsp8266 ? 100 : 1500);
+const rawTh = d.sensor.mq2_threshold || (sGasMax===500 ? 250 : (gIsEsp8266 ? 100 : 1500));
 gThSlider.value = Math.min(sGasMax, Math.max(10, rawTh));
 }
 document.getElementById('gasThVal').textContent = (gThSlider ? gThSlider.value : 400);
@@ -2080,10 +2104,9 @@ function updateAlarmActionFields() {
 }
 
 // Timers
-function loadAlarms(){
-fetch('/api/alarms').then(r=>r.json()).then(data=>{
+function renderAlarms(){
 const list=document.getElementById('alarmList');
-alarmCache=data||[];
+if(!list)return;
 if(!alarmCache.length){list.innerHTML='<div style="color:var(--text2);padding:16px;text-align:center;">No timer tasks configured</div>';return;}
 const types=['Once','Daily','Weekly','Weekdays','Weekends'];
 const actions=['Relay ON','Relay OFF','Toggle','Buzzer','All ON','All OFF'];
@@ -2092,19 +2115,27 @@ const isGuest=(gAuthRole==='guest');
 let html='';
 alarmCache.forEach(a=>{
 const isDelay=parseInt(a.mode||0)===1;
-const time=isDelay?formatDelay(a.delay||0):formatFixedTime(a.hour||0,a.min||0);
-const info=isDelay?'Delay timer':(types[a.type]||'Once')+(a.type===2?' ('+(days[a.dow]||'Sun')+')':'');
+const remSec=parseInt(a.rem_sec||0);
+const isRunning=!!a.en&&!a.fired&&remSec>0;
+const time=isDelay?(isRunning?formatSeconds(remSec):formatDelay(a.delay||0)):formatFixedTime(a.hour||0,a.min||0);
+const info=isDelay?(isRunning?('Set for '+formatDelay(a.delay||0)+' • Counting down'):('Delay timer'+(a.fired?' • Completed':(a.en?'':' • Paused')))):((types[a.type]||'Once')+(a.type===2?' ('+(days[a.dow]||'Sun')+')':''));
 const baseAct=actions[a.action]||'Action';
 const act=(a.action<=2)?(baseAct+' - '+(a.relay===255?'All Active Relays':getRelayName(a.relay))):baseAct;
+const pill=(!isDelay&&isRunning)?`<span style="display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:.68rem;font-weight:700;background:rgba(245,158,11,.15);color:#f59e0b;font-variant-numeric:tabular-nums">&#9201; ${formatSeconds(remSec)}</span>`:'';
 html+=`<div style="display:flex;align-items:center;gap:12px;padding:10px;background:var(--bg);border-radius:10px;margin-bottom:6px;border:1px solid var(--card-border);opacity:${a.en?1:0.5}">
-<div style="font-size:1.2rem;font-weight:700;min-width:56px">${time}</div>
-<div style="flex:1"><div style="font-size:.82rem;font-weight:500">${escapeHtml(info)}</div><div style="font-size:.72rem;color:var(--text2)">${escapeHtml(act)}</div></div>
+<div style="font-size:1.15rem;font-weight:700;min-width:68px;font-variant-numeric:tabular-nums;color:${(isDelay&&isRunning)?'#f59e0b':'inherit'}">${time}</div>
+<div style="flex:1"><div style="font-size:.82rem;font-weight:500">${escapeHtml(info)}${pill}</div><div style="font-size:.72rem;color:var(--text2)">${escapeHtml(act)}</div></div>
 ${isGuest?'':`<button class="btn btn-sm btn-outline" onclick="editAlarm(${a.id})">Edit</button>
 <button class="btn btn-sm btn-outline" onclick="toggleAlarmEn(${a.id},${!a.en})">${a.en?'Disable':'Enable'}</button>
 <button class="btn btn-sm btn-red" onclick="deleteAlarm(${a.id})">&#10005;</button>`}
 </div>`;
 });
 list.innerHTML=html;
+}
+function loadAlarms(){
+fetch('/api/alarms').then(r=>r.json()).then(data=>{
+alarmCache=(data||[]).map(a=>({...a,rem_sec:parseInt(a.rem_sec||0)}));
+renderAlarms();
 });
 }
 function formatDelay(totalMinutes){
@@ -2199,7 +2230,7 @@ return `${s}s`;
 }
 
 setInterval(()=>{
-if(!wsData.relays)return;
+if(wsData.relays){
 let ch=false;
 wsData.relays.forEach(r=>{
 if(r.timer_active&&r.timer_remaining>0){
@@ -2209,6 +2240,19 @@ ch=true;
 }
 });
 if(ch)renderRelays(wsData.relays);
+}
+if(alarmCache.length){
+let ach=false,alarmExpired=false;
+alarmCache.forEach(a=>{
+if(a.en&&!a.fired&&a.rem_sec>0){
+a.rem_sec--;
+ach=true;
+if(a.rem_sec===0)alarmExpired=true;
+}
+});
+if(ach)renderAlarms();
+if(alarmExpired)loadAlarms();
+}
 },1000);
 
 function openQuickTimer(i){
@@ -2289,9 +2333,11 @@ const isGuest=(gAuthRole==='guest');
 let html='';
 rules.forEach(r=>{
 const sIdx=(r.s_idx!==undefined)?r.s_idx:((r.sensor_index!==undefined)?r.sensor_index:0);
-const sBase=sensorNames[r.sensor]||'Sensor';
+const gSlot=(r.sensor===2&&wsData&&Array.isArray(wsData.mq2s))?wsData.mq2s[sIdx]:null;
+const isSgpRule=r.sensor===2&&((gSlot&&gSlot.type===1)||(!gSlot&&sIdx===0&&wsData&&wsData.gas_unit==='VOC'));
+const sBase=(r.sensor===2)?(isSgpRule?'SGP40 VOC':'Gas MQ-2'):(sensorNames[r.sensor]||'Sensor');
 const sName=sBase+(sIdx>0?(' #'+(sIdx+1)):'');
-const sUnit=sensorUnits[r.sensor]||'';
+const sUnit=(r.sensor===2)?(isSgpRule?' VOC':' ADC'):(sensorUnits[r.sensor]||'');
 const cName=condNames[r.cond]||'';
 const aName=actNames[r.act]||'Action';
 const rName=(r.relay===255)?'All Relays':getRelayName(r.relay);
@@ -2370,6 +2416,12 @@ const cond=parseInt(document.getElementById('ruleCondition').value);
 document.getElementById('ruleThreshold').value=(cond===1?'0':'1');
 }
 }
+function onRuleSensorIdxChange(){
+const s=parseInt(document.getElementById('ruleSensor').value);
+if(s!==2)return;
+const selIdx=parseInt(document.getElementById('ruleSensorIdx').value||'0');
+updateRuleSensorFields(selIdx);
+}
 function updateRuleSensorFields(selectedIdx){
 const s=parseInt(document.getElementById('ruleSensor').value);
 const cond=parseInt(document.getElementById('ruleCondition').value);
@@ -2378,7 +2430,12 @@ const th=document.getElementById('ruleThreshold');
 const hy=document.getElementById('ruleHysteresis');
 if(s===0){th.step='0.5';th.value='30.0';hy.value='0.5';}
 else if(s===1){th.step='1';th.value='70';hy.value='2.0';}
-else if(s===2){th.step='10';th.value='500';hy.value='50';}
+else if(s===2){
+const selIdx=selectedIdx!==undefined?selectedIdx:0;
+const gSlot=(wsData&&Array.isArray(wsData.mq2s))?wsData.mq2s[selIdx]:null;
+const isSgp=(gSlot&&gSlot.type===1)||(!gSlot&&selIdx===0&&wsData&&wsData.gas_unit==='VOC');
+th.step=isSgp?'5':'10';th.value=isSgp?'250':'500';hy.value=isSgp?'25':'50';
+}
 else if(s===3){th.step='10';th.value='100';hy.value='15';}
 else if(s===4){th.step='0.5';th.value='35.0';hy.value='0.5';}
 else if(s===5){th.step='1';th.value='20';hy.value='3.0';}
@@ -2519,10 +2576,18 @@ const SENSOR_GROUP_META = {
     mq2s:        { containerId: 'hwMq2sContainer',        badgeId: 'hwMq2sCount',        emptyText: 'No MQ-2 Gas sensors added — click + Add' }
 };
 
+function isI2cClimateType(t) {
+    return t === 3 || t === 4 || t === 5 || t === 6;
+}
+
+function isOneWireClimateType(t) {
+    return t === 1 || t === 2 || t === 7;
+}
+
 function getI2cClimateAddrs(type) {
     if (type === 3) return [0x76, 0x77];
     if (type === 4) return [0x38];
-    if (type === 5) return [0x44, 0x45];
+    if (type === 5 || type === 6) return [0x44, 0x45];
     return [];
 }
 
@@ -2539,11 +2604,15 @@ function getUsedI2cAddrs(excludeGroup, excludeIdx) {
     }
     gHwSensors.climates.forEach((c, i) => {
         if (excludeGroup === 'climates' && excludeIdx === i) return;
-        if (c && c.type >= 3 && c.i2c_addr > 0) used.add(c.i2c_addr);
+        if (c && isI2cClimateType(c.type) && c.i2c_addr > 0) used.add(c.i2c_addr);
     });
     gHwSensors.lights.forEach((l, i) => {
         if (excludeGroup === 'lights' && excludeIdx === i) return;
         if (l && l.type === 1 && l.i2c_addr > 0) used.add(l.i2c_addr);
+    });
+    gHwSensors.mq2s.forEach((g, i) => {
+        if (excludeGroup === 'mq2s' && excludeIdx === i) return;
+        if (g && g.enabled !== false && g.type === 1) used.add(g.i2c_addr || 0x59);
     });
     return used;
 }
@@ -2560,25 +2629,60 @@ function pickFreePinFromSet(usedSet, list, preferred) {
 }
 
 function hasAnyI2cSensorActive() {
-    return gHwSensors.climates.some(c => c && c.type >= 3) ||
-           gHwSensors.lights.some(l => l && l.type === 1);
+    return gHwSensors.climates.some(c => c && isI2cClimateType(c.type)) ||
+           gHwSensors.lights.some(l => l && l.type === 1) ||
+           gHwSensors.mq2s.some(g => g && g.enabled !== false && g.type === 1);
 }
 
-function ensureI2cPinsAssigned() {
+function getSharedI2cBusPin(id, defPin) {
+    const el = document.getElementById(id);
+    if (!el || el.value === '') return defPin;
+    const v = parseInt(el.value);
+    return isNaN(v) ? defPin : v;
+}
+
+function syncSharedI2cPinSelects() {
+    const sdaVal = String(getSharedI2cBusPin('hwLcdSda', gIsEsp8266 ? 4 : 21));
+    const sclVal = String(getSharedI2cBusPin('hwLcdScl', gIsEsp8266 ? 5 : 22));
+    ['cli', 'lgt', 'mq2'].forEach(prefix => {
+        for (let i = 0; i < 8; i++) {
+            const sdaEl = document.getElementById(`hw_${prefix}_sda_${i}`);
+            if (sdaEl) sdaEl.value = sdaVal;
+            const sclEl = document.getElementById(`hw_${prefix}_scl_${i}`);
+            if (sclEl) sclEl.value = sclVal;
+        }
+    });
+}
+
+function onSharedI2cBusPinChange(newSda, newScl) {
+    if (newSda !== null && newSda !== undefined) {
+        const sdaEl = document.getElementById('hwLcdSda');
+        if (sdaEl) sdaEl.value = String(newSda);
+    }
+    if (newScl !== null && newScl !== undefined) {
+        const sclEl = document.getElementById('hwLcdScl');
+        if (sclEl) sclEl.value = String(newScl);
+    }
+    syncSharedI2cPinSelects();
+    setHwMode('custom');
+    checkHwConflicts();
+}
+
+function ensureI2cPinsAssigned(skipDomSync) {
     const lcdEn = document.getElementById('hwLcdEn');
     if (!hasAnyI2cSensorActive() && (!lcdEn || lcdEn.value !== '1')) return;
-    const strapSet = new Set(gIsEsp8266 ? [0, 2, 15] : [0, 2, 12, 15]);
     const ensureBusPin = (elId, defPin) => {
         const el = document.getElementById(elId);
         if (!el) return;
         const cur = parseInt(el.value);
-        if (cur !== 255 && !isNaN(cur)) return;
-        const used = getAllFormUsedPins(elId);
+        const used = getAllFormUsedPins(elId, skipDomSync);
+        if (cur !== 255 && !isNaN(cur) && !used.has(cur)) return;
         const picked = pickFreePinFromSet(used, SAFE_OUTPUT_PINS, defPin);
         if (picked !== 255) el.value = String(picked);
     };
     ensureBusPin('hwLcdSda', gIsEsp8266 ? 4 : 21);
     ensureBusPin('hwLcdScl', gIsEsp8266 ? 5 : 22);
+    syncSharedI2cPinSelects();
 }
 
 function syncHwSensorsFromDOM() {
@@ -2595,8 +2699,8 @@ function syncHwSensorsFromDOM() {
     gHwSensors.climates.forEach((c, i) => {
         if (!document.getElementById(`hw_cli_type_${i}`)) return;
         c.type     = numOr(`hw_cli_type_${i}`, c.type);
-        c.pin      = (c.type === 1 || c.type === 2) ? numOr(`hw_cli_pin_${i}`, c.pin ?? 255) : 255;
-        c.i2c_addr = (c.type >= 3) ? numOr(`hw_cli_addr_${i}`, c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0) : 0;
+        c.pin      = isOneWireClimateType(c.type) ? numOr(`hw_cli_pin_${i}`, c.pin ?? 255) : 255;
+        c.i2c_addr = isI2cClimateType(c.type) ? numOr(`hw_cli_addr_${i}`, c.i2c_addr || 0) : 0;
         c.label    = strOr(`hw_cli_lbl_${i}`, c.label || '');
     });
     gHwSensors.lights.forEach((l, i) => {
@@ -2628,9 +2732,11 @@ function syncHwSensorsFromDOM() {
     });
     gHwSensors.mq2s.forEach((g, i) => {
         if (!document.getElementById(`hw_mq2_en_${i}`)) return;
+        g.type        = numOr(`hw_mq2_type_${i}`, g.type || 0);
         g.enabled     = (document.getElementById(`hw_mq2_en_${i}`).value === '1');
-        g.analog_pin  = numOr(`hw_mq2_apin_${i}`, g.analog_pin ?? 255);
-        g.digital_pin = numOr(`hw_mq2_dpin_${i}`, g.digital_pin ?? 255);
+        g.analog_pin  = (g.type === 0) ? numOr(`hw_mq2_apin_${i}`, g.analog_pin ?? 255) : 255;
+        g.digital_pin = (g.type === 0) ? numOr(`hw_mq2_dpin_${i}`, g.digital_pin ?? 255) : 255;
+        g.i2c_addr    = (g.type === 1) ? 0x59 : 0;
         g.label       = strOr(`hw_mq2_lbl_${i}`, g.label || '');
     });
 }
@@ -2653,6 +2759,9 @@ function renderHwSensorGroup(key) {
         return;
     }
 
+    const sdaPinVal = getSharedI2cBusPin('hwLcdSda', gIsEsp8266 ? 4 : 21);
+    const sclPinVal = getSharedI2cBusPin('hwLcdScl', gIsEsp8266 ? 5 : 22);
+
     list.forEach((item, i) => {
         const card = document.createElement('div');
         card.style.cssText = 'background:var(--surface);padding:10px;border-radius:8px;border:1px solid var(--card-border);';
@@ -2662,7 +2771,8 @@ function renderHwSensorGroup(key) {
         </div>`;
 
         if (key === 'climates') {
-            const isI2c = item.type >= 3;
+            const isI2c = isI2cClimateType(item.type);
+            const isOneWire = isOneWireClimateType(item.type);
             const addrs = getI2cClimateAddrs(item.type);
             const addrOpts = addrs.map(a => `<option value="${a}" ${item.i2c_addr === a ? 'selected' : ''}>${formatHexAddr(a)}</option>`).join('');
             card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
@@ -2674,18 +2784,24 @@ function renderHwSensorGroup(key) {
                         <option value="3" ${item.type===3?'selected':''}>BME280 (I2C Baro)</option>
                         <option value="4" ${item.type===4?'selected':''}>AHT20 (I2C)</option>
                         <option value="5" ${item.type===5?'selected':''}>SHT3x (I2C)</option>
+                        <option value="6" ${item.type===6?'selected':''}>SHT40 / SHT45 (I2C)</option>
+                        <option value="7" ${item.type===7?'selected':''}>DS18B20 (1-Wire Temp)</option>
                     </select>
                 </div>
-                <div class="form-group" style="margin:0;${isI2c || item.type===0 ? 'display:none' : ''}"><label style="font-size:0.72rem">Data GPIO Pin</label><select id="hw_cli_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0;${!isOneWire ? 'display:none' : ''}"><label style="font-size:0.72rem">Data GPIO Pin</label><select id="hw_cli_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
                 <div class="form-group" style="margin:0;${!isI2c ? 'display:none' : ''}"><label style="font-size:0.72rem">I2C Address (Shared Bus)</label><select id="hw_cli_addr_${i}" ${addrs.length<=1?'disabled':''} onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">${addrOpts}</select></div>
+                <div class="form-group" style="margin:0;${!isI2c ? 'display:none' : ''}"><label style="font-size:0.72rem">I2C SDA Pin (Shared)</label><select id="hw_cli_sda_${i}" onchange="onSharedI2cBusPinChange(this.value, null)"></select></div>
+                <div class="form-group" style="margin:0;${!isI2c ? 'display:none' : ''}"><label style="font-size:0.72rem">I2C SCL Pin (Shared)</label><select id="hw_cli_scl_${i}" onchange="onSharedI2cBusPinChange(null, this.value)"></select></div>
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_cli_lbl_${i}" maxlength="15" placeholder="e.g. Living Room" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
             </div>`;
             container.appendChild(card);
             populatePinOptions(`hw_cli_pin_${i}`, SAFE_OUTPUT_PINS, item.pin, true);
+            populatePinOptions(`hw_cli_sda_${i}`, SAFE_OUTPUT_PINS, sdaPinVal, true);
+            populatePinOptions(`hw_cli_scl_${i}`, SAFE_OUTPUT_PINS, sclPinVal, true);
         } else if (key === 'lights') {
             card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
-                    <select id="hw_lgt_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');ensureI2cPinsAssigned();renderHwSensorGroup('lights');checkHwConflicts()">
+                    <select id="hw_lgt_type_${i}" onchange="onLightSlotTypeChange(${i})">
                         <option value="0" ${item.type===0?'selected':''}>Disabled</option>
                         <option value="1" ${item.type===1?'selected':''}>BH1750 (I2C Lux)</option>
                     </select>
@@ -2696,9 +2812,13 @@ function renderHwSensorGroup(key) {
                         <option value="92" ${item.i2c_addr===92?'selected':''}>0x5C (ADDR HIGH)</option>
                     </select>
                 </div>
+                <div class="form-group" style="margin:0;${item.type===0?'display:none':''}"><label style="font-size:0.72rem">I2C SDA Pin (Shared)</label><select id="hw_lgt_sda_${i}" onchange="onSharedI2cBusPinChange(this.value, null)"></select></div>
+                <div class="form-group" style="margin:0;${item.type===0?'display:none':''}"><label style="font-size:0.72rem">I2C SCL Pin (Shared)</label><select id="hw_lgt_scl_${i}" onchange="onSharedI2cBusPinChange(null, this.value)"></select></div>
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_lgt_lbl_${i}" maxlength="15" placeholder="e.g. Porch Lux" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
             </div>`;
             container.appendChild(card);
+            populatePinOptions(`hw_lgt_sda_${i}`, SAFE_OUTPUT_PINS, sdaPinVal, true);
+            populatePinOptions(`hw_lgt_scl_${i}`, SAFE_OUTPUT_PINS, sclPinVal, true);
         } else if (key === 'motions') {
             card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Sensor Type</label>
@@ -2748,20 +2868,33 @@ function renderHwSensorGroup(key) {
             populatePinOptions(`hw_us_trig_${i}`, SAFE_OUTPUT_PINS, item.trig_pin, true);
             populatePinOptions(`hw_us_echo_${i}`, SAFE_INPUT_PINS, item.echo_pin, true);
         } else if (key === 'mq2s') {
+            const mType = item.type || 0;
+            const isSgp = (mType === 1);
             card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
+                    <select id="hw_mq2_type_${i}" onchange="onMq2SlotTypeChange(${i})">
+                        <option value="0" ${mType===0?'selected':''}>MQ-2 (Analog/DO)</option>
+                        <option value="1" ${mType===1?'selected':''}>SGP40 (I2C VOC)</option>
+                    </select>
+                </div>
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Status</label>
-                    <select id="hw_mq2_en_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
+                    <select id="hw_mq2_en_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');ensureI2cPinsAssigned();checkHwConflicts()">
                         <option value="1" ${item.enabled!==false?'selected':''}>Enabled</option>
                         <option value="0" ${item.enabled===false?'selected':''}>Disabled</option>
                     </select>
                 </div>
-                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Analog Pin (ADC1 only)</label><select id="hw_mq2_apin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
-                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Digital DO Pin</label><select id="hw_mq2_dpin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
-                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_mq2_lbl_${i}" maxlength="15" placeholder="e.g. Kitchen Gas" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
+                <div class="form-group" style="margin:0;${isSgp?'display:none':''}"><label style="font-size:0.72rem">Analog Pin (ADC1 only)</label><select id="hw_mq2_apin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0;${isSgp?'display:none':''}"><label style="font-size:0.72rem">Digital DO Pin</label><select id="hw_mq2_dpin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
+                <div class="form-group" style="margin:0;${!isSgp?'display:none':''}"><label style="font-size:0.72rem">I2C Address (Shared Bus)</label><select disabled><option>0x59 (SGP40 VOC)</option></select></div>
+                <div class="form-group" style="margin:0;${!isSgp?'display:none':''}"><label style="font-size:0.72rem">I2C SDA Pin (Shared)</label><select id="hw_mq2_sda_${i}" onchange="onSharedI2cBusPinChange(this.value, null)"></select></div>
+                <div class="form-group" style="margin:0;${!isSgp?'display:none':''}"><label style="font-size:0.72rem">I2C SCL Pin (Shared)</label><select id="hw_mq2_scl_${i}" onchange="onSharedI2cBusPinChange(null, this.value)"></select></div>
+                <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Label (Optional)</label><input type="text" id="hw_mq2_lbl_${i}" maxlength="15" placeholder="${isSgp?'e.g. Air Quality':'e.g. Kitchen Gas'}" value="${escapeHtml(item.label || '')}" oninput="syncHwSensorsFromDOM()"></div>
             </div>`;
             container.appendChild(card);
             populatePinOptions(`hw_mq2_apin_${i}`, ADC1_PINS, item.analog_pin, true);
             populatePinOptions(`hw_mq2_dpin_${i}`, SAFE_INPUT_PINS, item.digital_pin, true);
+            populatePinOptions(`hw_mq2_sda_${i}`, SAFE_OUTPUT_PINS, sdaPinVal, true);
+            populatePinOptions(`hw_mq2_scl_${i}`, SAFE_OUTPUT_PINS, sclPinVal, true);
         }
     });
 }
@@ -2774,23 +2907,65 @@ function onClimateSlotTypeChange(idx) {
     syncHwSensorsFromDOM();
     const c = gHwSensors.climates[idx];
     if (!c) return;
-    if (c.type >= 3) {
+    if (isI2cClimateType(c.type)) {
+        c.pin = 255;
         const allowed = getI2cClimateAddrs(c.type);
-        if (!allowed.includes(c.i2c_addr)) {
-            const usedI2c = getUsedI2cAddrs('climates', idx);
+        const usedI2c = getUsedI2cAddrs('climates', idx);
+        if (!allowed.includes(c.i2c_addr) || usedI2c.has(c.i2c_addr)) {
             c.i2c_addr = allowed.find(a => !usedI2c.has(a)) || allowed[0];
         }
-        c.pin = 255;
-        ensureI2cPinsAssigned();
-    } else if (c.type === 1 || c.type === 2) {
+        ensureI2cPinsAssigned(true);
+    } else if (isOneWireClimateType(c.type)) {
         c.i2c_addr = 0;
         if (c.pin === 255 || c.pin === undefined) {
-            const used = getAllFormUsedPins();
+            const used = getAllFormUsedPins(undefined, true);
             c.pin = pickFreePinFromSet(used, SAFE_OUTPUT_PINS, gIsEsp8266 ? 14 : 4);
         }
     }
     setHwMode('custom');
     renderHwSensorGroup('climates');
+    checkHwConflicts();
+}
+
+function onLightSlotTypeChange(idx) {
+    syncHwSensorsFromDOM();
+    const l = gHwSensors.lights[idx];
+    if (!l) return;
+    if (l.type === 1) {
+        const allowed = [0x23, 0x5C];
+        const usedI2c = getUsedI2cAddrs('lights', idx);
+        if (!allowed.includes(l.i2c_addr) || usedI2c.has(l.i2c_addr)) {
+            l.i2c_addr = allowed.find(a => !usedI2c.has(a)) || allowed[0];
+        }
+        ensureI2cPinsAssigned(true);
+    } else {
+        l.i2c_addr = 0;
+    }
+    setHwMode('custom');
+    renderHwSensorGroup('lights');
+    checkHwConflicts();
+}
+
+function onMq2SlotTypeChange(idx) {
+    syncHwSensorsFromDOM();
+    const g = gHwSensors.mq2s[idx];
+    if (!g) return;
+    if (g.type === 1) {
+        g.analog_pin = 255;
+        g.digital_pin = 255;
+        g.i2c_addr = 0x59;
+        ensureI2cPinsAssigned(true);
+    } else {
+        g.type = 0;
+        g.i2c_addr = 0;
+        if ((g.analog_pin === 255 || g.analog_pin === undefined) && (g.digital_pin === 255 || g.digital_pin === undefined)) {
+            const used = getAllFormUsedPins(undefined, true);
+            g.analog_pin = pickFreePinFromSet(used, ADC1_PINS, idx === 0 ? (gIsEsp8266 ? 17 : 34) : undefined);
+            if (g.analog_pin === 255) g.digital_pin = pickFreePinFromSet(used, SAFE_INPUT_PINS);
+        }
+    }
+    setHwMode('custom');
+    renderHwSensorGroup('mq2s');
     checkHwConflicts();
 }
 
@@ -2804,7 +2979,7 @@ function addHwSensor(key) {
         return;
     }
 
-    const usedPins = getAllFormUsedPins();
+    const usedPins = getAllFormUsedPins(undefined, true);
     const usedI2c = getUsedI2cAddrs();
     let warned = '';
 
@@ -2814,6 +2989,7 @@ function addHwSensor(key) {
             list.push({ type: 2, pin: freeGpio, i2c_addr: 0, label: '' });
         } else {
             const i2cChoices = [
+                { type: 6, addr: 0x44 }, { type: 6, addr: 0x45 },
                 { type: 5, addr: 0x44 }, { type: 5, addr: 0x45 },
                 { type: 3, addr: 0x76 }, { type: 3, addr: 0x77 },
                 { type: 4, addr: 0x38 }
@@ -2821,7 +2997,7 @@ function addHwSensor(key) {
             const pick = i2cChoices.find(x => !usedI2c.has(x.addr));
             if (pick) {
                 list.push({ type: pick.type, pin: 255, i2c_addr: pick.addr, label: '' });
-                ensureI2cPinsAssigned();
+                ensureI2cPinsAssigned(true);
             } else {
                 list.push({ type: 2, pin: 255, i2c_addr: 0, label: '' });
                 warned = 'no free output GPIO or unused I2C address';
@@ -2834,7 +3010,7 @@ function addHwSensor(key) {
             return;
         }
         list.push({ type: 1, i2c_addr: freeAddr, label: '' });
-        ensureI2cPinsAssigned();
+        ensureI2cPinsAssigned(true);
     } else if (key === 'motions') {
         const freePin = pickFreePinFromSet(usedPins, SAFE_INPUT_PINS, list.length === 0 ? (gIsEsp8266 ? 14 : 32) : undefined);
         list.push({ type: 1, pin: freePin, label: '' });
@@ -2860,9 +3036,14 @@ function addHwSensor(key) {
         } else if (!gIsEsp8266 && list.length === 0 && !uCopy.has(35)) {
             dPin = 35;
         }
-        list.push({ enabled: true, analog_pin: aPin, digital_pin: dPin, label: '' });
-        if (aPin === 255 && dPin === 255) warned = 'no free ADC1 or digital DO GPIO';
-        else if (aPin === 255 && gIsEsp8266) toast('Slot added using Digital DO pin (ESP8266 has 1 A0 ADC)', 'info');
+        if (aPin === 255 && dPin === 255 && !usedI2c.has(0x59)) {
+            list.push({ type: 1, enabled: true, analog_pin: 255, digital_pin: 255, i2c_addr: 0x59, label: '' });
+            ensureI2cPinsAssigned(true);
+        } else {
+            list.push({ type: 0, enabled: true, analog_pin: aPin, digital_pin: dPin, i2c_addr: 0, label: '' });
+            if (aPin === 255 && dPin === 255) warned = 'no free ADC1 or digital DO GPIO';
+            else if (aPin === 255 && gIsEsp8266) toast('Slot added using Digital DO pin (ESP8266 has 1 A0 ADC)', 'info');
+        }
     }
 
     setHwMode('custom');
@@ -2900,7 +3081,7 @@ function initHwDefaults() {
         motions: [],
         probes: [],
         ultrasonics: [],
-        mq2_sensors: [{ enabled: true, analog_pin: gIsEsp8266 ? 17 : 34, digital_pin: gIsEsp8266 ? 255 : 35, label: '' }],
+        mq2_sensors: [{ type: 0, enabled: true, analog_pin: gIsEsp8266 ? 17 : 34, digital_pin: gIsEsp8266 ? 255 : 35, i2c_addr: 0, label: '' }],
         buzzer: { enabled: true, pin: gIsEsp8266 ? 2 : 5 },
         lcd: { enabled: true, i2c_addr: 39, cols: 16, rows: 2, sda_pin: gIsEsp8266 ? 4 : 21, scl_pin: gIsEsp8266 ? 5 : 22 },
         btn_multi_pin: gIsEsp8266 ? 0 : 33
@@ -2920,17 +3101,21 @@ function onPeripheralToggle() {
     ensureI2cPinsAssigned();
 }
 
-function getFormNonChannelUsedPins() {
-    syncHwSensorsFromDOM();
+function getFormNonChannelUsedPins(excludeElId, skipDomSync) {
+    if (!skipDomSync) syncHwSensorsFromDOM();
     const used = new Set();
     const addPin = (p) => { if (p !== undefined && p !== null && !isNaN(p) && p !== 255) used.add(Number(p)); };
-    gHwSensors.climates.forEach(c => { if (c && (c.type === 1 || c.type === 2)) addPin(c.pin); });
+    gHwSensors.climates.forEach(c => { if (c && isOneWireClimateType(c.type)) addPin(c.pin); });
     gHwSensors.motions.forEach(m => { if (m && m.type !== 0) addPin(m.pin); });
     gHwSensors.probes.forEach(p => { if (p && p.type !== 0) addPin(p.pin); });
     gHwSensors.ultrasonics.forEach(u => { if (u && u.type !== 0) { addPin(u.trig_pin); addPin(u.echo_pin); } });
-    gHwSensors.mq2s.forEach(g => { if (g && g.enabled !== false) { addPin(g.analog_pin); addPin(g.digital_pin); } });
+    gHwSensors.mq2s.forEach(g => { if (g && g.enabled !== false && (g.type || 0) === 0) { addPin(g.analog_pin); addPin(g.digital_pin); } });
 
-    const addEl = (id) => { const el = document.getElementById(id); if (el) addPin(parseInt(el.value)); };
+    const addEl = (id) => {
+        if (id === excludeElId) return;
+        const el = document.getElementById(id);
+        if (el) addPin(parseInt(el.value));
+    };
     if ((document.getElementById('hwBuzEn') || {}).value === '1') addEl('hwBuzPin');
     const lcdOn = (document.getElementById('hwLcdEn') || {}).value === '1';
     if (lcdOn || hasAnyI2cSensorActive()) { addEl('hwLcdSda'); addEl('hwLcdScl'); }
@@ -2938,8 +3123,8 @@ function getFormNonChannelUsedPins() {
     return used;
 }
 
-function getAllFormUsedPins(excludeElId) {
-    const used = getFormNonChannelUsedPins();
+function getAllFormUsedPins(excludeElId, skipDomSync) {
+    const used = getFormNonChannelUsedPins(excludeElId, skipDomSync);
     const num = parseInt((document.getElementById('hwNumRelays') || {}).value || '0') || 0;
     for (let i = 0; i < num; i++) {
         const enEl = document.getElementById(`hw_en_${i}`);
@@ -2955,13 +3140,6 @@ function getAllFormUsedPins(excludeElId) {
         if (isSwEn && sEl && sEl.id !== excludeElId) {
             const sp = parseInt(sEl.value);
             if (!isNaN(sp) && sp !== 255) used.add(sp);
-        }
-    }
-    if (excludeElId) {
-        const exEl = document.getElementById(excludeElId);
-        if (exEl) {
-            const ep = parseInt(exEl.value);
-            if (!isNaN(ep) && ep !== 255) used.delete(ep);
         }
     }
     return used;
@@ -2991,10 +3169,10 @@ function applyHwDataToForm(data) {
     // Populate multi-instance sensors (new array format OR legacy slot-0 fallback)
     if (Array.isArray(data.climates)) {
         gHwSensors.climates = data.climates.map(c => ({
-            type: c.type ?? 0, pin: c.pin ?? 255, i2c_addr: c.i2c_addr ?? (c.type >= 3 ? getI2cClimateAddrs(c.type)[0] : 0), label: c.label || ''
+            type: c.type ?? 0, pin: c.pin ?? 255, i2c_addr: c.i2c_addr ?? (isI2cClimateType(c.type) ? getI2cClimateAddrs(c.type)[0] : 0), label: c.label || ''
         }));
     } else if (data.dht && data.dht.type > 0) {
-        gHwSensors.climates = [{ type: data.dht.type, pin: data.dht.pin ?? 255, i2c_addr: data.dht.i2c_addr || (data.dht.type >= 3 ? getI2cClimateAddrs(data.dht.type)[0] : 0), label: '' }];
+        gHwSensors.climates = [{ type: data.dht.type, pin: data.dht.pin ?? 255, i2c_addr: data.dht.i2c_addr || (isI2cClimateType(data.dht.type) ? getI2cClimateAddrs(data.dht.type)[0] : 0), label: '' }];
     } else {
         gHwSensors.climates = [];
     }
@@ -3039,10 +3217,10 @@ function applyHwDataToForm(data) {
 
     if (Array.isArray(data.mq2_sensors)) {
         gHwSensors.mq2s = data.mq2_sensors.map(g => ({
-            enabled: g.enabled !== false, analog_pin: g.analog_pin ?? 255, digital_pin: g.digital_pin ?? 255, label: g.label || ''
+            type: g.type ?? 0, enabled: g.enabled !== false, analog_pin: g.analog_pin ?? 255, digital_pin: g.digital_pin ?? 255, i2c_addr: (g.type === 1 ? (g.i2c_addr || 0x59) : 0), label: g.label || ''
         }));
     } else if (data.mq2 && data.mq2.enabled !== false && ((data.mq2.analog_pin !== undefined && data.mq2.analog_pin !== 255) || (data.mq2.digital_pin !== undefined && data.mq2.digital_pin !== 255))) {
-        gHwSensors.mq2s = [{ enabled: data.mq2.enabled !== false, analog_pin: data.mq2.analog_pin ?? 255, digital_pin: data.mq2.digital_pin ?? 255, label: '' }];
+        gHwSensors.mq2s = [{ type: 0, enabled: data.mq2.enabled !== false, analog_pin: data.mq2.analog_pin ?? 255, digital_pin: data.mq2.digital_pin ?? 255, i2c_addr: 0, label: '' }];
     } else {
         gHwSensors.mq2s = [];
     }
@@ -3219,10 +3397,11 @@ function checkHwConflicts() {
     gHwSensors.climates.forEach((c, i) => {
         if (!c || c.type === 0) return;
         const slotName = `Climate #${i + 1}`;
-        if (c.type === 1 || c.type === 2) {
-            if (c.pin === 255 || isNaN(c.pin)) conflicts.push(`${slotName} (${c.type===1?'DHT11':'DHT22'}) has no Data Pin assigned.`);
+        if (isOneWireClimateType(c.type)) {
+            const typeName = c.type === 1 ? 'DHT11' : (c.type === 2 ? 'DHT22' : 'DS18B20');
+            if (c.pin === 255 || isNaN(c.pin)) conflicts.push(`${slotName} (${typeName}) has no Data Pin assigned.`);
             else claim(c.pin, slotName, true);
-        } else {
+        } else if (isI2cClimateType(c.type)) {
             const addr = c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0;
             claimI2c(addr, slotName);
         }
@@ -3264,6 +3443,10 @@ function checkHwConflicts() {
     gHwSensors.mq2s.forEach((g, i) => {
         if (!g || g.enabled === false) return;
         const slotName = `Gas #${i + 1}`;
+        if ((g.type || 0) === 1) {
+            claimI2c(g.i2c_addr || 0x59, `${slotName} (SGP40)`);
+            return;
+        }
         const hasAnalog = (g.analog_pin !== 255 && !isNaN(g.analog_pin));
         const hasDigital = (g.digital_pin !== 255 && !isNaN(g.digital_pin));
         if (!hasAnalog && !hasDigital) {
@@ -3764,8 +3947,8 @@ function saveHardware() {
         channels: channels,
         climates: gHwSensors.climates.map(c => ({
             type: c.type || 0,
-            pin: (c.type === 1 || c.type === 2) ? (c.pin ?? 255) : 255,
-            i2c_addr: (c.type >= 3) ? (c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0) : 0,
+            pin: isOneWireClimateType(c.type) ? (c.pin ?? 255) : 255,
+            i2c_addr: isI2cClimateType(c.type) ? (c.i2c_addr || getI2cClimateAddrs(c.type)[0] || 0) : 0,
             label: (c.label || '').slice(0, 15)
         })),
         lights: gHwSensors.lights.map(l => ({
@@ -3792,9 +3975,11 @@ function saveHardware() {
             label: (u.label || '').slice(0, 15)
         })),
         mq2_sensors: gHwSensors.mq2s.map(g => ({
+            type: g.type || 0,
             enabled: g.enabled !== false,
-            analog_pin: g.analog_pin ?? 255,
-            digital_pin: g.digital_pin ?? 255,
+            analog_pin: (g.type || 0) === 0 ? (g.analog_pin ?? 255) : 255,
+            digital_pin: (g.type || 0) === 0 ? (g.digital_pin ?? 255) : 255,
+            i2c_addr: (g.type || 0) === 1 ? (g.i2c_addr || 0x59) : 0,
             label: (g.label || '').slice(0, 15)
         })),
         dht: gHwSensors.climates.length > 0 ? { type: gHwSensors.climates[0].type, pin: gHwSensors.climates[0].pin, i2c_addr: gHwSensors.climates[0].i2c_addr || 0 } : { type: 0, pin: 255 },

@@ -54,8 +54,10 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   // Calibration State
   double _tempOffset = 0.0;
   double _humOffset = 0.0;
+  bool _selectedClimateHasHum = true;
   int _mq2Threshold = 400;
   int _gasMax = 4095;
+  int _selectedMq2Type = 0;
   int _selectedClimateIdx = 0;
   int _selectedMq2Idx = 0;
   List<Map<String, dynamic>> _climateCals = [];
@@ -113,12 +115,21 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   @override
   void initState() {
     super.initState();
-    _gasMax = widget.device.telemetry.gasMax > 0
-        ? widget.device.telemetry.gasMax
-        : (widget.device.isEsp8266 ? 1023 : 4095);
-    final initialThresh = widget.device.telemetry.gasThreshold > 0
-        ? widget.device.telemetry.gasThreshold
-        : (widget.device.isEsp8266 ? 100 : 400);
+    final t = widget.device.telemetry;
+    _selectedClimateHasHum = t.climates.isNotEmpty
+        ? t.climates.first.humidityEnabled
+        : t.humidityEnabled;
+    _selectedMq2Type = t.mq2s.isNotEmpty
+        ? t.mq2s.first.type
+        : (t.gasUnit.toUpperCase() == 'VOC' ? 1 : 0);
+    _gasMax = t.gasMax > 0
+        ? t.gasMax
+        : (_selectedMq2Type == 1
+            ? 500
+            : (widget.device.isEsp8266 ? 1023 : 4095));
+    final initialThresh = t.gasThreshold > 0
+        ? t.gasThreshold
+        : (_selectedMq2Type == 1 ? 250 : (widget.device.isEsp8266 ? 100 : 400));
     _mq2Threshold = initialThresh.clamp(10, _gasMax);
     _tabController = TabController(length: 5, vsync: this);
     _loadInitialData();
@@ -155,10 +166,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       final c = _climateCals[idx];
       _tempOffset = ((c['temp_offset'] as num?)?.toDouble() ?? 0.0).clamp(-5.0, 5.0);
       _humOffset = ((c['hum_offset'] as num?)?.toDouble() ?? 0.0).clamp(-10.0, 10.0);
+      _selectedClimateHasHum =
+          c['humidity_enabled'] as bool? ?? ((c['type'] as num?)?.toInt() != 7);
     } else if (idx >= 0 && idx < widget.device.telemetry.climates.length) {
       final c = widget.device.telemetry.climates[idx];
       _tempOffset = c.tempOffset.clamp(-5.0, 5.0);
       _humOffset = c.humOffset.clamp(-10.0, 10.0);
+      _selectedClimateHasHum = c.humidityEnabled;
     }
   }
 
@@ -166,11 +180,24 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     _selectedMq2Idx = idx;
     if (idx >= 0 && idx < _mq2Cals.length) {
       final m = _mq2Cals[idx];
-      _mq2Threshold = ((m['threshold'] as num?)?.toInt() ?? 400).clamp(10, _gasMax);
+      _selectedMq2Type = (m['type'] as num?)?.toInt() ?? 0;
+      _gasMax = (m['gas_max'] as num?)?.toInt() ??
+          (_selectedMq2Type == 1
+              ? 500
+              : (widget.device.isEsp8266 ? 1023 : 4095));
+      _mq2Threshold = ((m['threshold'] as num?)?.toInt() ??
+              (_selectedMq2Type == 1 ? 250 : 400))
+          .clamp(10, _gasMax);
       _mq2Enabled = m['enabled'] as bool? ?? true;
       _mq2HwAllowed = m['hw_allowed'] as bool? ?? true;
     } else if (idx >= 0 && idx < widget.device.telemetry.mq2s.length) {
       final m = widget.device.telemetry.mq2s[idx];
+      _selectedMq2Type = m.type;
+      _gasMax = m.gasMax > 0
+          ? m.gasMax
+          : (_selectedMq2Type == 1
+              ? 500
+              : (widget.device.isEsp8266 ? 1023 : 4095));
       _mq2Threshold = m.threshold.clamp(10, _gasMax);
       _mq2Enabled = m.enabled;
       _mq2HwAllowed = m.hwAllowed;
@@ -195,7 +222,16 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
 
   String _mq2SlotName(int idx) {
     final tList = widget.device.telemetry.mq2s;
-    if (idx >= 0 && idx < tList.length) return tList[idx].displayName;
+    if (idx >= 0 && idx < tList.length) {
+      final tName = tList[idx].typeName.isNotEmpty
+          ? tList[idx].typeName
+          : (tList[idx].isSgp40 ? 'SGP40' : 'MQ-2');
+      return '${tList[idx].displayName} ($tName)';
+    }
+    if (idx >= 0 && idx < _mq2Cals.length) {
+      final isSgp = (_mq2Cals[idx]['type'] as num?)?.toInt() == 1;
+      return 'Gas #${idx + 1} (${isSgp ? "SGP40" : "MQ-2"})';
+    }
     return 'Gas #${idx + 1}';
   }
 
@@ -239,12 +275,15 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               ((s['temp_offset'] as num?)?.toDouble() ?? _tempOffset).clamp(-5.0, 5.0);
           _humOffset =
               ((s['hum_offset'] as num?)?.toDouble() ?? _humOffset).clamp(-10.0, 10.0);
+          _selectedClimateHasHum =
+              s['humidity_enabled'] as bool? ?? _selectedClimateHasHum;
         }
 
         if (_mq2Cals.isNotEmpty) {
           _selectedMq2Idx = _selectedMq2Idx.clamp(0, _mq2Cals.length - 1);
           _applyMq2CalIndex(_selectedMq2Idx);
         } else {
+          if (cfgGasMax == 500) _selectedMq2Type = 1;
           _mq2Threshold =
               ((s['mq2_threshold'] as num?)?.toInt() ?? _mq2Threshold).clamp(10, _gasMax);
           _mq2Enabled = s['mq2_enabled'] as bool? ?? _mq2Enabled;
@@ -1124,31 +1163,33 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 onChanged: isGuest ? null : (v) => setState(() => _tempOffset = v),
               ),
 
-              // Humidity Offset
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Humidity Offset',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
+              // Humidity Offset (only shown for climate sensors that report humidity)
+              if (_selectedClimateHasHum) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Humidity Offset',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
-                  ),
-                  Text(
-                    '${_humOffset >= 0 ? "+" : ""}${_humOffset.toStringAsFixed(0)} %',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-              Slider(
-                value: _humOffset.clamp(-10.0, 10.0),
-                min: -10.0,
-                max: 10.0,
-                divisions: 20,
-                activeColor: AppColors.humCyan,
-                onChanged: isGuest ? null : (v) => setState(() => _humOffset = v),
-              ),
+                    Text(
+                      '${_humOffset >= 0 ? "+" : ""}${_humOffset.toStringAsFixed(0)} %',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+                Slider(
+                  value: _humOffset.clamp(-10.0, 10.0),
+                  min: -10.0,
+                  max: 10.0,
+                  divisions: 20,
+                  activeColor: AppColors.humCyan,
+                  onChanged: isGuest ? null : (v) => setState(() => _humOffset = v),
+                ),
+              ],
 
               if (_mq2SlotCount > 1) ...[
                 const SizedBox(height: 8),
@@ -1157,7 +1198,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                   isExpanded: true,
                   initialValue: _selectedMq2Idx.clamp(0, _mq2SlotCount - 1),
                   decoration: const InputDecoration(
-                    labelText: 'MQ-2 Gas Sensor Instance',
+                    labelText: 'Gas / Air Quality Sensor Instance',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
@@ -1176,7 +1217,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
 
               if (!_mq2HwAllowed)
                 _buildHwDisabledNotice(
-                  'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+                  _selectedMq2Type == 1
+                      ? 'SGP40 Air Quality Sensor is disabled or I2C pins unassigned in Hardware Profile.'
+                      : 'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
                 ),
 
               // Gas Threshold
@@ -1185,7 +1228,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 children: [
                   Expanded(
                     child: Text(
-                      'MQ-2 Smoke/Gas Alarm Threshold',
+                      '${_selectedMq2Type == 1 ? "SGP40 VOC" : "MQ-2 Smoke/Gas"} Alarm Threshold',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1196,7 +1239,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    '$_mq2Threshold ADC',
+                    '$_mq2Threshold ${_selectedMq2Type == 1 ? "VOC" : "ADC"}',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       color: AppColors.danger,
@@ -1208,7 +1251,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 value: _mq2Threshold.toDouble().clamp(10.0, _gasMax.toDouble()),
                 min: 10.0,
                 max: _gasMax.toDouble(),
-                divisions: widget.device.isEsp8266 ? 50 : 80,
+                divisions: _selectedMq2Type == 1
+                    ? 49
+                    : (widget.device.isEsp8266 ? 50 : 80),
                 activeColor: AppColors.danger,
                 onChanged: (isGuest || !_mq2HwAllowed)
                     ? null
@@ -1250,8 +1295,10 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                                   SnackBar(
                                     content: Text(
                                       ok
-                                          ? 'MQ-2 Clean Air baseline calibrated successfully!'
-                                          : 'Failed to calibrate MQ-2 sensor baseline',
+                                          ? (_selectedMq2Type == 1
+                                                ? 'Clean air VOC 100 baseline calibrated successfully!'
+                                                : 'MQ-2 Clean Air baseline calibrated successfully!')
+                                          : 'Failed to calibrate ${_selectedMq2Type == 1 ? "SGP40" : "MQ-2"} sensor baseline',
                                     ),
                                     backgroundColor: ok
                                         ? AppColors.success
@@ -1966,7 +2013,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               isExpanded: true,
               initialValue: _selectedMq2Idx.clamp(0, _mq2SlotCount - 1),
               decoration: const InputDecoration(
-                labelText: 'MQ-2 Gas Sensor Instance',
+                labelText: 'Gas / Air Quality Sensor Instance',
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -1984,14 +2031,16 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           ],
           if (!_mq2HwAllowed)
             _buildHwDisabledNotice(
-              'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+              _selectedMq2Type == 1
+                  ? 'SGP40 Air Quality Sensor is disabled or I2C pins unassigned in Hardware Profile.'
+                  : 'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
             ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(
               _mq2SlotCount > 1
-                  ? 'MQ-2 gas sensor enabled (${_mq2SlotName(_selectedMq2Idx)})'
-                  : 'MQ-2 gas sensor enabled',
+                  ? '${_selectedMq2Type == 1 ? "SGP40 air quality" : "MQ-2 gas"} sensor enabled (${_mq2SlotName(_selectedMq2Idx)})'
+                  : '${_selectedMq2Type == 1 ? "SGP40 air quality" : "MQ-2 gas"} sensor enabled',
             ),
             value: _mq2Enabled,
             onChanged: (isGuest || !_mq2HwAllowed)
@@ -2830,6 +2879,22 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
         });
         return;
       }
+      if (decoded['type'] == 'smarthome_pro_hub_backup') {
+        setState(() {
+          _validationError =
+              'This is an App Hub backup. Import it via App Settings -> Hub Backup & Restore.';
+          _parsedData = null;
+        });
+        return;
+      }
+      if (_detectComponents(decoded).isEmpty) {
+        setState(() {
+          _validationError =
+              'No recognized controller configuration sections found in JSON.';
+          _parsedData = null;
+        });
+        return;
+      }
       setState(() {
         _validationError = null;
         _parsedData = decoded;
@@ -2950,17 +3015,6 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
 
     if (!mounted) return;
     setState(() => _isRestoring = false);
-
-    // If the backup contained a device_name, sync it into the local device card immediately
-    if (ok && _parsedData != null) {
-      final cfg = _parsedData!['config.json'] ?? _parsedData!['config'];
-      if (cfg is Map && cfg['device_name'] != null) {
-        final restoredName = cfg['device_name'].toString().trim();
-        if (restoredName.isNotEmpty) {
-          await widget.manager.updateDeviceName(widget.device.id, restoredName);
-        }
-      }
-    }
 
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);

@@ -57,12 +57,14 @@ enum SwitchMode : uint8_t {
 
 // Climate sensor types
 enum ClimateSensorType : uint8_t {
-    CLIMATE_NONE   = 0,
-    CLIMATE_DHT11  = 1,
-    CLIMATE_DHT22  = 2,
-    CLIMATE_BME280 = 3,
-    CLIMATE_AHT20  = 4,
-    CLIMATE_SHT3X  = 5
+    CLIMATE_NONE    = 0,
+    CLIMATE_DHT11   = 1,
+    CLIMATE_DHT22   = 2,
+    CLIMATE_BME280  = 3,
+    CLIMATE_AHT20   = 4,
+    CLIMATE_SHT3X   = 5,
+    CLIMATE_SHT4X   = 6, // SHT40 / SHT45 (I2C 0x44 / 0x45)
+    CLIMATE_DS18B20 = 7  // DS18B20 Ambient Temperature (1-Wire GPIO)
 };
 
 // Ambient Light sensor types
@@ -92,6 +94,12 @@ enum UltrasonicSensorType : uint8_t {
     ULTRASONIC_JSN_SR04T = 3  // Waterproof Probe (3.3V-5V)
 };
 
+// Gas & Air Quality sensor types
+enum GasSensorType : uint8_t {
+    GAS_MQ2   = 0, // Analog A0 / Digital D0 MQ-2 Smoke & LPG
+    GAS_SGP40 = 1  // I2C (0x59) Sensirion SGP40 Indoor Air Quality / VOC
+};
+
 // Per-channel hardware mapping
 struct ChannelHardware {
     bool enabled;               // true = relay channel active, false = disabled/unused
@@ -104,9 +112,9 @@ struct ChannelHardware {
 
 // Per-sensor instance hardware mapping structs
 struct ClimateSensorConfig {
-    ClimateSensorType type;     // CLIMATE_NONE..CLIMATE_SHT3X
-    uint8_t pin;                // GPIO for DHT11/DHT22 or PIN_UNUSED
-    uint8_t i2cAddr;            // I2C address for BME280/AHT20/SHT3X (0 = auto/default)
+    ClimateSensorType type;     // CLIMATE_NONE..CLIMATE_DS18B20
+    uint8_t pin;                // GPIO for DHT11/DHT22/DS18B20 or PIN_UNUSED
+    uint8_t i2cAddr;            // I2C address for BME280/AHT20/SHT3X/SHT4X (0 = auto/default)
     char label[16];             // Optional label e.g. "Living Room"
 };
 
@@ -139,8 +147,10 @@ struct UltrasonicSensorConfig {
 
 struct Mq2SensorConfig {
     bool enabled;
+    uint8_t type;               // GAS_MQ2 (0) or GAS_SGP40 (1)
     uint8_t analogPin;          // ADC1 GPIO (32..39 ESP32, 17/A0 ESP8266) or PIN_UNUSED
     uint8_t digitalPin;         // Input GPIO or PIN_UNUSED
+    uint8_t i2cAddr;            // I2C address for SGP40 (0x59) or 0
     char label[16];
 };
 

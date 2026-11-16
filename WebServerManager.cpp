@@ -13,6 +13,60 @@
 #include <mbedtls/md5.h>
 #endif
 
+namespace {
+
+struct RelayTimerSnapshot {
+    bool active;
+    bool target;
+    uint32_t remaining;
+};
+
+void captureRelayTimerSnapshots(RelayManager* relay, AlarmScheduler* alarm,
+                                RelayTimerSnapshot* out, uint8_t count) {
+    if (!relay) return;
+    for (uint8_t i = 0; i < count; i++) {
+        out[i] = {false, false, 0};
+        if (!relay->isChannelEnabled(i)) continue;
+        if (alarm) {
+            alarm->resolveEffectiveTimerForRelay(*relay, i, out[i].active, out[i].target, out[i].remaining);
+        } else if (relay->hasActiveTimer(i)) {
+            uint32_t rem = relay->getTimerRemaining(i);
+            if (rem > 0) {
+                out[i] = {true, relay->getTimerTargetState(i), rem};
+            }
+        }
+    }
+}
+
+void broadcastChangedRelayTimers(RelayManager* relay, AlarmScheduler* alarm,
+                                 WebSocketManager* ws, const RelayTimerSnapshot* before,
+                                 uint8_t count, int8_t forceRelayIndex = -1) {
+    if (!relay || !ws) return;
+    for (uint8_t i = 0; i < count; i++) {
+        if (!relay->isChannelEnabled(i)) continue;
+        RelayTimerSnapshot after = {false, false, 0};
+        if (alarm) {
+            alarm->resolveEffectiveTimerForRelay(*relay, i, after.active, after.target, after.remaining);
+        } else if (relay->hasActiveTimer(i)) {
+            uint32_t rem = relay->getTimerRemaining(i);
+            if (rem > 0) {
+                after = {true, relay->getTimerTargetState(i), rem};
+            }
+        }
+        uint32_t diff = (after.remaining > before[i].remaining)
+            ? (after.remaining - before[i].remaining)
+            : (before[i].remaining - after.remaining);
+        if ((int8_t)i == forceRelayIndex ||
+            after.active != before[i].active ||
+            after.target != before[i].target ||
+            (after.active && diff > 2)) {
+            ws->broadcastRelayTimer(i, after.active, after.target, after.remaining);
+        }
+    }
+}
+
+} // namespace
+
 WebServerManager::WebServerManager()
     : _server(WEB_SERVER_PORT),
       _storage(nullptr), _wifi(nullptr), _relay(nullptr), _sensor(nullptr),
@@ -246,6 +300,9 @@ void WebServerManager::setupAPIRoutes() {
         // Relays
         JsonArray relays = doc["relays"].to<JsonArray>();
         _relay->toJson(relays);
+        if (_alarm) {
+            _alarm->applyTimersToRelayArray(relays, *_relay);
+        }
         if (_rules) {
             for (uint8_t i = 0; i < relays.size(); i++) {
                 String activeRule = _rules->getActiveRuleForRelay(i);
@@ -349,6 +406,9 @@ void WebServerManager::setupAPIRoutes() {
         JsonDocument doc;
         JsonArray arr = doc.to<JsonArray>();
         _relay->toJson(arr);
+        if (_alarm) {
+            _alarm->applyTimersToRelayArray(arr, *_relay);
+        }
         if (_rules) {
             for (uint8_t i = 0; i < arr.size(); i++) {
                 String activeRule = _rules->getActiveRuleForRelay(i);
@@ -426,17 +486,24 @@ void WebServerManager::setupAPIRoutes() {
         senObj["mq2_hw_allowed"] = _sensor->isMQ2HardwareAllowed();
         senObj["mq2_threshold"] = _sensor->getMQ2Threshold();
         senObj["mq2_baseline"] = _sensor->getMQ2Baseline();
+        senObj["humidity_enabled"] = _sensor->hasHumidity();
+        senObj["gas_unit"] = _sensor->isPrimarySgp40() ? "VOC" : "ADC";
+        senObj["gas_max"] = _sensor->isPrimarySgp40() ? 500 : MQ2_ADC_MAX;
         JsonArray cliCalArr = senObj["climates"].to<JsonArray>();
         for (uint8_t i = 0; i < _sensor->getClimateCount(); i++) {
             JsonObject co = cliCalArr.add<JsonObject>();
-            co["index"]       = i;
-            co["temp_offset"] = _sensor->getTempOffsetAt(i);
-            co["hum_offset"]  = _sensor->getHumOffsetAt(i);
+            co["index"]            = i;
+            co["temp_offset"]      = _sensor->getTempOffsetAt(i);
+            co["hum_offset"]       = _sensor->getHumOffsetAt(i);
+            co["humidity_enabled"] = _sensor->hasHumidityAt(i);
         }
         JsonArray mqCalArr = senObj["mq2_sensors"].to<JsonArray>();
         for (uint8_t i = 0; i < _sensor->getMq2Count(); i++) {
+            uint8_t mType = _sensor->getMq2TypeAt(i);
             JsonObject mo = mqCalArr.add<JsonObject>();
             mo["index"]      = i;
+            mo["type"]       = mType;
+            mo["gas_max"]    = (mType == GAS_SGP40) ? 500 : MQ2_ADC_MAX;
             mo["enabled"]    = _sensor->isMq2ActiveAt(i);
             mo["hw_allowed"] = _sensor->isMq2HwAllowedAt(i);
             mo["threshold"]  = _sensor->getMQ2ThresholdAt(i);
@@ -585,14 +652,25 @@ void WebServerManager::setupAPIRoutes() {
         if (id < 0 || id >= (_relay ? _relay->getRelayCount() : NUM_RELAYS)) { sendError(req, 400, F("Invalid relay ID")); return; }
 
         if (action == "cancel") {
+            uint8_t relayCount = (_relay && _ws) ? min((uint8_t)MAX_RELAYS, _relay->getRelayCount()) : 0;
+            RelayTimerSnapshot beforeTimers[MAX_RELAYS] = {};
+            captureRelayTimerSnapshots(_relay, _alarm, beforeTimers, relayCount);
+
             _relay->cancelTimer(id);
-            if (_ws) _ws->broadcastRelayTimer(id, false, false, 0);
+            if (_alarm) _alarm->cancelDelayTimersForRelay(id);
+            broadcastChangedRelayTimers(_relay, _alarm, _ws, beforeTimers, relayCount, (int8_t)id);
             if (_logger) _logger->logInfo("Timer", "Timer cancelled for " + _relay->getName(id));
         } else if (action == "on" || action == "off") {
             if (duration == 0) { sendError(req, 400, F("Duration must be greater than 0")); return; }
             bool targetState = (action == "on");
             _relay->startTimer(id, targetState, duration);
-            if (_ws) _ws->broadcastRelayTimer(id, true, targetState, duration);
+            bool effActive = true;
+            bool effTarget = targetState;
+            uint32_t effRem = duration;
+            if (_alarm) {
+                _alarm->resolveEffectiveTimerForRelay(*_relay, id, effActive, effTarget, effRem);
+            }
+            if (_ws) _ws->broadcastRelayTimer(id, effActive, effTarget, effRem);
             if (_logger) _logger->logInfo("Timer", "Timer set: " + _relay->getName(id) + " -> " + (targetState ? "ON" : "OFF") + " in " + String(duration) + "s");
         } else {
             sendError(req, 400, F("Invalid action"));
@@ -665,10 +743,16 @@ void WebServerManager::setupAPIRoutes() {
         JsonDocument doc;
         if (!collectJsonBody(req, data, len, index, total, doc)) return;
 
+        uint8_t relayCount = (_relay && _ws) ? min((uint8_t)MAX_RELAYS, _relay->getRelayCount()) : 0;
+        RelayTimerSnapshot beforeTimers[MAX_RELAYS] = {};
+        captureRelayTimerSnapshots(_relay, _alarm, beforeTimers, relayCount);
+
         // Delete
         if (doc["delete"] | false) {
             uint8_t id = doc["id"] | 0;
-            _alarm->deleteAlarm(id);
+            if (_alarm->deleteAlarm(id)) {
+                broadcastChangedRelayTimers(_relay, _alarm, _ws, beforeTimers, relayCount);
+            }
             sendOk(req, F("Alarm deleted"));
             return;
         }
@@ -677,7 +761,9 @@ void WebServerManager::setupAPIRoutes() {
         if (doc.containsKey("id") && doc.containsKey("en") &&
             !doc.containsKey("hour") && !doc.containsKey("delay") && !doc.containsKey("action")) {
             uint8_t id = doc["id"] | 0;
-            _alarm->enableAlarm(id, doc["en"]);
+            if (_alarm->enableAlarm(id, doc["en"])) {
+                broadcastChangedRelayTimers(_relay, _alarm, _ws, beforeTimers, relayCount);
+            }
             sendOk(req);
             return;
         }
@@ -693,6 +779,7 @@ void WebServerManager::setupAPIRoutes() {
 
         if (id > 0 && _alarm->getAlarm(id) != nullptr) {
             if (_alarm->updateAlarm(id, a)) {
+                broadcastChangedRelayTimers(_relay, _alarm, _ws, beforeTimers, relayCount);
                 _logger->logInfo("Alarm", "Alarm " + String(id) + " updated");
                 sendOk(req, F("Alarm updated"));
             } else {
@@ -701,6 +788,7 @@ void WebServerManager::setupAPIRoutes() {
         } else {
             a.id = _alarm->getNextId();
             if (_alarm->addAlarm(a)) {
+                broadcastChangedRelayTimers(_relay, _alarm, _ws, beforeTimers, relayCount);
                 _logger->logInfo("Alarm", "Alarm " + String(a.id) + " added");
                 sendOk(req, F("Alarm added"));
             } else {
@@ -947,7 +1035,7 @@ void WebServerManager::setupAPIRoutes() {
                 ? _sensor->isMq2HwAllowedAt((uint8_t)sIdx)
                 : _sensor->isMQ2HardwareAllowed();
             if (en && !allowed) {
-                sendError(req, 400, F("MQ-2 sensor is disabled or pins unassigned in Hardware Profile"));
+                sendError(req, 400, F("Gas/VOC sensor is disabled or pins/I2C unassigned in Hardware Profile"));
                 return;
             }
             if (hasIdx && sIdx >= 0) _sensor->setMQ2EnabledAt((uint8_t)sIdx, en);
