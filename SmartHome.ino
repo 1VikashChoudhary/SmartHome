@@ -50,6 +50,7 @@
 #include "EventLogger.h"
 #include "WebSocketManager.h"
 #include "WebServerManager.h"
+#include "RemoteAlertManager.h"
 
 // ============================================================================
 // Module Instances (global, single instance each)
@@ -71,6 +72,7 @@ RuleManager       ruleMgr;
 EventLogger       logger;
 WebSocketManager  wsMgr;
 WebServerManager  webServer;
+RemoteAlertManager remoteAlertMgr;
 
 // ============================================================================
 
@@ -88,7 +90,7 @@ String wsDataProvider() {
     doc["mac"] = wifiMgr.getMAC();
     doc["device_id"] = wifiMgr.getDeviceId();
     doc["num_relays"] = relayMgr.getRelayCount();
-    doc["auth_required"] = webServer.isAuthEnabled();
+    doc["auth_required"] = webServer.isAuthConfigured();
 
     // WiFi
     doc["wifi_state"] = wifiMgr.getStateString();
@@ -186,7 +188,10 @@ void onAlarmAction(AlarmAction action, uint8_t relay) {
 // Sensor alarm callback — dispatches alarms to buzzer and LCD
 // ============================================================================
 void onSensorAlarm(uint8_t alarmType, bool active) {
+    const char* alarmKey = (alarmType == ALARM_TYPE_GAS) ? "gas" :
+                           (alarmType == ALARM_TYPE_TEMP) ? "temperature" : "sensor_fault";
     if (active) {
+        String detailMsg;
         switch (alarmType) {
             case ALARM_TYPE_GAS:
                 buzzerMgr.startAlarm(BUZZER_ALARM_GAS);
@@ -194,6 +199,10 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 logger.logCritical("Sensor", F("GAS ALARM triggered!"));
                 wsMgr.broadcastAlarm("gas", true);
                 relayMgr.activateFailsafe();
+                detailMsg = String(sensorMgr.isPrimarySgp40() ? "VOC Alert: " : "Gas Alert: ") +
+                            String(sensorMgr.getMQ2Raw()) + " " +
+                            String(sensorMgr.isPrimarySgp40() ? "VOC" : "ADC") +
+                            " (Limit: " + String(sensorMgr.getMQ2Threshold()) + ")";
                 break;
             case ALARM_TYPE_TEMP:
                 buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
@@ -201,6 +210,8 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 logger.logCritical("Sensor", F("HIGH TEMPERATURE alarm!"));
                 wsMgr.broadcastAlarm("temperature", true);
                 relayMgr.activateFailsafe();
+                detailMsg = "High Temperature: " + String(sensorMgr.getTemperature(), 1) +
+                            "C (Limit: " + String(sensorMgr.getTempAlarmThreshold(), 1) + "C)";
                 break;
             case ALARM_TYPE_SENSOR_FAULT:
                 buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
@@ -208,8 +219,11 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 wsMgr.broadcastAlarm("sensor_fault", true);
                 // Activate failsafe relays
                 relayMgr.activateFailsafe();
+                detailMsg = F("Climate sensor fault detected; failsafe activated.");
                 break;
         }
+        mqttMgr.publishAlarmEvent(alarmKey, true, detailMsg.c_str());
+        remoteAlertMgr.notifyAlarm(webServer.getDeviceName(), wifiMgr.getMAC(), alarmKey, detailMsg);
     } else {
         // Alarm cleared — preserve any other concurrent active alarm
         if (sensorMgr.isMQ2Alarm()) {
@@ -231,11 +245,9 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
             buzzerMgr.stopAlarm();
             lcdMgr.clearAlarm();
         }
-        wsMgr.broadcastAlarm(
-            alarmType == ALARM_TYPE_GAS ? "gas" :
-            alarmType == ALARM_TYPE_TEMP ? "temperature" : "sensor_fault",
-            false
-        );
+        wsMgr.broadcastAlarm(alarmKey, false);
+        mqttMgr.publishAlarmEvent(alarmKey, false, "Alarm cleared",
+                                  sensorMgr.isMQ2Alarm() || sensorMgr.isTempAlarm());
         logger.logInfo("Sensor", F("Alarm cleared"));
     }
 }
@@ -543,6 +555,9 @@ void setup() {
     // --- Sensor Automation Rules ---
     ruleMgr.begin(storage);
 
+    // --- Attach live sensor, relay, and timer modules to LCDManager ---
+    lcdMgr.attachModules(hwMgr, sensorMgr, relayMgr, alarmSched);
+
     // --- WebSocket ---
     wsMgr.begin(webServer.getServer());
     wsMgr.setDataProvider(wsDataProvider);
@@ -561,8 +576,12 @@ void setup() {
         return false;
     });
 
+    // --- Remote Push Alerts (Optional Webhook / ntfy) ---
+    remoteAlertMgr.begin(storage, logger);
+
     // --- Web Server (must be last — depends on all other modules) ---
     webServer.setWebSocketManager(wsMgr);
+    webServer.setRemoteAlertManager(remoteAlertMgr);
     webServer.begin(storage, wifiMgr, relayMgr, sensorMgr, buzzerMgr,
                     mqttMgr, timeMgr, lcdMgr, alarmSched, ruleMgr, logger, diag, otaMgr, hwMgr);
 
@@ -617,6 +636,7 @@ void loop() {
     logger.loop();          // Periodic persist + auto-clean
     diag.loop();            // Heap monitoring
     wsMgr.loop();           // WebSocket broadcast
+    remoteAlertMgr.loop();  // Async/queued remote webhook dispatch
 
     // --- Update LCD with current data ---
     static unsigned long lastLCDDataUpdate = 0;

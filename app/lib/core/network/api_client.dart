@@ -964,6 +964,35 @@ class ApiClient {
     }
   }
 
+  /// Send a test remote push webhook/ntfy alert from the controller.
+  /// Returns null on success or a human-readable error message on failure.
+  Future<String?> testRemoteAlert(
+    String ip, {
+    String? password,
+    String? username,
+  }) async {
+    try {
+      final res = await _dio.post(
+        _url(ip, '/api/alert/test'),
+        data: const <String, dynamic>{},
+        options: _authOptions(password, username: username),
+      );
+      if (res.statusCode == 200) return null;
+      return 'Controller returned HTTP ${res.statusCode}';
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      if (data is Map) {
+        final msg = data['message'] ?? data['error'];
+        if (msg != null && msg.toString().isNotEmpty) {
+          return msg.toString();
+        }
+      }
+      return e.message ?? 'Remote alert test failed';
+    } catch (e) {
+      return e.toString();
+    }
+  }
+
   /// Factory reset ESP32 controller
   Future<bool> factoryReset(
     String ip, {

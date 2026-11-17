@@ -52,7 +52,7 @@ IoT smart home automation hub powered by a **single unified codebase** that runs
 * **Cross-Platform Flutter Companion App**: Single app controls both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, batch multi-device OTA updates, backup management, and encrypted credential storage.
 * **About & Sponsorship Screens**: Beautiful modern About page integrated into both the ESP Web Dashboard and the Flutter Companion App with project branding, feature highlights, and direct UPI (India) / PayPal (International) sponsorship support.
 * **Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics.
-* **Defense-in-Depth Security**: WPA2-PSK AP mode with MAC-derived unique passwords, IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, and encrypted mobile storage.
+* **Defense-in-Depth Security**: Open SoftAP for frictionless first-time headless onboarding transitioning automatically to WPA2-PSK AP fallback once configured (with custom `ap_pass` support), IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, and encrypted mobile storage.
 
 ---
 
@@ -360,7 +360,7 @@ sequenceDiagram
 ```
 
 1. **Power On**: Power the controller via 5V/2A power supply.
-2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX` using the SoftAP password displayed on the LCD (factory default `SmartHome@<Last4MAC>!`, or custom `"ap_pass"` if configured in `config.json`). Note that configured Admin authentication also protects `/api/config/wifi` and `/ws` in AP mode.
+2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX`. On a fresh flash or factory/Wi-Fi reset (with no Web Auth or custom `"ap_pass"`), the setup hotspot is **Open** (no password required—ideal for headless controllers without an LCD). Once Wi-Fi or Admin auth is configured, fallback AP mode uses WPA2-PSK (`SmartHome@<Last4MAC>!`, shown on LCD/Serial, or your custom `"ap_pass"`). Configured Admin authentication also protects `/api/config/wifi` and `/ws` in AP mode.
 3. **Captive Portal**: Open your browser to `http://192.168.4.1` and connect the controller to your home Wi-Fi network.
 4. **Access Dashboard**: Open `http://<device_ip>` or launch the Flutter companion app.
 5. **Set Passwords**: Go to **Settings > Security & Privilege Tiers** and set your **Admin** and **Guest** passwords.

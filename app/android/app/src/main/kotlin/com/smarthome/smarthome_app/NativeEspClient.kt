@@ -87,22 +87,34 @@ object NativeEspClient {
         relayId: Int,
         action: String
     ): Pair<Boolean, Boolean> {
-        val host = NativeControlStore.sanitizeHost(device.ip)
-        if (host.isEmpty()) return Pair(false, false)
-        if (device.authLocked && device.authPassword.isNullOrEmpty()) return Pair(false, true)
-
         val endpoint = if (relayId == NativeControlStore.ALL_RELAYS_ID) {
             "/api/relay/all"
         } else {
             "/api/relay"
         }
-
         val payload = JSONObject().apply {
             if (relayId != NativeControlStore.ALL_RELAYS_ID) {
                 put("id", relayId)
             }
             put("action", action)
         }.toString()
+        return postJson(context, device, endpoint, payload)
+    }
+
+    fun muteBuzzer(context: Context, device: NativeDevice): Pair<Boolean, Boolean> {
+        val payload = JSONObject().put("action", "mute").toString()
+        return postJson(context, device, "/api/buzzer", payload)
+    }
+
+    private fun postJson(
+        context: Context,
+        device: NativeDevice,
+        endpoint: String,
+        payload: String
+    ): Pair<Boolean, Boolean> {
+        val host = NativeControlStore.sanitizeHost(device.ip)
+        if (host.isEmpty()) return Pair(false, false)
+        if (device.authLocked && device.authPassword.isNullOrEmpty()) return Pair(false, true)
 
         var conn: HttpURLConnection? = null
         return try {

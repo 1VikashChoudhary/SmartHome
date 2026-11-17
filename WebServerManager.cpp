@@ -5,6 +5,7 @@
  */
 
 #include "WebServerManager.h"
+#include "RemoteAlertManager.h"
 #include <math.h>
 #if defined(ESP8266)
 #include <bearssl/bearssl_hash.h>
@@ -95,7 +96,7 @@ WebServerManager::WebServerManager()
       _storage(nullptr), _wifi(nullptr), _relay(nullptr), _sensor(nullptr),
       _buzzer(nullptr), _mqtt(nullptr), _time(nullptr), _lcd(nullptr),
       _alarm(nullptr), _rules(nullptr), _logger(nullptr), _diag(nullptr), _ota(nullptr),
-      _ws(nullptr), _hw(nullptr),
+      _ws(nullptr), _hw(nullptr), _remoteAlert(nullptr),
       _rebootRequested(false), _rollbackRequested(false), _rebootRequestTime(0), _rebootDelay(0),
       _deviceName(DEFAULT_DEVICE_NAME),
       _webAuthEnabled(false), _webUsername("admin"), _webPassword(""), _webPasswordHash(""),
@@ -494,7 +495,14 @@ void WebServerManager::setupAPIRoutes() {
                 doc["web_pass_set"] = (savedHash.length() > 0 || savedPass.length() > 0);
                 String savedApPass = cfgDoc["ap_pass"] | "";
                 doc["ap_pass_set"] = (savedApPass.length() >= 8 && savedApPass.length() <= 63);
+                if (_remoteAlert) {
+                    JsonObject rootObj = doc.as<JsonObject>();
+                    _remoteAlert->toConfigJson(rootObj);
+                }
             }
+        }
+        if (isAdmin && !doc.containsKey("alert_https_supported")) {
+            doc["alert_https_supported"] = RemoteAlertManager::isHttpsSupported();
         }
         doc["ws_token"] = isAdmin ? _wsToken : _wsGuestToken;
         doc["auth_role"] = isAdmin ? "admin" : "guest";
@@ -511,16 +519,7 @@ void WebServerManager::setupAPIRoutes() {
 
         // LCD config
         JsonObject lcdObj = doc["lcd"].to<JsonObject>();
-        lcdObj["enabled"] = _lcd->isEnabled();
-        lcdObj["hw_allowed"] = _lcd->isHardwareAllowed();
-        lcdObj["backlight"] = _lcd->getBacklight();
-        lcdObj["display_mode"] = _lcd->getDisplayMode();
-        lcdObj["rotation"] = _lcd->getRotationInterval();
-        lcdObj["brightness"] = _lcd->getBrightness();
-        lcdObj["auto_dim"] = _lcd->isAutoDimEnabled();
-        lcdObj["dim_start"] = _lcd->getDimStartTime();
-        lcdObj["dim_end"] = _lcd->getDimEndTime();
-        lcdObj["dim_brightness"] = _lcd->getDimmedBrightness();
+        _lcd->appendConfigJson(lcdObj);
 
         // Buzzer config
         JsonObject buzObj = doc["buzzer"].to<JsonObject>();
@@ -1043,6 +1042,54 @@ void WebServerManager::setupAPIRoutes() {
             }
         }
 
+        if (doc.containsKey("display_mode")) {
+            if (!doc["display_mode"].is<const char*>()) {
+                sendError(req, 400, F("Invalid display_mode"));
+                return;
+            }
+            String mode = doc["display_mode"] | "";
+            if (mode != LCD_MODE_ROTATE && mode != LCD_MODE_DHT_RELAY && mode != LCD_MODE_CUSTOM) {
+                sendError(req, 400, F("Unsupported LCD display_mode"));
+                return;
+            }
+        }
+        if (doc.containsKey("pages")) {
+            if (!doc["pages"].is<JsonArrayConst>()) {
+                sendError(req, 400, F("LCD pages must be an array"));
+                return;
+            }
+            int validPages = 0;
+            for (JsonVariantConst v : doc["pages"].as<JsonArrayConst>()) {
+                if (v.is<const char*>() && LCDManager::isKnownPageId(v.as<const char*>())) {
+                    validPages++;
+                }
+            }
+            if (validPages == 0) {
+                sendError(req, 400, F("Select at least one valid LCD page"));
+                return;
+            }
+        }
+        if (doc.containsKey("lines")) {
+            if (!doc["lines"].is<JsonArrayConst>()) {
+                sendError(req, 400, F("LCD lines must be an array"));
+                return;
+            }
+            JsonArrayConst linesArr = doc["lines"].as<JsonArrayConst>();
+            if (linesArr.size() == 0) {
+                sendError(req, 400, F("LCD lines cannot be empty"));
+                return;
+            }
+            uint8_t r = 0;
+            for (JsonVariantConst v : linesArr) {
+                if (r >= LCD_MAX_ROWS) break;
+                if (!v.is<const char*>() || !LCDManager::isKnownWidgetId(v.as<const char*>())) {
+                    sendError(req, 400, F("Invalid custom LCD row widget"));
+                    return;
+                }
+                r++;
+            }
+        }
+
         if (doc.containsKey("enabled")) {
             bool en = doc["enabled"];
             if (en && !_lcd->isHardwareAllowed()) {
@@ -1058,6 +1105,18 @@ void WebServerManager::setupAPIRoutes() {
         if (doc["display_mode"].is<const char*>()) {
             String mode = doc["display_mode"] | "";
             _lcd->setDisplayMode(mode);
+        }
+        if (doc.containsKey("pages")) {
+            if (!_lcd->setPages(doc["pages"].as<JsonArrayConst>())) {
+                sendError(req, 400, F("Select at least one valid LCD page"));
+                return;
+            }
+        }
+        if (doc.containsKey("lines")) {
+            if (!_lcd->setCustomLines(doc["lines"].as<JsonArrayConst>())) {
+                sendError(req, 400, F("Invalid custom LCD row widget"));
+                return;
+            }
         }
         if (doc.containsKey("rotation"))  _lcd->setRotationInterval(doc["rotation"]);
         if (doc.containsKey("brightness")) {
@@ -1163,8 +1222,29 @@ void WebServerManager::setupAPIRoutes() {
             return;
         }
 
+        if (doc.containsKey("alert_webhook_url") && !doc["alert_webhook_url"].isNull() &&
+            !doc["alert_webhook_url"].is<const char*>()) {
+            sendError(req, 400, F("Invalid webhook URL"));
+            return;
+        }
+
         JsonDocument cfg;
         _storage->loadJson(PATH_CONFIG, cfg);
+
+        if (doc.containsKey("alert_webhook_en") || doc.containsKey("alert_webhook_url")) {
+            bool whEn = doc.containsKey("alert_webhook_en")
+                ? (doc["alert_webhook_en"] | false)
+                : (cfg["alert_webhook_en"] | false);
+            String whUrl = doc.containsKey("alert_webhook_url")
+                ? (doc["alert_webhook_url"].is<const char*>() ? (doc["alert_webhook_url"] | "") : "")
+                : (cfg["alert_webhook_url"] | "");
+            whUrl.trim();
+            String whErr;
+            if (!RemoteAlertManager::validateUrl(whUrl, whEn, whErr)) {
+                sendError(req, 400, whErr);
+                return;
+            }
+        }
 
         if (doc.containsKey("device_name")) {
             String dn = doc["device_name"] | DEFAULT_DEVICE_NAME;
@@ -1246,6 +1326,27 @@ void WebServerManager::setupAPIRoutes() {
             cfg.remove("ap_pass");
         } else if (apPass.length() > 0) {
             cfg["ap_pass"] = apPass;
+        }
+        if (doc.containsKey("alert_webhook_en") || doc.containsKey("alert_webhook_url") ||
+            doc.containsKey("alert_webhook_token") || (doc["alert_webhook_token_clear"] | false)) {
+            bool whEn = doc.containsKey("alert_webhook_en")
+                ? (doc["alert_webhook_en"] | false)
+                : (cfg["alert_webhook_en"] | false);
+            String whUrl = doc.containsKey("alert_webhook_url")
+                ? (doc["alert_webhook_url"].is<const char*>() ? (doc["alert_webhook_url"] | "") : "")
+                : (cfg["alert_webhook_url"] | "");
+            whUrl.trim();
+            bool hasTok = doc["alert_webhook_token"].is<const char*>();
+            String whTok = hasTok ? (doc["alert_webhook_token"] | "") : "";
+            bool clrTok = doc["alert_webhook_token_clear"] | false;
+            cfg["alert_webhook_en"] = whEn;
+            if (whUrl.length() > 0) cfg["alert_webhook_url"] = whUrl;
+            else cfg.remove("alert_webhook_url");
+            if (clrTok) cfg.remove("alert_webhook_token");
+            else if (hasTok && whTok.length() > 0) cfg["alert_webhook_token"] = whTok;
+            if (_remoteAlert) {
+                _remoteAlert->applyConfig(whEn, whUrl, hasTok, whTok, clrTok);
+            }
         }
         if (doc.containsKey("web_auth") || doc.containsKey("web_user") || doc.containsKey("web_pass") ||
             doc.containsKey("guest_auth") || doc.containsKey("guest_user") || doc.containsKey("guest_pass") ||
@@ -1505,6 +1606,22 @@ void WebServerManager::setupAPIRoutes() {
         if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
         _logger->clear();
         sendOk(req, F("Logs cleared"));
+    });
+
+    // --- POST /api/alert/test ---
+    _server.on("/api/alert/test", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+        if (!_remoteAlert) {
+            sendError(req, 500, F("Remote alert service not initialized"));
+            return;
+        }
+        String err;
+        String mac = _wifi ? _wifi->getMAC() : "";
+        if (_remoteAlert->sendTestAlert(_deviceName, mac, err)) {
+            sendOk(req, F("Remote test alert dispatched"));
+        } else {
+            sendError(req, 400, err.length() > 0 ? err : F("Failed to send remote alert"));
+        }
     });
 
     // -----------------------------------------------------------------------

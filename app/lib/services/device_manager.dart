@@ -1515,6 +1515,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String? dimStart,
     String? dimEnd,
     int? dimBrightness,
+    List<String>? pages,
+    List<String>? lines,
   }) async {
     if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
@@ -1530,6 +1532,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (dimStart != null) payload['dim_start'] = dimStart;
     if (dimEnd != null) payload['dim_end'] = dimEnd;
     if (dimBrightness != null) payload['dim_brightness'] = dimBrightness;
+    if (pages != null) payload['pages'] = pages;
+    if (lines != null) payload['lines'] = lines;
     return await _api.saveLcdConfig(
       dev.ip,
       payload,
@@ -1715,6 +1719,20 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       }
     }
     return ok;
+  }
+
+  /// Dispatch a remote webhook / ntfy test push alert from the controller.
+  /// Returns null on success or an error string on failure.
+  Future<String?> testRemoteAlert(String deviceId) async {
+    if (!_isAlive) return 'Manager disposed';
+    final idx = state.indexWhere((d) => d.id == deviceId);
+    if (idx < 0) return 'Controller not found';
+    final dev = state[idx];
+    return _api.testRemoteAlert(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Remove device

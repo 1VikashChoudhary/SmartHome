@@ -1892,6 +1892,8 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
     obj["gas_max"]          = priSgp40 ? 500 : MQ2_ADC_MAX;
     obj["gas_unit"]         = priSgp40 ? "VOC" : "ADC";
     obj["gas_alarm"]        = isMQ2Alarm();
+    obj["temp_alarm"]       = isTempAlarm();
+    obj["sensor_fault"]     = hasAnySensorFault();
     obj["gas_enabled"]      = isMQ2Enabled();
     obj["gas_hw_allowed"]   = isMQ2HardwareAllowed();
     obj["gas_threshold"]    = getMQ2Threshold();

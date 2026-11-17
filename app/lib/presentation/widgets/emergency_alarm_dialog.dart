@@ -1,9 +1,12 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/smart_device.dart';
 import '../../core/theme/app_colors.dart';
 import '../../services/device_manager.dart';
+import '../../services/native_controls_service.dart';
 import '../screens/device_screen.dart';
 
 class EmergencyAlarmDialog extends ConsumerStatefulWidget {
@@ -51,6 +54,8 @@ class EmergencyAlarmDialog extends ConsumerStatefulWidget {
 class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
   bool _isMuting = false;
   bool _isShuttingOff = false;
+  bool _sirenSilenced = false;
+  Timer? _desktopSirenTimer;
 
   @override
   void initState() {
@@ -59,13 +64,58 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
     _triggerAudibleAndHapticAlert();
   }
 
+  @override
+  void dispose() {
+    _desktopSirenTimer?.cancel();
+    _desktopSirenTimer = null;
+    unawaited(NativeControlsService.instance.stopInAppSiren());
+    super.dispose();
+  }
+
+  void _silencePhoneAlarm({bool markEpisode = true}) {
+    _desktopSirenTimer?.cancel();
+    _desktopSirenTimer = null;
+    if (mounted) {
+      setState(() => _sirenSilenced = true);
+    }
+    if (markEpisode) {
+      unawaited(
+        NativeControlsService.instance.silenceAlarmEpisode(
+          widget.deviceId,
+          widget.alarmType,
+        ),
+      );
+    } else {
+      unawaited(NativeControlsService.instance.stopInAppSiren());
+    }
+  }
+
   Future<void> _triggerAudibleAndHapticAlert() async {
+    final sirenEnabled = await NativeControlsService.instance.isAlarmSirenEnabled();
+    if (!mounted || _sirenSilenced) return;
+    if (sirenEnabled) {
+      await NativeControlsService.instance.startInAppSiren();
+      final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+      if (!isAndroid) {
+        // Repeat system alert chime on Windows/desktop while dialog stays open
+        _desktopSirenTimer?.cancel();
+        _desktopSirenTimer = Timer.periodic(
+          const Duration(milliseconds: 1400),
+          (_) {
+            if (!mounted || _sirenSilenced) return;
+            SystemSound.play(SystemSoundType.alert);
+          },
+        );
+      }
+    }
     try {
       await SystemSound.play(SystemSoundType.alert);
       await HapticFeedback.heavyImpact();
       await Future.delayed(const Duration(milliseconds: 220));
+      if (!mounted) return;
       await HapticFeedback.vibrate();
       await Future.delayed(const Duration(milliseconds: 220));
+      if (!mounted) return;
       await HapticFeedback.heavyImpact();
     } catch (_) {}
   }
@@ -218,6 +268,7 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                           Navigator.of(context, rootNavigator: true);
                       final messenger = ScaffoldMessenger.maybeOf(context);
                       setState(() => _isMuting = true);
+                      _silencePhoneAlarm();
                       final muted = await manager.controlBuzzer(
                         widget.deviceId,
                         action: 'mute',
@@ -272,6 +323,7 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                   ? null
                   : () async {
                       setState(() => _isShuttingOff = true);
+                      _silencePhoneAlarm();
                       final muted = await manager.controlBuzzer(
                         widget.deviceId,
                         action: 'mute',
@@ -323,10 +375,22 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
               ),
             ),
             const SizedBox(height: 4),
+            if (!_sirenSilenced)
+              TextButton.icon(
+                onPressed: () => _silencePhoneAlarm(),
+                icon: const Icon(Icons.notifications_off_outlined, size: 16),
+                label: const Text(
+                  'Silence Phone Siren',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
             TextButton(
               onPressed: (_isMuting || _isShuttingOff)
                   ? null
-                  : () => Navigator.pop(context),
+                  : () {
+                      _silencePhoneAlarm();
+                      if (context.mounted) Navigator.pop(context);
+                    },
               child: Text(
                 'Dismiss Alert',
                 style: TextStyle(

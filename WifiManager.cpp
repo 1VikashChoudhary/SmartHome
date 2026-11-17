@@ -62,12 +62,12 @@ void WifiManager::begin(StorageManager& storage) {
     WiFi.setAutoReconnect(true);
     disableWifiSleep();
 
-    // Generate AP SSID and password from MAC
+    // Load saved credentials before deriving AP mode password policy
+    loadCredentials();
+
+    // Generate AP SSID and password (Open on unconfigured fresh setup; WPA2 once configured)
     _apSSID = generateAPSSID();
     _apPassword = generateAPPassword();
-
-    // Load saved credentials
-    loadCredentials();
 
     // Load hostname from config or default to unique smarthome-XXXX
     JsonDocument doc;
@@ -317,7 +317,9 @@ void WifiManager::startAP() {
     WiFi.disconnect(false);
     WiFi.mode(WIFI_AP_STA); // AP + STA so we can still connect if credentials are saved
 
-    const char* pass = _apPassword.c_str();
+    // Re-evaluate AP security (Open for fresh unconfigured setup, WPA2 once configured)
+    _apPassword = generateAPPassword();
+    const char* pass = _apPassword.length() > 0 ? _apPassword.c_str() : nullptr;
     WiFi.softAP(_apSSID.c_str(), pass);
 
     // Start DNS server for captive portal
@@ -590,17 +592,27 @@ String WifiManager::generateAPSSID() {
 }
 
 // ============================================================================
-// Generate unique per-device AP password (supports optional custom config.json "ap_pass")
+// Generate AP password: Open ("") on fresh unconfigured setup; WPA2-PSK once
+// Wi-Fi credentials, Web Auth, or custom config.json "ap_pass" are present.
 // ============================================================================
 String WifiManager::generateAPPassword() {
+    bool hasWebAuth = false;
     if (_storage) {
         JsonDocument cfg;
-        if (_storage->loadJson(PATH_CONFIG, cfg) && cfg["ap_pass"].is<const char*>()) {
-            String customPass = cfg["ap_pass"] | "";
-            if (customPass.length() >= 8 && customPass.length() <= 63) {
-                return customPass;
+        if (_storage->loadJson(PATH_CONFIG, cfg)) {
+            if (cfg["ap_pass"].is<const char*>()) {
+                String customPass = cfg["ap_pass"] | "";
+                if (customPass.length() >= 8 && customPass.length() <= 63) {
+                    return customPass;
+                }
             }
+            String webHash = cfg["web_pass_hash"] | "";
+            String webPass = cfg["web_pass"] | "";
+            hasWebAuth = (cfg["web_auth"] | false) && (webHash.length() > 0 || webPass.length() > 0);
         }
+    }
+    if (_networkCount == 0 && !hasWebAuth) {
+        return "";
     }
     uint8_t mac[6];
     readFactoryStaMac(mac);

@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../services/device_manager.dart';
+import '../../services/native_controls_service.dart';
 import 'glass_card.dart';
 import 'quick_controls_sheet.dart';
 import '../screens/discovery_screen.dart';
@@ -27,9 +30,101 @@ class AppSettingsSheet extends ConsumerStatefulWidget {
   ConsumerState<AppSettingsSheet> createState() => _AppSettingsSheetState();
 }
 
-class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet> {
+class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet>
+    with WidgetsBindingObserver {
   bool _isExportingHub = false;
   bool _isImportingHub = false;
+  bool _safetyMonitorEnabled = true;
+  bool _alarmSirenEnabled = true;
+  bool _notificationPermissionGranted = true;
+  bool _ignoringBatteryOptimizations = true;
+  bool _monitorChannelHidden = false;
+  bool _testingSiren = false;
+  Timer? _testSirenTimer;
+
+  bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _loadSafetyState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _testSirenTimer?.cancel();
+    if (_testingSiren) {
+      NativeControlsService.instance.stopInAppSiren();
+    }
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadSafetyState();
+    }
+  }
+
+  Future<void> _loadSafetyState() async {
+    final st = await NativeControlsService.instance.getSafetyMonitorState();
+    if (!mounted) return;
+    setState(() {
+      _safetyMonitorEnabled = st.monitorEnabled;
+      _alarmSirenEnabled = st.sirenEnabled;
+      _notificationPermissionGranted = st.notificationPermissionGranted;
+      _ignoringBatteryOptimizations = st.ignoringBatteryOptimizations;
+      _monitorChannelHidden = st.monitorChannelHidden;
+    });
+  }
+
+  Future<void> _toggleSafetyMonitor(bool value) async {
+    if (value && _isAndroid) {
+      final granted = await NativeControlsService.instance
+          .requestNotificationPermission();
+      if (!granted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Notification permission is required for background emergency alarms.',
+            ),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+        return;
+      }
+    }
+    await NativeControlsService.instance.setSafetyMonitorEnabled(value);
+    if (!mounted) return;
+    setState(() {
+      _safetyMonitorEnabled = value;
+      if (value) _notificationPermissionGranted = true;
+    });
+  }
+
+  Future<void> _toggleSirenTest() async {
+    if (_testingSiren) {
+      _testSirenTimer?.cancel();
+      _testSirenTimer = null;
+      if (mounted) setState(() => _testingSiren = false);
+      unawaited(NativeControlsService.instance.stopInAppSiren());
+      return;
+    }
+    setState(() => _testingSiren = true);
+    _testSirenTimer?.cancel();
+    _testSirenTimer = Timer(const Duration(seconds: 3), () {
+      unawaited(NativeControlsService.instance.stopInAppSiren());
+      if (mounted) setState(() => _testingSiren = false);
+    });
+    unawaited(NativeControlsService.instance.startInAppSiren(force: true));
+    if (!_isAndroid) {
+      SystemSound.play(SystemSoundType.alert);
+    }
+  }
 
   Future<void> _exportHubConfig() async {
     bool includeCredentials = false;
@@ -494,6 +589,226 @@ class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet> {
                     size: 22,
                   ),
                 ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Safety Alerts & Background Alarm Monitor
+            GlassCard(
+              borderColor: AppColors.danger.withValues(alpha: 0.35),
+              padding: const EdgeInsets.all(14),
+              child: Material(
+                type: MaterialType.transparency,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppColors.danger.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.notifications_active_rounded,
+                            color: AppColors.danger,
+                            size: 20,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Safety Alerts & Loud Alarm Siren',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13.5,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              Text(
+                                'Instant phone/desktop siren for Gas, Smoke & High Temp alarms',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (_isAndroid) ...[
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text(
+                          'Background Safety Monitor (Wi-Fi)',
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: const Text(
+                          'Monitors controllers when app is closed. Shows a quiet ongoing status indicator on Android.',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: _safetyMonitorEnabled,
+                        onChanged: _toggleSafetyMonitor,
+                      ),
+                      if (!_notificationPermissionGranted)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.warning_amber_rounded,
+                                color: AppColors.warning,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              const Expanded(
+                                child: Text(
+                                  'Notification permission needed for background alarms.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.warning,
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () async {
+                                  final ok = await NativeControlsService.instance
+                                      .requestNotificationPermission();
+                                  if (!mounted) return;
+                                  setState(() => _notificationPermissionGranted = ok);
+                                  if (!ok) {
+                                    await NativeControlsService.instance
+                                        .openNotificationSettings();
+                                  }
+                                },
+                                child: const Text('Allow'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_safetyMonitorEnabled && _notificationPermissionGranted)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _monitorChannelHidden
+                                    ? Icons.visibility_off_outlined
+                                    : Icons.notifications_paused_outlined,
+                                color: _monitorChannelHidden
+                                    ? AppColors.accent
+                                    : AppColors.textSecondary,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  _monitorChannelHidden
+                                      ? 'Status card hidden cleanly; 6s emergency alerts remain active.'
+                                      : 'Turn off "Background Safety Monitor" channel to hide the permanent status card while keeping alarms.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: _monitorChannelHidden
+                                        ? AppColors.accent
+                                        : AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => NativeControlsService.instance
+                                    .openMonitorChannelSettings(),
+                                child: Text(
+                                  _monitorChannelHidden ? 'Manage' : 'Hide Card',
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_safetyMonitorEnabled && !_ignoringBatteryOptimizations)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.battery_saver_rounded,
+                                color: AppColors.textSecondary,
+                                size: 16,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Set Battery -> Unrestricted & Autostart ON so Android does not kill alarms when closed.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: () => NativeControlsService.instance
+                                    .openAppDetailsSettings(),
+                                child: const Text('Fix'),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'Loud alarm siren sound',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      ),
+                      subtitle: Text(
+                        _isAndroid
+                            ? 'Uses Android Alarm audio stream so alerts ring loudly even on silent/locked screens'
+                            : 'Plays repeating emergency alert chimes while alarm modal is active',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      value: _alarmSirenEnabled,
+                      onChanged: (v) async {
+                        await NativeControlsService.instance
+                            .setAlarmSirenEnabled(v);
+                        if (mounted) setState(() => _alarmSirenEnabled = v);
+                      },
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _toggleSirenTest,
+                            icon: Icon(
+                              _testingSiren
+                                  ? Icons.stop_rounded
+                                  : Icons.volume_up_rounded,
+                              size: 16,
+                            ),
+                            label: Text(
+                              _testingSiren
+                                  ? 'Stop Test Siren'
+                                  : 'Test Siren (3s)',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Tip: For 4G/5G alerts when away from home Wi-Fi, enable Optional Remote Push Alerts inside each controller’s Settings.',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 24),

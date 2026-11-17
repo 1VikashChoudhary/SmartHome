@@ -391,7 +391,7 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
                         Text(
                           _apDevice != null
                               ? 'MAC: ${_apDevice!.mac} • FW v${_apDevice!.fwVersion}'
-                              : 'Check the controller LCD for the SmartHome-XXXX Wi-Fi name and password.',
+                              : 'Connect phone Wi-Fi to SmartHome-XXXX (open on first setup/reset; password SmartHome@XXXX! or custom if previously configured).',
                           style: TextStyle(
                             fontSize: 11.5,
                             color: AppColors.textSecondary,

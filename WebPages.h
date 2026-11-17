@@ -511,7 +511,7 @@ Clear stored guest password
 <div class="form-group" style="margin-top:12px;">
 <label>SoftAP Hotspot Password (Optional Custom WPA2)</label>
 <input type="password" id="cfgApPass" maxlength="63" placeholder="New AP password (8-63 chars)">
-<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Overrides the factory SmartHome-XXXX default password when setup hotspot starts. Leave blank to keep current.</div>
+<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Overrides the fallback SoftAP password (SmartHome@XXXX! once configured; fresh setup AP is open unless set). Leave blank to keep current.</div>
 <label id="cfgApClearRow" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:0.75rem;color:var(--text2);text-transform:none;cursor:pointer;">
 <input type="checkbox" id="cfgApClearPass" onchange="const ap=document.getElementById('cfgApPass');ap.disabled=this.checked;if(this.checked)ap.value='';" style="width:auto;margin:0;">
 Clear custom SoftAP password (revert to default)
@@ -525,8 +525,34 @@ Clear custom SoftAP password (revert to default)
 </select>
 <div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Enable only if flashing raw firmware via Arduino IDE over LAN. HTTP Web/App OTA is always active.</div>
 </div>
-<div style="margin-top:16px;">
+<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+<div class="form-group">
+<label>Optional Remote Push Alerts (4G/5G Webhook / ntfy)</label>
+<select id="cfgAlertWhEn" onchange="toggleAlertWhFields()">
+<option value="0">Disabled (LAN &amp; MQTT Only)</option>
+<option value="1">Enabled (Push When Gas/Temp/Fault Triggers)</option>
+</select>
+<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Sends an emergency push webhook (e.g. <code>https://ntfy.sh/your-topic</code> or ntfy/Home Assistant server) even when your phone is away on mobile data.</div>
+</div>
+<div id="cfgAlertWhFields" style="display:none;margin-top:8px;">
+<div class="form-group">
+<label>Webhook / ntfy URL</label>
+<input type="text" id="cfgAlertWhUrl" maxlength="192" placeholder="https://ntfy.sh/my-home-alarm">
+<div id="cfgAlertWhHttpNote" style="display:none;font-size:0.72rem;color:var(--warn,#f59e0b);margin-top:4px">This ESP8266 controller only supports <code>http://</code> LAN/local relay webhooks (HTTPS requires ESP32).</div>
+</div>
+<div class="form-group">
+<label>Bearer Token (Optional)</label>
+<input type="password" id="cfgAlertWhToken" maxlength="96" placeholder="Leave blank to keep existing or omit">
+<label id="cfgAlertWhClearRow" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:0.75rem;color:var(--text2);text-transform:none;cursor:pointer;">
+<input type="checkbox" id="cfgAlertWhClearPass" onchange="const tk=document.getElementById('cfgAlertWhToken');tk.disabled=this.checked;if(this.checked)tk.value='';" style="width:auto;margin:0;">
+Clear saved Bearer token
+</label>
+</div>
+</div>
+</div>
+<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
 <button class="btn btn-primary btn-sm" onclick="saveDevConfig()">Save Security Settings</button>
+<button class="btn btn-outline btn-sm" type="button" onclick="testRemoteAlert()">Test Remote Alert</button>
 </div>
 </div>
 
@@ -538,8 +564,16 @@ Clear custom SoftAP password (revert to default)
 <div class="form-group"><label>Backlight Mode</label><select id="lcdBl"><option value="1">Always On</option><option value="0">Always Off</option></select></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>Display Mode</label><select id="lcdMode"><option value="rotate">Auto Rotate</option><option value="dht_relay">DHT + Relays</option></select></div>
+<div class="form-group"><label>Display Mode</label><select id="lcdMode" onchange="toggleLcdLayoutPanels()"><option value="rotate">Auto Rotate (Custom Pages)</option><option value="custom">Custom Per-Row Layout</option><option value="dht_relay">DHT + Relays (Classic)</option></select></div>
 <div class="form-group"><label>Page Rotation (sec)</label><input type="number" id="lcdRot" min="3" max="30" value="5"></div>
+</div>
+<div id="lcdRotatePanel" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:rgba(255,255,255,0.02);">
+<div style="font-size:0.76rem;font-weight:600;color:var(--text1);margin-bottom:6px;">Active Pages &amp; Display Order (First Selected Shows First)</div>
+<div id="lcdPagesList" style="display:flex;flex-direction:column;gap:6px;"></div>
+</div>
+<div id="lcdCustomPanel" style="display:none;margin-bottom:12px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:rgba(255,255,255,0.02);">
+<div style="font-size:0.76rem;font-weight:600;color:var(--text1);margin-bottom:6px;">Pinned Row Layout (<span id="lcdDimTag">16x2</span>) &mdash; Choose Row 1 First</div>
+<div id="lcdRowsList" style="display:flex;flex-direction:column;gap:8px;"></div>
 </div>
 <div class="form-group">
 <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
@@ -1192,6 +1226,7 @@ View Project on GitHub
 <script>
 function escapeHtml(s){if(s===null||s===undefined)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 let ws,wsData={},alarmCache=[],theme=localStorage.getItem('theme')||'dark',webPassSet=false,guestPassSet=false,apPassSet=false,wsToken='',gAuthRole='admin';
+let lcdPagesState=[],lcdLinesState=['climate:0','relays','gas:0','ip'],lcdWidgetsCat=[],lcdRowsCount=2;
 if(theme==='light')document.body.classList.add('light');
 
 // Theme
@@ -1855,6 +1890,17 @@ function toggleGuestFields(){
 const en = document.getElementById('cfgGuestAuth').checked;
 document.getElementById('cfgGuestFields').style.display = en ? 'block' : 'none';
 }
+let alertHttpsSupported = true;
+function toggleAlertWhFields(){
+const en = document.getElementById('cfgAlertWhEn')?.value === '1';
+const box = document.getElementById('cfgAlertWhFields');
+if (box) box.style.display = en ? 'block' : 'none';
+}
+function testRemoteAlert(){
+api('POST','/api/alert/test',{}).then(res=>{
+toast((res&&res.message)||'Remote test alert sent','ok');
+}).catch(()=>{});
+}
 function saveDevConfig(){
 const devName = document.getElementById('cfgDevName').value.trim();
 const hostname = document.getElementById('cfgHostname').value.trim();
@@ -1870,6 +1916,10 @@ const guestPassClear = document.getElementById('cfgGuestClearPass')?.checked ===
 const apPass = document.getElementById('cfgApPass').value;
 const apPassClear = document.getElementById('cfgApClearPass')?.checked === true;
 const arduinoOta = document.getElementById('cfgArduinoOta').value === '1';
+const alertWhEn = document.getElementById('cfgAlertWhEn')?.value === '1';
+const alertWhUrl = (document.getElementById('cfgAlertWhUrl')?.value || '').trim();
+const alertWhToken = document.getElementById('cfgAlertWhToken')?.value || '';
+const alertWhTokenClear = document.getElementById('cfgAlertWhClearPass')?.checked === true;
 
 if (!apPassClear && apPass.length > 0 && (apPass.length < 8 || apPass.length > 63)) {
     toast('SoftAP password must be 8-63 characters', 'err');
@@ -1882,6 +1932,18 @@ if (webAuth) {
 }
 if (guestAuth && !guestUser) {
     toast('Guest username cannot be empty', 'err');
+    return;
+}
+if (alertWhUrl.length > 0 && !alertWhUrl.startsWith('http://') && !alertWhUrl.startsWith('https://')) {
+    toast('Webhook URL must start with http:// or https://', 'err');
+    return;
+}
+if (!alertHttpsSupported && alertWhUrl.startsWith('https://')) {
+    toast('ESP8266 only supports http:// webhooks (HTTPS requires ESP32)', 'err');
+    return;
+}
+if (alertWhEn && !alertWhUrl) {
+    toast('Enter a Webhook / ntfy URL before enabling remote alerts', 'err');
     return;
 }
 
@@ -1899,7 +1961,11 @@ guest_pass:guestPassClear?'':guestPass,
 guest_pass_clear:guestPassClear,
 ap_pass:apPassClear?'':apPass,
 ap_pass_clear:apPassClear,
-arduino_ota:arduinoOta
+arduino_ota:arduinoOta,
+alert_webhook_en:alertWhEn,
+alert_webhook_url:alertWhUrl,
+alert_webhook_token:alertWhTokenClear?'':alertWhToken,
+alert_webhook_token_clear:alertWhTokenClear
 }).then(res=>{
 if(res&&res.ws_token){wsToken=res.ws_token;}
 toast('Config saved','ok');
@@ -1933,13 +1999,91 @@ if (apPassClear) {
     const apRow = document.getElementById('cfgApClearRow');
     if (apRow) apRow.style.display = 'flex';
 }
+if (alertWhTokenClear) {
+    const clrWh = document.getElementById('cfgAlertWhClearPass');
+    if (clrWh) clrWh.checked = false;
+    const tkEl = document.getElementById('cfgAlertWhToken');
+    if (tkEl) tkEl.disabled = false;
+    const whRow = document.getElementById('cfgAlertWhClearRow');
+    if (whRow) whRow.style.display = 'none';
+} else if (alertWhToken) {
+    const tkEl = document.getElementById('cfgAlertWhToken');
+    if (tkEl) tkEl.value = '';
+    const whRow = document.getElementById('cfgAlertWhClearRow');
+    if (whRow) whRow.style.display = 'flex';
+}
 });
 }
 function toggleLcdDimFields(){
 const dimEn = document.getElementById('lcdAutoDim').value === '1';
 document.getElementById('lcdDimFields').style.display = dimEn ? 'block' : 'none';
 }
+function toggleLcdLayoutPanels(){
+const m=document.getElementById('lcdMode').value;
+const rp=document.getElementById('lcdRotatePanel');
+const cp=document.getElementById('lcdCustomPanel');
+if(rp)rp.style.display=(m==='rotate')?'block':'none';
+if(cp)cp.style.display=(m==='custom')?'block':'none';
+}
+function renderLcdPages(){
+const box=document.getElementById('lcdPagesList');if(!box)return;
+box.innerHTML='';
+lcdPagesState.forEach((p,idx)=>{
+const row=document.createElement('div');
+row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border);';
+const left=document.createElement('label');
+left.style.cssText='display:flex;align-items:center;gap:8px;margin:0;cursor:pointer;font-size:0.79rem;text-transform:none;flex:1;';
+const cb=document.createElement('input');cb.type='checkbox';cb.checked=p.enabled;cb.style.cssText='width:auto;margin:0;';
+cb.onchange=()=>{lcdPagesState[idx].enabled=cb.checked;};
+const txt=document.createElement('span');
+txt.innerHTML=(idx+1)+'. '+escapeHtml(p.label)+(p.available?'':' <span style="color:var(--text2);font-size:0.71rem;">(Off in HW)</span>');
+left.appendChild(cb);left.appendChild(txt);
+const btns=document.createElement('div');btns.style.cssText='display:flex;gap:4px;';
+const up=document.createElement('button');up.type='button';up.className='btn btn-sm';up.textContent='\u2191';up.disabled=(idx===0);up.style.padding='2px 7px';
+up.onclick=()=>moveLcdPage(idx,-1);
+const dn=document.createElement('button');dn.type='button';dn.className='btn btn-sm';dn.textContent='\u2193';dn.disabled=(idx===lcdPagesState.length-1);dn.style.padding='2px 7px';
+dn.onclick=()=>moveLcdPage(idx,1);
+btns.appendChild(up);btns.appendChild(dn);
+row.appendChild(left);row.appendChild(btns);box.appendChild(row);
+});
+}
+function moveLcdPage(idx,dir){
+const nxt=idx+dir;if(nxt<0||nxt>=lcdPagesState.length)return;
+const tmp=lcdPagesState[idx];lcdPagesState[idx]=lcdPagesState[nxt];lcdPagesState[nxt]=tmp;
+renderLcdPages();
+}
+function renderLcdCustomRows(){
+const box=document.getElementById('lcdRowsList');if(!box)return;
+box.innerHTML='';
+for(let r=0;r<lcdRowsCount;r++){
+const cur=lcdLinesState[r]||'none';
+const row=document.createElement('div');
+row.style.cssText='display:flex;align-items:center;gap:8px;';
+const lbl=document.createElement('span');lbl.style.cssText='font-size:0.76rem;font-weight:600;color:var(--text2);min-width:48px;';lbl.textContent='Line '+(r+1);
+const sel=document.createElement('select');sel.style.flex='1';
+let found=false;
+lcdWidgetsCat.forEach(w=>{
+const o=document.createElement('option');o.value=w.id;o.textContent=w.label;
+if(w.id===cur)found=true;
+sel.appendChild(o);
+});
+if(!found&&cur){const o=document.createElement('option');o.value=cur;o.textContent=cur+' (Saved)';sel.appendChild(o);}
+sel.value=cur;
+sel.onchange=()=>{lcdLinesState[r]=sel.value;};
+const up=document.createElement('button');up.type='button';up.className='btn btn-sm';up.textContent='\u2191';up.disabled=(r===0);up.style.padding='2px 7px';
+up.onclick=()=>moveLcdRow(r,-1);
+const dn=document.createElement('button');dn.type='button';dn.className='btn btn-sm';dn.textContent='\u2193';dn.disabled=(r===lcdRowsCount-1);dn.style.padding='2px 7px';
+dn.onclick=()=>moveLcdRow(r,1);
+row.appendChild(lbl);row.appendChild(sel);row.appendChild(up);row.appendChild(dn);box.appendChild(row);
+}
+}
+function moveLcdRow(idx,dir){
+const nxt=idx+dir;if(nxt<0||nxt>=lcdRowsCount)return;
+const tmp=lcdLinesState[idx];lcdLinesState[idx]=lcdLinesState[nxt];lcdLinesState[nxt]=tmp;
+renderLcdCustomRows();
+}
 function saveLCD(){
+const mode=document.getElementById('lcdMode').value;
 const rotation=parseInt(document.getElementById('lcdRot').value,10);
 const brightness=parseInt(document.getElementById('lcdBright').value,10);
 const dim_brightness=parseInt(document.getElementById('lcdDimBright').value,10);
@@ -1947,17 +2091,24 @@ if(isNaN(rotation)||rotation<3||rotation>30){toast('LCD rotation must be 3-30 se
 if(isNaN(brightness)||brightness<0||brightness>100||isNaN(dim_brightness)||dim_brightness<0||dim_brightness>100){
 toast('LCD brightness must be 0-100%','err');return;
 }
-api('POST','/api/config/lcd',{
+const activePages=lcdPagesState.filter(p=>p.enabled).map(p=>p.id);
+if(mode==='rotate'&&lcdPagesState.length>0&&activePages.length===0){
+toast('Select at least one page for Auto Rotate','err');return;
+}
+const payload={
 enabled:document.getElementById('lcdEn').value==='1',
 backlight:document.getElementById('lcdBl').value==='1',
-display_mode:document.getElementById('lcdMode').value,
+display_mode:mode,
 rotation,
 brightness,
 auto_dim:document.getElementById('lcdAutoDim').value==='1',
 dim_start:document.getElementById('lcdDimStart').value,
 dim_end:document.getElementById('lcdDimEnd').value,
 dim_brightness
-}).then(()=>toast('LCD saved','ok'));
+};
+if(activePages.length>0)payload.pages=activePages;
+if(lcdRowsCount>0)payload.lines=lcdLinesState.slice(0,lcdRowsCount);
+api('POST','/api/config/lcd',payload).then(()=>toast('LCD saved','ok'));
 }
 function saveBuzzer(){
 const vol=parseInt(document.getElementById('buzVol').value,10);
@@ -2070,8 +2221,22 @@ const clrAp=document.getElementById('cfgApClearPass');
 if(clrAp){clrAp.checked=false;document.getElementById('cfgApPass').disabled=false;}
 const apRow=document.getElementById('cfgApClearRow');
 if(apRow)apRow.style.display=apPassSet?'flex':'none';
+alertHttpsSupported=(d.alert_https_supported!==false);
+const whEn=document.getElementById('cfgAlertWhEn');
+if(whEn)whEn.value=d.alert_webhook_en?'1':'0';
+const whUrl=document.getElementById('cfgAlertWhUrl');
+if(whUrl)whUrl.value=d.alert_webhook_url||'';
+const whTk=document.getElementById('cfgAlertWhToken');
+if(whTk){whTk.value='';whTk.disabled=false;}
+const clrWh=document.getElementById('cfgAlertWhClearPass');
+if(clrWh)clrWh.checked=false;
+const whRow=document.getElementById('cfgAlertWhClearRow');
+if(whRow)whRow.style.display=d.alert_webhook_token_set?'flex':'none';
+const whNote=document.getElementById('cfgAlertWhHttpNote');
+if(whNote)whNote.style.display=alertHttpsSupported?'none':'block';
 toggleWebAuthFields();
 toggleGuestFields();
+toggleAlertWhFields();
 if(d.mqtt){
 document.getElementById('mqttEn').value=d.mqtt.enabled?'1':'0';
 document.getElementById('mqttBroker').value=d.mqtt.broker||'';
@@ -2087,7 +2252,8 @@ document.getElementById('lcdEn').disabled=!lcdAllowed;
 const btnLcd=document.getElementById('btnLcdSave');if(btnLcd)btnLcd.disabled=!lcdAllowed;
 const lcdNote=document.getElementById('lcdHwNote');if(lcdNote)lcdNote.style.display=lcdAllowed?'none':'block';
 document.getElementById('lcdBl').value=d.lcd.backlight?'1':'0';
-document.getElementById('lcdMode').value=(d.lcd.display_mode==='dht_relay')?'dht_relay':'rotate';
+const rawMode=d.lcd.display_mode||'rotate';
+document.getElementById('lcdMode').value=(rawMode==='dht_relay'||rawMode==='custom')?rawMode:'rotate';
 document.getElementById('lcdRot').value=d.lcd.rotation||5;
 document.getElementById('lcdBright').value=d.lcd.brightness!==undefined?d.lcd.brightness:100;
 document.getElementById('lcdBrightVal').textContent=document.getElementById('lcdBright').value+'%';
@@ -2096,6 +2262,19 @@ document.getElementById('lcdDimStart').value=d.lcd.dim_start||'22:00';
 document.getElementById('lcdDimEnd').value=d.lcd.dim_end||'06:00';
 document.getElementById('lcdDimBright').value=d.lcd.dim_brightness!==undefined?d.lcd.dim_brightness:0;
 document.getElementById('lcdDimBrightVal').textContent=document.getElementById('lcdDimBright').value+'%';
+lcdRowsCount=(d.lcd.rows&&d.lcd.rows>=1&&d.lcd.rows<=4)?d.lcd.rows:2;
+const dimTag=document.getElementById('lcdDimTag');if(dimTag)dimTag.textContent=(d.lcd.cols||16)+'x'+lcdRowsCount;
+const savedPages=Array.isArray(d.lcd.pages)?d.lcd.pages:[];
+const catPages=(d.lcd.catalog&&Array.isArray(d.lcd.catalog.pages))?d.lcd.catalog.pages:[];
+const byId={};catPages.forEach(p=>{byId[p.id]=p;});
+lcdPagesState=[];
+savedPages.forEach(id=>{const m=byId[id];if(m){lcdPagesState.push({id:m.id,label:m.label,available:m.available!==false,enabled:true});delete byId[id];}});
+catPages.forEach(m=>{if(byId[m.id]){lcdPagesState.push({id:m.id,label:m.label,available:m.available!==false,enabled:(savedPages.length===0)});}});
+lcdWidgetsCat=(d.lcd.catalog&&Array.isArray(d.lcd.catalog.widgets))?d.lcd.catalog.widgets:[];
+if(Array.isArray(d.lcd.lines)){for(let r=0;r<4;r++){lcdLinesState[r]=d.lcd.lines[r]||'none';}}
+renderLcdPages();
+renderLcdCustomRows();
+toggleLcdLayoutPanels();
 toggleLcdDimFields();
 }
 if(d.buzzer){

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -84,6 +85,15 @@ class _MainShellState extends ConsumerState<MainShell>
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _deviceManager.ensureInitialized();
       if (!mounted) return;
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+        final st = await NativeControlsService.instance.getSafetyMonitorState();
+        if (mounted &&
+            st.monitorEnabled &&
+            !st.notificationPermissionGranted) {
+          await NativeControlsService.instance.requestNotificationPermission();
+        }
+      }
+      if (!mounted) return;
       final pending = await NativeControlsService.instance.consumeLaunchAction();
       if (pending != null && mounted) {
         _handleLaunchAction(pending);
@@ -101,10 +111,25 @@ class _MainShellState extends ConsumerState<MainShell>
     if (devId != null && devId.isNotEmpty) {
       final exists = ref.read(deviceManagerProvider).any((d) => d.id == devId);
       if (exists) {
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: devId)),
-        );
+        if (!DeviceScreen.isViewing(devId)) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: devId)),
+          );
+        }
+        final alarmType = action.alarmType;
+        if (alarmType != null && alarmType.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              EmergencyAlarmDialog.show(
+                context,
+                ref,
+                deviceId: devId,
+                alarmType: alarmType,
+              );
+            }
+          });
+        }
       }
     }
   }

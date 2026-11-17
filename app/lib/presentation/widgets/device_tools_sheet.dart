@@ -91,6 +91,8 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   final _guestUser = TextEditingController();
   final _guestPassword = TextEditingController();
   final _apPassword = TextEditingController();
+  final _alertWebhookUrl = TextEditingController();
+  final _alertWebhookToken = TextEditingController();
   final _dimStart = TextEditingController();
   final _dimEnd = TextEditingController();
   bool _mqttEnabled = false;
@@ -101,14 +103,49 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   bool _guestPasswordClear = false;
   bool _apPasswordSet = false;
   bool _apPasswordClear = false;
+  bool _alertWebhookEn = false;
+  bool _alertWebhookTokenSet = false;
+  bool _alertWebhookTokenClear = false;
+  bool _alertHttpsSupported = true;
+  bool _isTestingRemoteAlert = false;
   bool _use24h = false;
   bool _mq2Enabled = true;
   bool _autoDim = false;
   bool _buzzerEnabled = true;
   String _lcdDisplayMode = 'rotate';
+  int _lcdCols = 16;
+  int _lcdRows = 2;
   int _lcdRotation = 5;
   int _lcdBrightness = 100;
   int _lcdDimBrightness = 0;
+  List<_LcdPageEntry> _lcdPages = _defaultLcdPages();
+  List<String> _lcdLines = ['climate:0', 'relays', 'gas:0', 'ip'];
+  List<_LcdWidgetOption> _lcdWidgetCatalog = _defaultLcdWidgets();
+
+  static List<_LcdPageEntry> _defaultLcdPages() => [
+        _LcdPageEntry(id: 'climate', label: 'Climate (Temp / Hum / Pressure)', available: true, enabled: true),
+        _LcdPageEntry(id: 'gas', label: 'Air Quality / Gas', available: true, enabled: true),
+        _LcdPageEntry(id: 'tank', label: 'Ultrasonic Tank Level', available: true, enabled: true),
+        _LcdPageEntry(id: 'probe', label: 'Water Temp Probe', available: true, enabled: true),
+        _LcdPageEntry(id: 'lux', label: 'Ambient Light (Lux)', available: true, enabled: true),
+        _LcdPageEntry(id: 'motion', label: 'Motion / Presence', available: true, enabled: true),
+        _LcdPageEntry(id: 'relays', label: 'Relays & Timers', available: true, enabled: true),
+        _LcdPageEntry(id: 'network', label: 'Date, Time & IP', available: true, enabled: true),
+        _LcdPageEntry(id: 'mqtt', label: 'MQTT & Uptime', available: true, enabled: true),
+      ];
+
+  static List<_LcdWidgetOption> _defaultLcdWidgets() => const [
+        _LcdWidgetOption(id: 'climate:0', label: 'Climate #1 (Summary)'),
+        _LcdWidgetOption(id: 'temp:0', label: 'Climate #1 - Temp'),
+        _LcdWidgetOption(id: 'hum:0', label: 'Climate #1 - Humidity'),
+        _LcdWidgetOption(id: 'gas:0', label: 'Gas / VOC #1'),
+        _LcdWidgetOption(id: 'relays', label: 'Relay States'),
+        _LcdWidgetOption(id: 'timer', label: 'Next Active Timer'),
+        _LcdWidgetOption(id: 'time', label: 'Clock & Date'),
+        _LcdWidgetOption(id: 'ip', label: 'IP Address'),
+        _LcdWidgetOption(id: 'mqtt', label: 'MQTT & Uptime'),
+        _LcdWidgetOption(id: 'none', label: '(Blank Row)'),
+      ];
   int _buzzerVolume = 128;
   double _tempAlarm = 35;
   bool _isSavingWifi = false;
@@ -165,6 +202,8 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       _guestUser,
       _guestPassword,
       _apPassword,
+      _alertWebhookUrl,
+      _alertWebhookToken,
       _dimStart,
       _dimEnd,
     ]) {
@@ -322,9 +361,11 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
         final l = cfg['lcd'] as Map;
         _lcdEnabled = l['enabled'] as bool? ?? _lcdEnabled;
         _lcdHwAllowed = l['hw_allowed'] as bool? ?? true;
+        _lcdCols = ((l['cols'] as num?)?.toInt() ?? _lcdCols).clamp(8, 20);
+        _lcdRows = ((l['rows'] as num?)?.toInt() ?? _lcdRows).clamp(1, 4);
         _lcdBacklight = l['backlight'] as bool? ?? _lcdBacklight;
         final rawMode = l['display_mode'] as String?;
-        if (rawMode == 'rotate' || rawMode == 'dht_relay') {
+        if (rawMode == 'rotate' || rawMode == 'dht_relay' || rawMode == 'custom') {
           _lcdDisplayMode = rawMode!;
         }
         _lcdRotation =
@@ -336,6 +377,74 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
         _dimEnd.text = l['dim_end'] as String? ?? '06:00';
         _lcdDimBrightness =
             ((l['dim_brightness'] as num?)?.toInt() ?? _lcdDimBrightness).clamp(0, 100);
+
+        final savedPages = l['pages'] is List
+            ? (l['pages'] as List).map((e) => e.toString()).toList()
+            : <String>[];
+        final cat = l['catalog'] is Map ? (l['catalog'] as Map) : null;
+        final rawCatPages = cat?['pages'] is List ? (cat!['pages'] as List) : null;
+        final basePages = rawCatPages != null
+            ? rawCatPages
+                .whereType<Map>()
+                .map(
+                  (p) => _LcdPageEntry(
+                    id: p['id']?.toString() ?? '',
+                    label: p['label']?.toString() ?? '',
+                    available: p['available'] as bool? ?? true,
+                    enabled: false,
+                  ),
+                )
+                .where((p) => p.id.isNotEmpty)
+                .toList()
+            : _defaultLcdPages();
+        final byId = <String, _LcdPageEntry>{
+          for (final p in basePages) p.id: p,
+        };
+        final orderedPages = <_LcdPageEntry>[];
+        for (final id in savedPages) {
+          final entry = byId.remove(id);
+          if (entry != null) {
+            entry.enabled = true;
+            orderedPages.add(entry);
+          }
+        }
+        for (final rem in basePages) {
+          if (byId.containsKey(rem.id)) {
+            rem.enabled = savedPages.isEmpty;
+            orderedPages.add(rem);
+          }
+        }
+        if (orderedPages.isNotEmpty) {
+          _lcdPages = orderedPages;
+        }
+
+        final rawWidgets = cat?['widgets'] is List ? (cat!['widgets'] as List) : null;
+        if (rawWidgets != null && rawWidgets.isNotEmpty) {
+          final parsed = rawWidgets
+              .whereType<Map>()
+              .map(
+                (w) => _LcdWidgetOption(
+                  id: w['id']?.toString() ?? '',
+                  label: w['label']?.toString() ?? '',
+                ),
+              )
+              .where((w) => w.id.isNotEmpty)
+              .toList();
+          if (parsed.isNotEmpty) {
+            _lcdWidgetCatalog = parsed;
+          }
+        }
+
+        if (l['lines'] is List) {
+          final incoming = (l['lines'] as List).map((e) => e.toString()).toList();
+          final nextLines = List<String>.filled(4, 'none');
+          for (var i = 0; i < 4; i++) {
+            nextLines[i] = i < incoming.length && incoming[i].isNotEmpty
+                ? incoming[i]
+                : (i < _lcdLines.length ? _lcdLines[i] : 'none');
+          }
+          _lcdLines = nextLines;
+        }
       }
       if (cfg['buzzer'] is Map) {
         final b = cfg['buzzer'] as Map;
@@ -363,6 +472,12 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       _guestPasswordSet = cfg['guest_pass_set'] as bool? ?? _guestPasswordSet;
       _guestUser.text = cfg['guest_user']?.toString() ?? '';
       _apPasswordSet = cfg['ap_pass_set'] as bool? ?? _apPasswordSet;
+      _alertWebhookEn = cfg['alert_webhook_en'] as bool? ?? _alertWebhookEn;
+      _alertWebhookUrl.text = cfg['alert_webhook_url']?.toString() ?? '';
+      _alertWebhookTokenSet =
+          cfg['alert_webhook_token_set'] as bool? ?? _alertWebhookTokenSet;
+      _alertHttpsSupported =
+          cfg['alert_https_supported'] as bool? ?? !widget.device.isEsp8266;
       _use24h = cfg['use_24h'] as bool? ?? _use24h;
       if (cfg['arduino_ota'] != null) {
         _arduinoOta = cfg['arduino_ota'] as bool? ?? false;
@@ -1486,9 +1601,11 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       padding: const EdgeInsets.only(bottom: 14),
       child: GlassCard(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
             Row(
               children: [
                 Icon(icon, color: AppColors.primaryLight, size: 20),
@@ -1509,6 +1626,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
             const SizedBox(height: 14),
             ...children,
           ],
+        ),
         ),
       ),
     );
@@ -1807,7 +1925,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               'Custom SoftAP hotspot password',
               helper: _apPasswordSet
                   ? 'Custom AP password saved (8-63 chars; blank keeps current)'
-                  : 'Optional WPA2 setup AP password (8-63 chars; blank uses device default)',
+                  : 'Optional (8-63 chars; blank = Open on fresh setup, SmartHome@XXXX! after setup)',
             ),
           ),
           if (_apPasswordSet)
@@ -1823,6 +1941,103 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         if (_apPasswordClear) _apPassword.clear();
                       }),
             ),
+          const SizedBox(height: 12),
+          Divider(color: AppColors.cardBorder.withValues(alpha: 0.5)),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              'Optional Remote Push Alerts (4G/5G)',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            subtitle: Text(
+              'Push emergency Gas/Temp/Fault alerts via Webhook or ntfy when away from home Wi-Fi',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 11.5),
+            ),
+            value: _alertWebhookEn,
+            onChanged: isGuest
+                ? null
+                : (v) => setState(() => _alertWebhookEn = v),
+          ),
+          if (_alertWebhookEn) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _alertWebhookUrl,
+              enabled: !isGuest,
+              keyboardType: TextInputType.url,
+              maxLength: 192,
+              decoration: _field(
+                'Webhook / ntfy URL',
+                helper: _alertHttpsSupported
+                    ? 'Supports https:// (e.g. ntfy.sh) or http:// webhook URLs'
+                    : 'ESP8266 supports http:// local/relay webhooks only (HTTPS requires ESP32)',
+              ).copyWith(hintText: 'https://ntfy.sh/my-smarthome-alarm'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _alertWebhookToken,
+              enabled: !isGuest && !_alertWebhookTokenClear,
+              obscureText: true,
+              maxLength: 96,
+              decoration: _field(
+                'Bearer token (optional)',
+                helper: _alertWebhookTokenSet
+                    ? 'Token saved (leave blank to keep current)'
+                    : 'Optional authorization token for ntfy/webhook',
+              ),
+            ),
+            if (_alertWebhookTokenSet)
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Clear saved Bearer token'),
+                value: _alertWebhookTokenClear,
+                onChanged: isGuest
+                    ? null
+                    : (v) => setState(() {
+                          _alertWebhookTokenClear = v ?? false;
+                          if (_alertWebhookTokenClear) {
+                            _alertWebhookToken.clear();
+                          }
+                        }),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                icon: _isTestingRemoteAlert
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.notifications_active_outlined, size: 16),
+                label: Text(
+                  _isTestingRemoteAlert
+                      ? 'Sending Test Push...'
+                      : 'Test Remote Alert',
+                ),
+                onPressed: (_isTestingRemoteAlert || isGuest)
+                    ? null
+                    : () async {
+                        setState(() => _isTestingRemoteAlert = true);
+                        final err = await widget.manager.testRemoteAlert(
+                          widget.device.id,
+                        );
+                        if (!mounted) return;
+                        setState(() => _isTestingRemoteAlert = false);
+                        _showSaveResult(
+                          err == null,
+                          'Test remote push alert dispatched.',
+                          err ?? 'Remote test alert failed.',
+                        );
+                      },
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -1875,6 +2090,33 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         );
                         return;
                       }
+                      final whUrl = _alertWebhookUrl.text.trim();
+                      if (whUrl.isNotEmpty &&
+                          !whUrl.startsWith('http://') &&
+                          !whUrl.startsWith('https://')) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Webhook URL must start with http:// or https://.',
+                        );
+                        return;
+                      }
+                      if (!_alertHttpsSupported && whUrl.startsWith('https://')) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'ESP8266 only supports http:// webhooks (HTTPS requires ESP32).',
+                        );
+                        return;
+                      }
+                      if (_alertWebhookEn && whUrl.isEmpty) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Enter a Webhook / ntfy URL before enabling remote alerts.',
+                        );
+                        return;
+                      }
                       setState(() => _isSavingDevice = true);
                       final ok = await widget.manager
                           .saveDeviceConfig(widget.device.id, {
@@ -1899,6 +2141,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                                 _apPassword.text.isNotEmpty)
                               'ap_pass': _apPassword.text,
                             if (_apPasswordClear) 'ap_pass_clear': true,
+                            'alert_webhook_en': _alertWebhookEn,
+                            'alert_webhook_url': whUrl,
+                            if (!_alertWebhookTokenClear &&
+                                _alertWebhookToken.text.isNotEmpty)
+                              'alert_webhook_token': _alertWebhookToken.text,
+                            if (_alertWebhookTokenClear)
+                              'alert_webhook_token_clear': true,
                           });
                       if (mounted) {
                         setState(() {
@@ -1924,6 +2173,16 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           if (ok && _apPasswordClear) {
                             _apPasswordSet = false;
                             _apPasswordClear = false;
+                          }
+                          if (ok &&
+                              !_alertWebhookTokenClear &&
+                              _alertWebhookToken.text.isNotEmpty) {
+                            _alertWebhookTokenSet = true;
+                            _alertWebhookToken.clear();
+                          }
+                          if (ok && _alertWebhookTokenClear) {
+                            _alertWebhookTokenSet = false;
+                            _alertWebhookTokenClear = false;
                           }
                         });
                         _showSaveResult(
@@ -1998,19 +2257,165 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
           DropdownButtonFormField<String>(
             key: ValueKey('lcd_mode_${_lcdDisplayMode}_${isGuest}_$_lcdHwAllowed'),
             initialValue:
-                (_lcdDisplayMode == 'dht_relay' || _lcdDisplayMode == 'rotate')
+                (_lcdDisplayMode == 'dht_relay' ||
+                        _lcdDisplayMode == 'rotate' ||
+                        _lcdDisplayMode == 'custom')
                     ? _lcdDisplayMode
                     : 'rotate',
+            isExpanded: true,
             decoration: _field('Display mode'),
             items: const [
-              DropdownMenuItem(value: 'rotate', child: Text('Auto rotate')),
-              DropdownMenuItem(value: 'dht_relay', child: Text('DHT + relays')),
+              DropdownMenuItem(
+                value: 'rotate',
+                child: Text('Auto rotate (custom pages)', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'custom',
+                child: Text('Custom per-row layout', overflow: TextOverflow.ellipsis),
+              ),
+              DropdownMenuItem(
+                value: 'dht_relay',
+                child: Text('DHT + relays (classic)', overflow: TextOverflow.ellipsis),
+              ),
             ],
             onChanged: (isGuest || !_lcdHwAllowed)
                 ? null
                 : (value) =>
                     setState(() => _lcdDisplayMode = value ?? _lcdDisplayMode),
           ),
+          if (_lcdDisplayMode == 'rotate') ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Active Pages & Display Order (Top Shows First)',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 6),
+            for (var i = 0; i < _lcdPages.length; i++)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.03),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+                ),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: _lcdPages[i].enabled,
+                      onChanged: (isGuest || !_lcdHwAllowed)
+                          ? null
+                          : (val) => setState(
+                                () => _lcdPages[i].enabled = val ?? false,
+                              ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        _lcdPages[i].available
+                            ? '${i + 1}. ${_lcdPages[i].label}'
+                            : '${i + 1}. ${_lcdPages[i].label} (Off in HW)',
+                        style: TextStyle(
+                          fontSize: 12.5,
+                          color: _lcdPages[i].available
+                              ? null
+                              : Colors.white54,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                      tooltip: 'Move up',
+                      onPressed: (isGuest || !_lcdHwAllowed || i == 0)
+                          ? null
+                          : () => setState(() {
+                                final item = _lcdPages.removeAt(i);
+                                _lcdPages.insert(i - 1, item);
+                              }),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.arrow_downward_rounded, size: 18),
+                      tooltip: 'Move down',
+                      onPressed: (isGuest ||
+                              !_lcdHwAllowed ||
+                              i == _lcdPages.length - 1)
+                          ? null
+                          : () => setState(() {
+                                final item = _lcdPages.removeAt(i);
+                                _lcdPages.insert(i + 1, item);
+                              }),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+          if (_lcdDisplayMode == 'custom') ...[
+            const SizedBox(height: 12),
+            Text(
+              'Pinned Row Layout (${_lcdCols}x$_lcdRows — Line 1 Shows First)',
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            for (var r = 0; r < _lcdRows; r++) ...[
+              Builder(
+                builder: (context) {
+                  final cur = r < _lcdLines.length ? _lcdLines[r] : 'none';
+                  final items = <DropdownMenuItem<String>>[
+                    for (final w in _lcdWidgetCatalog)
+                      DropdownMenuItem(value: w.id, child: Text(w.label)),
+                  ];
+                  if (!items.any((it) => it.value == cur)) {
+                    items.add(
+                      DropdownMenuItem(value: cur, child: Text('$cur (Saved)')),
+                    );
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            key: ValueKey('lcd_line_${r}_${cur}_${isGuest}_$_lcdHwAllowed'),
+                            initialValue: cur,
+                            isExpanded: true,
+                            decoration: _field('Line ${r + 1}'),
+                            items: items,
+                            onChanged: (isGuest || !_lcdHwAllowed)
+                                ? null
+                                : (val) {
+                                    if (val == null) return;
+                                    setState(() => _lcdLines[r] = val);
+                                  },
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+                          tooltip: 'Move line up',
+                          onPressed: (isGuest || !_lcdHwAllowed || r == 0)
+                              ? null
+                              : () => setState(() {
+                                    final tmp = _lcdLines[r];
+                                    _lcdLines[r] = _lcdLines[r - 1];
+                                    _lcdLines[r - 1] = tmp;
+                                  }),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.arrow_downward_rounded, size: 18),
+                          tooltip: 'Move line down',
+                          onPressed: (isGuest || !_lcdHwAllowed || r == _lcdRows - 1)
+                              ? null
+                              : () => setState(() {
+                                    final tmp = _lcdLines[r];
+                                    _lcdLines[r] = _lcdLines[r + 1];
+                                    _lcdLines[r + 1] = tmp;
+                                  }),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
+          ],
           const SizedBox(height: 10),
           Text('Page rotation: $_lcdRotation seconds'),
           Slider(
@@ -2087,6 +2492,18 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               onPressed: (_isSavingLcd || isGuest || !_lcdHwAllowed)
                   ? null
                   : () async {
+                      final selectedPages = _lcdPages
+                          .where((p) => p.enabled)
+                          .map((p) => p.id)
+                          .toList();
+                      if (_lcdDisplayMode == 'rotate' && selectedPages.isEmpty) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Select at least one page for Auto Rotate.',
+                        );
+                        return;
+                      }
                       setState(() => _isSavingLcd = true);
                       final ok = await widget.manager.saveLcdSettings(
                         widget.device.id,
@@ -2099,6 +2516,8 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         dimStart: _dimStart.text.trim(),
                         dimEnd: _dimEnd.text.trim(),
                         dimBrightness: _lcdDimBrightness,
+                        pages: selectedPages.isNotEmpty ? selectedPages : null,
+                        lines: _lcdLines.take(_lcdRows).toList(),
                       );
                       if (mounted) {
                         setState(() => _isSavingLcd = false);
@@ -3687,4 +4106,25 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
       ),
     );
   }
+}
+
+class _LcdPageEntry {
+  final String id;
+  final String label;
+  final bool available;
+  bool enabled;
+
+  _LcdPageEntry({
+    required this.id,
+    required this.label,
+    required this.available,
+    required this.enabled,
+  });
+}
+
+class _LcdWidgetOption {
+  final String id;
+  final String label;
+
+  const _LcdWidgetOption({required this.id, required this.label});
 }

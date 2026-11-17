@@ -1,9 +1,16 @@
 package com.smarthome.smarthome_app
 
+import android.Manifest
+import android.app.NotificationManager
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.service.quicksettings.TileService
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -16,11 +23,15 @@ class MainActivity : FlutterActivity() {
         const val ACTION_OPEN_DEVICE = "com.smarthome.smarthome_app.ACTION_OPEN_DEVICE"
         const val EXTRA_OPEN_TILE_SLOT = "open_tile_slot"
         const val EXTRA_OPEN_DEVICE_ID = "open_device_id"
+        const val EXTRA_OPEN_ALARM_TYPE = "open_alarm_type"
+        private const val REQ_POST_NOTIFICATIONS = 4102
     }
 
     private var methodChannel: MethodChannel? = null
     private var pendingTileSlot: Int? = null
     private var pendingDeviceId: String? = null
+    private var pendingAlarmType: String? = null
+    private var pendingNotifPermResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,14 +44,17 @@ class MainActivity : FlutterActivity() {
         extractIntentExtras(intent)
         val tileSlot = pendingTileSlot
         val deviceId = pendingDeviceId
+        val alarmType = pendingAlarmType
         if (tileSlot != null || deviceId != null) {
             val payload = hashMapOf<String, Any?>(
                 "tileSlot" to tileSlot,
-                "deviceId" to deviceId
+                "deviceId" to deviceId,
+                "alarmType" to alarmType
             )
             methodChannel?.let { ch ->
                 pendingTileSlot = null
                 pendingDeviceId = null
+                pendingAlarmType = null
                 ch.invokeMethod("onLaunchAction", payload)
             }
         }
@@ -72,6 +86,41 @@ class MainActivity : FlutterActivity() {
         if (NativeControlStore.isValidDeviceId(devExtra) &&
             NativeControlStore.getDeviceById(applicationContext, devExtra!!) != null) {
             pendingDeviceId = devExtra
+            val alarmExtra = intent.getStringExtra(EXTRA_OPEN_ALARM_TYPE)?.trim()
+            if (!alarmExtra.isNullOrEmpty()) {
+                pendingAlarmType = alarmExtra
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                    setShowWhenLocked(true)
+                    setTurnScreenOn(true)
+                }
+            }
+        }
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
+        return checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return true
+        return pm.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_POST_NOTIFICATIONS) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                SafetyMonitorService.syncServiceState(applicationContext)
+            }
+            pendingNotifPermResult?.success(granted)
+            pendingNotifPermResult = null
         }
     }
 
@@ -92,6 +141,7 @@ class MainActivity : FlutterActivity() {
                             SmartHomeControlsService.notifyDeviceUpdated(applicationContext, dev.id)
                         }
                     }
+                    SafetyMonitorService.syncServiceState(applicationContext)
                     result.success(true)
                 }
 
@@ -141,10 +191,12 @@ class MainActivity : FlutterActivity() {
                 "consumeLaunchAction" -> {
                     val payload = hashMapOf<String, Any?>(
                         "tileSlot" to pendingTileSlot,
-                        "deviceId" to pendingDeviceId
+                        "deviceId" to pendingDeviceId,
+                        "alarmType" to pendingAlarmType
                     )
                     pendingTileSlot = null
                     pendingDeviceId = null
+                    pendingAlarmType = null
                     result.success(payload)
                 }
 
@@ -171,6 +223,122 @@ class MainActivity : FlutterActivity() {
                         for (dev in NativeControlStore.getDevices(applicationContext)) {
                             SmartHomeControlsService.notifyDeviceUpdated(applicationContext, dev.id)
                         }
+                    }
+                    result.success(true)
+                }
+
+                "getSafetyMonitorState" -> {
+                    SafetyMonitorService.ensureChannels(applicationContext)
+                    result.success(
+                        hashMapOf(
+                            "monitorEnabled" to NativeControlStore.getSafetyMonitorEnabled(applicationContext),
+                            "sirenEnabled" to NativeControlStore.getAlarmSirenEnabled(applicationContext),
+                            "notificationPermissionGranted" to hasNotificationPermission(),
+                            "isSirenPlaying" to AlarmSoundPlayer.isPlaying(),
+                            "ignoringBatteryOptimizations" to isIgnoringBatteryOptimizations(),
+                            "monitorChannelHidden" to SafetyMonitorService.isMonitorChannelHidden(applicationContext)
+                        )
+                    )
+                }
+
+                "openMonitorChannelSettings" -> {
+                    SafetyMonitorService.ensureChannels(applicationContext)
+                    try {
+                        val i = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                                putExtra(Settings.EXTRA_CHANNEL_ID, SafetyMonitorService.MONITOR_CHANNEL_ID)
+                            }
+                        } else {
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", packageName, null)
+                            }
+                        }
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(i)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+
+                "openNotificationSettings" -> {
+                    try {
+                        val i = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                            }
+                        } else {
+                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", packageName, null)
+                            }
+                        }
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(i)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+
+                "openAppDetailsSettings" -> {
+                    try {
+                        val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", packageName, null)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        startActivity(i)
+                        result.success(true)
+                    } catch (_: Exception) {
+                        result.success(false)
+                    }
+                }
+
+                "requestNotificationPermission" -> {
+                    if (hasNotificationPermission() || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                        result.success(true)
+                    } else {
+                        pendingNotifPermResult?.success(false)
+                        pendingNotifPermResult = result
+                        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_POST_NOTIFICATIONS)
+                    }
+                }
+
+                "setSafetyMonitorEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: false
+                    NativeControlStore.setSafetyMonitorEnabled(applicationContext, enabled)
+                    SafetyMonitorService.syncServiceState(applicationContext)
+                    result.success(true)
+                }
+
+                "setAlarmSirenEnabled" -> {
+                    val enabled = call.argument<Boolean>("enabled") ?: true
+                    NativeControlStore.setAlarmSirenEnabled(applicationContext, enabled)
+                    if (!enabled) AlarmSoundPlayer.stopSiren(applicationContext)
+                    result.success(true)
+                }
+
+                "startInAppSiren" -> {
+                    val force = call.argument<Boolean>("force") ?: false
+                    AlarmSoundPlayer.startSiren(applicationContext, force = force)
+                    result.success(true)
+                }
+
+                "stopInAppSiren" -> {
+                    AlarmSoundPlayer.stopSiren(applicationContext)
+                    result.success(true)
+                }
+
+                "silenceAlarmEpisode" -> {
+                    val devId = call.argument<String>("deviceId").orEmpty()
+                    val alarmType = call.argument<String>("alarmType").orEmpty()
+                    AlarmSoundPlayer.stopSiren(applicationContext)
+                    if (devId.isNotEmpty()) {
+                        if (alarmType.isNotEmpty()) {
+                            SafetyMonitorService.markEpisodeSilenced(devId, alarmType)
+                        }
+                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                        nm?.cancel(SafetyMonitorService.notificationIdForDevice(devId))
                     }
                     result.success(true)
                 }

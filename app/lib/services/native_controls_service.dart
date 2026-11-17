@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/models/smart_device.dart';
 
 class QuickTileSlotConfig {
@@ -44,8 +45,27 @@ class NativePlatformCapabilities {
 class NativeLaunchAction {
   final int? tileSlot;
   final String? deviceId;
+  final String? alarmType;
 
-  const NativeLaunchAction({this.tileSlot, this.deviceId});
+  const NativeLaunchAction({this.tileSlot, this.deviceId, this.alarmType});
+}
+
+class SafetyMonitorState {
+  final bool monitorEnabled;
+  final bool sirenEnabled;
+  final bool notificationPermissionGranted;
+  final bool isSirenPlaying;
+  final bool ignoringBatteryOptimizations;
+  final bool monitorChannelHidden;
+
+  const SafetyMonitorState({
+    this.monitorEnabled = true,
+    this.sirenEnabled = true,
+    this.notificationPermissionGranted = true,
+    this.isSirenPlaying = false,
+    this.ignoringBatteryOptimizations = true,
+    this.monitorChannelHidden = false,
+  });
 }
 
 class NativeControlsService {
@@ -73,9 +93,14 @@ class NativeControlsService {
           final map = Map<dynamic, dynamic>.from(call.arguments as Map);
           final slot = (map['tileSlot'] as num?)?.toInt();
           final devId = map['deviceId']?.toString();
+          final alarmType = map['alarmType']?.toString();
           if (slot != null || (devId != null && devId.isNotEmpty)) {
             _onLaunchAction?.call(
-              NativeLaunchAction(tileSlot: slot, deviceId: devId),
+              NativeLaunchAction(
+                tileSlot: slot,
+                deviceId: devId,
+                alarmType: alarmType,
+              ),
             );
           }
         }
@@ -92,8 +117,13 @@ class NativeControlsService {
       if (res == null) return null;
       final slot = (res['tileSlot'] as num?)?.toInt();
       final devId = res['deviceId']?.toString();
+      final alarmType = res['alarmType']?.toString();
       if (slot == null && (devId == null || devId.isEmpty)) return null;
-      return NativeLaunchAction(tileSlot: slot, deviceId: devId);
+      return NativeLaunchAction(
+        tileSlot: slot,
+        deviceId: devId,
+        alarmType: alarmType,
+      );
     } catch (_) {
       return null;
     }
@@ -256,5 +286,136 @@ class NativeControlsService {
     } catch (_) {
       return false;
     }
+  }
+
+  static const String _prefSirenEnabled = 'alarm_siren_enabled';
+
+  Future<SafetyMonitorState> getSafetyMonitorState() async {
+    if (!_isAndroidNative) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        return SafetyMonitorState(
+          monitorEnabled: false,
+          sirenEnabled: prefs.getBool(_prefSirenEnabled) ?? true,
+        );
+      } catch (_) {
+        return const SafetyMonitorState();
+      }
+    }
+    try {
+      final res = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'getSafetyMonitorState',
+      );
+      if (res == null) return const SafetyMonitorState();
+      return SafetyMonitorState(
+        monitorEnabled: res['monitorEnabled'] != false,
+        sirenEnabled: res['sirenEnabled'] != false,
+        notificationPermissionGranted:
+            res['notificationPermissionGranted'] != false,
+        isSirenPlaying: res['isSirenPlaying'] == true,
+        ignoringBatteryOptimizations:
+            res['ignoringBatteryOptimizations'] != false,
+        monitorChannelHidden: res['monitorChannelHidden'] == true,
+      );
+    } catch (_) {
+      return const SafetyMonitorState();
+    }
+  }
+
+  Future<bool> requestNotificationPermission() async {
+    if (!_isAndroidNative) return true;
+    try {
+      final ok = await _channel.invokeMethod<bool>('requestNotificationPermission');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> openMonitorChannelSettings() async {
+    if (!_isAndroidNative) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openMonitorChannelSettings');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> openNotificationSettings() async {
+    if (!_isAndroidNative) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openNotificationSettings');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> openAppDetailsSettings() async {
+    if (!_isAndroidNative) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('openAppDetailsSettings');
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> setSafetyMonitorEnabled(bool enabled) async {
+    if (!_isAndroidNative) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('setSafetyMonitorEnabled', {
+        'enabled': enabled,
+      });
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> setAlarmSirenEnabled(bool enabled) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_prefSirenEnabled, enabled);
+    } catch (_) {}
+    if (!_isAndroidNative) return true;
+    try {
+      final ok = await _channel.invokeMethod<bool>('setAlarmSirenEnabled', {
+        'enabled': enabled,
+      });
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> isAlarmSirenEnabled() async {
+    final st = await getSafetyMonitorState();
+    return st.sirenEnabled;
+  }
+
+  Future<void> startInAppSiren({bool force = false}) async {
+    if (!_isAndroidNative) return;
+    try {
+      await _channel.invokeMethod('startInAppSiren', {'force': force});
+    } catch (_) {}
+  }
+
+  Future<void> stopInAppSiren() async {
+    if (!_isAndroidNative) return;
+    try {
+      await _channel.invokeMethod('stopInAppSiren');
+    } catch (_) {}
+  }
+
+  Future<void> silenceAlarmEpisode(String deviceId, String alarmType) async {
+    if (!_isAndroidNative) return;
+    try {
+      await _channel.invokeMethod('silenceAlarmEpisode', {
+        'deviceId': deviceId,
+        'alarmType': alarmType,
+      });
+    } catch (_) {}
   }
 }

@@ -35,6 +35,7 @@ public:
     // Publishing
     void publishRelayState(uint8_t index, bool state);
     void publishSensorData(SensorManager& sensorMgr);
+    void publishAlarmEvent(const char* alarmType, bool active, const char* summary = nullptr, bool anyHazardActive = false);
     void publishDiagnostics(const String& json);
     void publishAvailability(bool online);
     void publishHomeAssistantDiscovery(bool allowYield = false);

@@ -28,6 +28,8 @@
 #include "HardwareManager.h"
 #include "WebPages.h"
 
+class RemoteAlertManager;
+
 enum AuthRole {
     AUTH_ROLE_NONE  = 0,
     AUTH_ROLE_GUEST = 1,
@@ -50,6 +52,7 @@ public:
                HardwareManager& hw);
 
     void setWebSocketManager(WebSocketManager& ws) { _ws = &ws; }
+    void setRemoteAlertManager(RemoteAlertManager& mgr) { _remoteAlert = &mgr; }
     AsyncWebServer& getServer();
 
     // Authentication helpers (Multi-User Privilege Tiers: Admin vs. Family / Guest)
@@ -101,6 +104,7 @@ private:
     OTAManager* _ota;
     WebSocketManager* _ws;
     HardwareManager* _hw;
+    RemoteAlertManager* _remoteAlert;
 
     // Reboot state
     volatile bool _rebootRequested;

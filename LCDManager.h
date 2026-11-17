@@ -16,8 +16,15 @@
 
 class HardwareManager;
 class TimeManager;
+class SensorManager;
+class RelayManager;
+class AlarmScheduler;
+
 #define LCD_MAX_COLS        20
 #define LCD_MAX_ROWS        4
+#define LCD_MAX_CUSTOM_PAGES 9
+#define LCD_PAGE_ID_LEN     12
+#define LCD_WIDGET_ID_LEN   16
 
 #define LCD_PAGE_SENSOR     0  // Temp/Hum + Relay states
 #define LCD_PAGE_NETWORK    1  // Date + IP
@@ -27,6 +34,7 @@ class TimeManager;
 // Display mode strings
 #define LCD_MODE_ROTATE        "rotate"
 #define LCD_MODE_DHT_RELAY     "dht_relay"
+#define LCD_MODE_CUSTOM        "custom"
 
 // Alarm overlay types
 #define LCD_ALARM_NONE      0
@@ -46,6 +54,7 @@ public:
 
     void begin(StorageManager& storage, TimeManager& time);
     void begin(StorageManager& storage, TimeManager& time, HardwareManager& hw);
+    void attachModules(HardwareManager& hw, SensorManager& sensor, RelayManager& relay, AlarmScheduler& alarm);
     void loop();
 
     // Page control
@@ -69,7 +78,13 @@ public:
     void setRotationInterval(uint16_t seconds);
     String getDisplayMode();
     void setDisplayMode(const String& mode);
+    bool setPages(const JsonArrayConst& pages);
+    bool setCustomLines(const JsonArrayConst& lines);
+    void appendConfigJson(JsonObject& lcdObj) const;
     void saveConfig();
+
+    static bool isKnownPageId(const char* id);
+    static bool isKnownWidgetId(const char* id);
 
     // Brightness and Auto-Dim Schedule
     uint8_t getBrightness() const { return _brightness; }
@@ -96,6 +111,10 @@ private:
     LiquidCrystal_I2C _lcd;
     StorageManager* _storage;
     TimeManager* _time;
+    HardwareManager* _hw;
+    SensorManager* _sensor;
+    RelayManager* _relay;
+    AlarmScheduler* _alarm;
 
     bool _enabled;
     bool _hwLcdAllowed;
@@ -121,11 +140,15 @@ private:
     char _prevBuffer[LCD_MAX_ROWS][LCD_MAX_COLS + 1];
     bool _forceRedraw;
 
-    // Page rotation
+    // Page rotation & customizable layout
     uint8_t _currentPage;
+    bool _manualPageOverride;
     unsigned long _lastPageChange;
     unsigned long _lastUpdate;
     unsigned long _lastUserInteraction;
+    char _pageOrder[LCD_MAX_CUSTOM_PAGES][LCD_PAGE_ID_LEN];
+    uint8_t _pageOrderCount;
+    char _customLines[LCD_MAX_ROWS][LCD_WIDGET_ID_LEN];
 
     // Alarm state
     uint8_t _alarmType;
@@ -149,6 +172,22 @@ private:
 
     // Custom characters
     void createCustomChars();
+
+    // Page & widget helpers
+    bool isPageHardwareAvailable(const char* pageId) const;
+    uint8_t getActivePages(const char* outPages[LCD_MAX_CUSTOM_PAGES]) const;
+    void initDefaultLayout();
+    void formatShortLabel(const char* raw, const char* fallback, char* out, size_t outSize) const;
+    void formatWidgetLine(const char* widgetKey, char* out, size_t outSize, uint8_t cols) const;
+    void formatRelaysLine(char* out, size_t outSize, uint8_t cols, bool compactIcons) const;
+    void renderPageById(const char* pageId);
+    void renderCustomLayout();
+    void renderClimateSlotPage();
+    void renderRelaysPage();
+    void renderTankPage();
+    void renderProbePage();
+    void renderLuxPage();
+    void renderMotionPage();
 
     // Page renderers
     void renderSensorPage();

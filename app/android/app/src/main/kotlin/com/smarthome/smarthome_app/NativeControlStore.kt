@@ -52,6 +52,8 @@ object NativeControlStore {
     private const val KEY_DEVICES = "devices_json"
     private const val KEY_SLOTS = "tile_slots_json"
     private const val KEY_ALLOW_LOCKSCREEN = "allow_lockscreen_controls"
+    private const val KEY_SAFETY_MONITOR = "safety_monitor_enabled"
+    private const val KEY_ALARM_SIREN = "alarm_siren_enabled"
     private const val KEY_CRED_PREFIX = "cred_"
     private const val KEYSTORE_ALIAS = "smarthome_native_cred_key"
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
@@ -69,6 +71,34 @@ object NativeControlStore {
         synchronized(lock) {
             val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
             prefs.edit().putBoolean(KEY_ALLOW_LOCKSCREEN, allow).apply()
+        }
+    }
+
+    @JvmStatic
+    fun getSafetyMonitorEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_SAFETY_MONITOR, true)
+    }
+
+    @JvmStatic
+    fun setSafetyMonitorEnabled(context: Context, enabled: Boolean) {
+        synchronized(lock) {
+            val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean(KEY_SAFETY_MONITOR, enabled).apply()
+        }
+    }
+
+    @JvmStatic
+    fun getAlarmSirenEnabled(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_ALARM_SIREN, true)
+    }
+
+    @JvmStatic
+    fun setAlarmSirenEnabled(context: Context, enabled: Boolean) {
+        synchronized(lock) {
+            val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean(KEY_ALARM_SIREN, enabled).apply()
         }
     }
 

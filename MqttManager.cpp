@@ -257,6 +257,23 @@ void MqttManager::publishDiagnostics(const String& json) {
     _client.publish(buildTopic("diagnostics").c_str(), 0, false, json.c_str());
 }
 
+void MqttManager::publishAlarmEvent(const char* alarmType, bool active, const char* summary, bool anyHazardActive) {
+    if (!_client.connected() || !alarmType) return;
+    JsonDocument doc;
+    doc["alarm"] = alarmType;
+    doc["active"] = active;
+    doc["device"] = getDeviceName();
+    doc["device_id"] = getDeviceId();
+    if (summary && summary[0]) doc["message"] = summary;
+    String json;
+    serializeJson(doc, json);
+    _client.publish(buildTopic("alarm").c_str(), 1, false, json.c_str());
+    if (strcmp(alarmType, "gas") == 0 || strcmp(alarmType, "temperature") == 0) {
+        bool stateOn = active || anyHazardActive;
+        _client.publish(buildTopic("binary_sensor/alarm/state").c_str(), 1, true, stateOn ? "ON" : "OFF");
+    }
+}
+
 void MqttManager::publishAvailability(bool online) {
     if (!_client.connected()) return;
     _client.publish(buildTopic("status").c_str(), 1, true, online ? "online" : "offline");

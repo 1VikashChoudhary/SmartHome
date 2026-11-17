@@ -52,6 +52,9 @@ class _TestDeviceManager extends DeviceManager {
   DeviceDiagnostics? diagToReturn;
   List<SystemLogEntry> logsToReturn;
   String? loggedOutDeviceId;
+  Map<String, dynamic>? lastSavedLcdPayload;
+  Map<String, dynamic>? lastSavedDeviceConfig;
+  int testRemoteAlertCalls = 0;
 
   _TestDeviceManager(
     this._initialDevices,
@@ -61,6 +64,52 @@ class _TestDeviceManager extends DeviceManager {
     this.diagToReturn,
     this.logsToReturn = const [],
   });
+
+  @override
+  Future<bool> saveDeviceConfig(
+    String deviceId,
+    Map<String, dynamic> config,
+  ) async {
+    lastSavedDeviceConfig = Map<String, dynamic>.from(config);
+    return true;
+  }
+
+  @override
+  Future<String?> testRemoteAlert(String deviceId) async {
+    testRemoteAlertCalls++;
+    return null;
+  }
+
+  @override
+  Future<bool> saveLcdSettings(
+    String deviceId, {
+    bool? enabled,
+    bool? backlight,
+    int? rotation,
+    int? brightness,
+    String? displayMode,
+    bool? autoDim,
+    String? dimStart,
+    String? dimEnd,
+    int? dimBrightness,
+    List<String>? pages,
+    List<String>? lines,
+  }) async {
+    lastSavedLcdPayload = {
+      'enabled': ?enabled,
+      'backlight': ?backlight,
+      'rotation': ?rotation,
+      'brightness': ?brightness,
+      'display_mode': ?displayMode,
+      'auto_dim': ?autoDim,
+      'dim_start': ?dimStart,
+      'dim_end': ?dimEnd,
+      'dim_brightness': ?dimBrightness,
+      'pages': ?pages,
+      'lines': ?lines,
+    };
+    return true;
+  }
 
   @override
   List<SmartDevice> build() => _initialDevices;
@@ -1135,5 +1184,266 @@ void main() {
       expect(fakeApi.lastSavedProfile!.climates.first.label, 'VeryLongClimate');
       expect(fakeApi.lastSavedProfile!.climates.first.label.length, 15);
     });
+
+    testWidgets(
+      'DeviceToolsSheet supports Auto-Rotate page toggling/reordering and Custom per-row layout',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(1280, 1000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final fakeApi = _FakeApiClient();
+        final dev = _sampleDevice(id: 'dev_lcd_custom');
+        final testMgr = _createTestManager(
+          devices: [dev],
+          apiClient: fakeApi,
+          config: {
+            'sensor': {
+              'temp_offset': 0.0,
+              'hum_offset': 0.0,
+              'mq2_threshold': 400,
+              'gas_max': 4095,
+              'temp_alarm': 40.0,
+              'mq2_enabled': true,
+              'mq2_hw_allowed': true,
+            },
+            'lcd': {
+              'enabled': true,
+              'hw_allowed': true,
+              'cols': 16,
+              'rows': 2,
+              'backlight': true,
+              'display_mode': 'rotate',
+              'rotation': 5,
+              'brightness': 100,
+              'auto_dim': false,
+              'dim_start': '22:00',
+              'dim_end': '06:00',
+              'dim_brightness': 0,
+              'pages': ['climate', 'tank'],
+              'lines': ['climate:0', 'tank:0'],
+              'catalog': {
+                'pages': [
+                  {'id': 'climate', 'label': 'Climate', 'available': true},
+                  {'id': 'tank', 'label': 'Tank Level', 'available': true},
+                  {'id': 'gas', 'label': 'Gas / VOC', 'available': false},
+                ],
+                'widgets': [
+                  {'id': 'climate:0', 'label': 'Climate #1'},
+                  {'id': 'tank:0', 'label': 'Rooftop Tank'},
+                  {'id': 'relays', 'label': 'Relay States'},
+                  {'id': 'none', 'label': '(Blank Row)'},
+                ],
+              },
+            },
+            'buzzer': {'enabled': true, 'hw_allowed': true, 'volume': 128},
+            'mqtt': {'enabled': false},
+            'device_name': 'Controller',
+            'hostname': 'smarthome-1',
+          },
+          diag: DeviceDiagnostics(
+            chipModel: 'ESP32',
+            freeHeap: 120000,
+            minHeap: 90000,
+            totalHeap: 320000,
+            heapFrag: 4,
+            uptime: '0d 01:00',
+            resetReason: 'Power on',
+            chipRev: 1,
+            cpuFreq: 240,
+            flashSize: 4194304,
+            sdkVersion: 'IDF',
+            fwVersion: '1.1.0',
+            fwBuild: 'test',
+            fsUsed: 65536,
+            fsTotal: 1048576,
+            otaStatus: 'Idle',
+          ),
+        ) as _TestDeviceManager;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(body: DeviceToolsSheet(device: dev, manager: testMgr)),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.ensureVisible(find.text('Controller Settings'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Controller Settings'));
+        await tester.pumpAndSettle();
+
+        final vertScroll = find.byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+        ).first;
+
+        // Scroll to LCD pages section and move "Tank Level" (index 1) up to first
+        await tester.scrollUntilVisible(
+          find.text('Active Pages & Display Order (Top Shows First)'),
+          200,
+          scrollable: vertScroll,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('2. Tank Level'), findsOneWidget);
+        expect(find.text('3. Gas / VOC (Off in HW)'), findsOneWidget);
+
+        // Move "Tank Level" up (second Move up icon on page list -> row 1)
+        await tester.tap(find.byTooltip('Move up').at(1));
+        await tester.pumpAndSettle();
+
+        await tester.scrollUntilVisible(
+          find.text('Save LCD Settings'),
+          150,
+          scrollable: vertScroll,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save LCD Settings'));
+        await tester.pumpAndSettle();
+
+        expect(testMgr.lastSavedLcdPayload?['display_mode'], 'rotate');
+        expect(testMgr.lastSavedLcdPayload?['pages'], ['tank', 'climate']);
+
+        // Switch Display Mode to Custom Per-Row Layout and swap Line 2 up to Line 1
+        final modeDropdown = find.byKey(const ValueKey('lcd_mode_rotate_false_true'));
+        await tester.scrollUntilVisible(modeDropdown, -200, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.tap(modeDropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Custom per-row layout').last);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Pinned Row Layout (16x2 — Line 1 Shows First)'), findsOneWidget);
+        await tester.tap(find.byTooltip('Move line up').at(1));
+        await tester.pumpAndSettle();
+
+        await tester.scrollUntilVisible(
+          find.text('Save LCD Settings'),
+          150,
+          scrollable: vertScroll,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Save LCD Settings'));
+        await tester.pumpAndSettle();
+
+        expect(testMgr.lastSavedLcdPayload?['display_mode'], 'custom');
+        expect(testMgr.lastSavedLcdPayload?['lines'], ['tank:0', 'climate:0']);
+      },
+    );
+
+    testWidgets(
+      'DeviceToolsSheet saves Optional Remote Push Alerts (4G/5G) config and dispatches test alert',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(1280, 1000);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final fakeApi = _FakeApiClient();
+        final dev = _sampleDevice(id: 'dev_remote_alert', platform: 'ESP32');
+        final testMgr = _createTestManager(
+          devices: [dev],
+          apiClient: fakeApi,
+          config: {
+            'sensor': {
+              'temp_offset': 0.0,
+              'hum_offset': 0.0,
+              'mq2_threshold': 400,
+              'gas_max': 4095,
+              'temp_alarm': 40.0,
+              'mq2_enabled': true,
+              'mq2_hw_allowed': true,
+            },
+            'lcd': {'enabled': true, 'hw_allowed': true},
+            'buzzer': {'enabled': true, 'hw_allowed': true, 'volume': 128},
+            'mqtt': {'enabled': false},
+            'device_name': 'Controller',
+            'hostname': 'smarthome-1',
+            'alert_webhook_en': false,
+            'alert_webhook_url': '',
+            'alert_webhook_token_set': false,
+            'alert_https_supported': true,
+          },
+          diag: DeviceDiagnostics(
+            chipModel: 'ESP32',
+            freeHeap: 120000,
+            minHeap: 90000,
+            totalHeap: 320000,
+            heapFrag: 4,
+            uptime: '0d 01:00',
+            resetReason: 'Power on',
+            chipRev: 1,
+            cpuFreq: 240,
+            flashSize: 4194304,
+            sdkVersion: 'IDF',
+            fwVersion: '1.1.0',
+            fwBuild: 'test',
+            fsUsed: 65536,
+            fsTotal: 1048576,
+            otaStatus: 'Idle',
+          ),
+        ) as _TestDeviceManager;
+
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: Scaffold(body: DeviceToolsSheet(device: dev, manager: testMgr)),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.ensureVisible(find.text('Controller Settings'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Controller Settings'));
+        await tester.pumpAndSettle();
+
+        final vertScroll = find.byWidgetPredicate(
+          (w) => w is Scrollable && w.axisDirection == AxisDirection.down,
+        ).first;
+
+        final remoteSwitch = find.text('Optional Remote Push Alerts (4G/5G)');
+        await tester.scrollUntilVisible(remoteSwitch, 250, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.tap(remoteSwitch);
+        await tester.pumpAndSettle();
+
+        final urlField = find.widgetWithText(TextField, 'Webhook / ntfy URL');
+        await tester.scrollUntilVisible(urlField, 150, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.enterText(urlField, 'https://ntfy.sh/test-room-alarm');
+
+        final tokenField = find.widgetWithText(TextField, 'Bearer token (optional)');
+        await tester.enterText(tokenField, 'tk_secret_123');
+        await tester.pumpAndSettle();
+
+        final saveBtn = find.text('Save Device Settings');
+        await tester.scrollUntilVisible(saveBtn, 150, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.tap(saveBtn);
+        await tester.pumpAndSettle();
+
+        expect(testMgr.lastSavedDeviceConfig?['alert_webhook_en'], isTrue);
+        expect(
+          testMgr.lastSavedDeviceConfig?['alert_webhook_url'],
+          'https://ntfy.sh/test-room-alarm',
+        );
+        expect(
+          testMgr.lastSavedDeviceConfig?['alert_webhook_token'],
+          'tk_secret_123',
+        );
+
+        final testBtn = find.text('Test Remote Alert');
+        await tester.scrollUntilVisible(testBtn, -150, scrollable: vertScroll);
+        await tester.pumpAndSettle();
+        await tester.tap(testBtn);
+        await tester.pumpAndSettle();
+        expect(testMgr.testRemoteAlertCalls, 1);
+      },
+    );
   });
 }

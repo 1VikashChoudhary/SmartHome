@@ -22,6 +22,7 @@ import 'package:smarthome_app/presentation/screens/batch_ota_screen.dart';
 import 'package:smarthome_app/presentation/screens/device_screen.dart';
 import 'package:smarthome_app/presentation/widgets/controller_login_dialog.dart';
 import 'package:smarthome_app/presentation/screens/home_screen.dart';
+import 'package:smarthome_app/presentation/widgets/app_settings_sheet.dart';
 import 'package:smarthome_app/presentation/widgets/emergency_alarm_dialog.dart';
 import 'package:smarthome_app/presentation/widgets/hardware_config_sheet.dart';
 import 'package:smarthome_app/services/device_manager.dart';
@@ -441,6 +442,59 @@ void main() {
       expect(find.textContaining('SGP40 VOC Sensor: 340 VOC'), findsOneWidget);
       expect(find.textContaining('Limit: 250 VOC'), findsOneWidget);
     });
+
+    testWidgets(
+      'EmergencyAlarmDialog exposes Silence Phone Siren button and silences cleanly',
+      (WidgetTester tester) async {
+        SharedPreferences.setMockInitialValues({'alarm_siren_enabled': true});
+        await _pumpEmergencyDialog(tester, testDevice, 'gas');
+
+        final silenceBtn = find.text('Silence Phone Siren');
+        expect(silenceBtn, findsOneWidget);
+        await tester.tap(silenceBtn);
+        await tester.pumpAndSettle();
+
+        expect(find.text('Silence Phone Siren'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'AppSettingsSheet renders Safety Alerts & Loud Alarm Siren controls cleanly',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(1000, 1400);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+        SharedPreferences.setMockInitialValues({'alarm_siren_enabled': true});
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _AlarmDialogTestDeviceManager([testDevice]),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const Scaffold(body: AppSettingsSheet()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Safety Alerts & Loud Alarm Siren'), findsOneWidget);
+        expect(find.text('Loud alarm siren sound'), findsOneWidget);
+
+        await tester.tap(find.text('Test Siren (3s)'));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Stop Test Siren'), findsOneWidget);
+        await tester.tap(find.text('Stop Test Siren'));
+        await tester.pumpAndSettle();
+        expect(find.text('Test Siren (3s)'), findsOneWidget);
+      },
+    );
   });
 
   group('DeviceScreen Dynamic Telemetry Card Tests', () {

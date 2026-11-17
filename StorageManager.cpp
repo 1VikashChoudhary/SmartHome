@@ -231,6 +231,8 @@ String StorageManager::exportAllConfig(bool redactSecrets) {
                         if (subDoc.containsKey("guest_pass_hash")) subDoc["guest_pass_hash"] = "__REDACTED__";
                         if (subDoc.containsKey("ota_pass_md5")) subDoc["ota_pass_md5"] = "__REDACTED__";
                         if (subDoc.containsKey("ap_pass")) subDoc["ap_pass"] = "__REDACTED__";
+                        if (subDoc.containsKey("alert_webhook_url")) subDoc["alert_webhook_url"] = "__REDACTED__";
+                        if (subDoc.containsKey("alert_webhook_token")) subDoc["alert_webhook_token"] = "__REDACTED__";
                     }
                 }
 
@@ -618,7 +620,8 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
             } else if (strcmp(m.path, PATH_CONFIG) == 0 && LittleFS.exists(PATH_CONFIG)) {
                 if (subDoc["web_pass"] == "__REDACTED__" || subDoc["web_pass_hash"] == "__REDACTED__" ||
                     subDoc["guest_pass"] == "__REDACTED__" || subDoc["guest_pass_hash"] == "__REDACTED__" ||
-                    subDoc["ota_pass_md5"] == "__REDACTED__" || subDoc["ap_pass"] == "__REDACTED__") {
+                    subDoc["ota_pass_md5"] == "__REDACTED__" || subDoc["ap_pass"] == "__REDACTED__" ||
+                    subDoc["alert_webhook_url"] == "__REDACTED__" || subDoc["alert_webhook_token"] == "__REDACTED__") {
                     JsonDocument existing;
                     if (loadJson(PATH_CONFIG, existing)) {
                         if (subDoc["web_pass_hash"] == "__REDACTED__") {
@@ -663,6 +666,20 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                                 subDoc.remove("ap_pass");
                             }
                         }
+                        if (subDoc["alert_webhook_url"] == "__REDACTED__") {
+                            if (existing.containsKey("alert_webhook_url") && existing["alert_webhook_url"] != "__REDACTED__") {
+                                subDoc["alert_webhook_url"] = existing["alert_webhook_url"];
+                            } else {
+                                subDoc.remove("alert_webhook_url");
+                            }
+                        }
+                        if (subDoc["alert_webhook_token"] == "__REDACTED__") {
+                            if (existing.containsKey("alert_webhook_token") && existing["alert_webhook_token"] != "__REDACTED__") {
+                                subDoc["alert_webhook_token"] = existing["alert_webhook_token"];
+                            } else {
+                                subDoc.remove("alert_webhook_token");
+                            }
+                        }
                     } else {
                         if (subDoc["web_pass_hash"] == "__REDACTED__") subDoc.remove("web_pass_hash");
                         if (subDoc["web_pass"] == "__REDACTED__") subDoc.remove("web_pass");
@@ -670,6 +687,8 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                         if (subDoc["guest_pass"] == "__REDACTED__") subDoc.remove("guest_pass");
                         if (subDoc["ota_pass_md5"] == "__REDACTED__") subDoc.remove("ota_pass_md5");
                         if (subDoc["ap_pass"] == "__REDACTED__") subDoc.remove("ap_pass");
+                        if (subDoc["alert_webhook_url"] == "__REDACTED__") subDoc.remove("alert_webhook_url");
+                        if (subDoc["alert_webhook_token"] == "__REDACTED__") subDoc.remove("alert_webhook_token");
                     }
                 }
             } else if (strcmp(m.path, PATH_RELAY_STATES) == 0 && subDoc.containsKey("states")) {
