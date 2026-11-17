@@ -465,7 +465,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
         _mqttEnabled = m['enabled'] as bool? ?? _mqttEnabled;
         _mqttBroker.text = m['broker']?.toString() ?? '';
         _mqttPort.text = m['port']?.toString() ?? '1883';
-        _mqttPrefix.text = m['prefix']?.toString() ?? 'smarthome';
+        _mqttPrefix.text = m['prefix']?.toString() ?? '';
         _mqttClientId.text = m['client_id']?.toString() ?? '';
         _mqttUser.text = m['user']?.toString() ?? '';
       }
@@ -1639,9 +1639,10 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     );
   }
 
-  InputDecoration _field(String label, {String? helper}) => InputDecoration(
+  InputDecoration _field(String label, {String? helper, String? hint}) => InputDecoration(
     labelText: label,
     helperText: helper,
+    hintText: hint,
     border: const OutlineInputBorder(),
   );
 
@@ -1737,7 +1738,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 child: TextField(
                   controller: _mqttPrefix,
                   enabled: !isGuest,
-                  decoration: _field('Topic prefix'),
+                  decoration: _field('Topic prefix', hint: 'Auto: smarthome-XXXX'),
                 ),
               ),
             ],

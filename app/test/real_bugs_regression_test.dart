@@ -21,6 +21,7 @@ import 'package:smarthome_app/core/theme/app_theme.dart';
 import 'package:smarthome_app/presentation/screens/analytics_screen.dart';
 import 'package:smarthome_app/presentation/screens/batch_ota_screen.dart';
 import 'package:smarthome_app/presentation/screens/device_screen.dart';
+import 'package:smarthome_app/presentation/screens/discovery_screen.dart';
 import 'package:smarthome_app/presentation/widgets/controller_login_dialog.dart';
 import 'package:smarthome_app/presentation/screens/home_screen.dart';
 import 'package:smarthome_app/presentation/widgets/app_settings_sheet.dart';
@@ -2496,6 +2497,95 @@ void main() {
         expect(dev.fwVersion, '1.1.0');
         expect(disc.fwVersion, '1.1.0');
         expect(diag.fwVersion, '1.1.0');
+      },
+    );
+
+    testWidgets(
+      'Discovery does not auto-add scanned ESPs and DiscoveryScreen lets user choose which to add',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+
+        final bedroom = SmartDevice(
+          id: 'smarthome_2160',
+          mac: '3C:8A:1F:81:21:60',
+          ip: '192.168.29.103',
+          hostname: 'smarthome-2160',
+          name: 'Bedroom',
+          platform: 'ESP32',
+          numRelays: 2,
+          isOnline: true,
+        );
+        final office = SmartDevice(
+          id: 'smarthome_184b',
+          mac: 'C4:D8:D5:03:18:4B',
+          ip: '192.168.29.143',
+          hostname: 'smarthome-184B',
+          name: 'Office',
+          platform: 'ESP8266',
+          numRelays: 2,
+          isOnline: true,
+        );
+
+        final container = ProviderContainer(
+          overrides: [
+            deviceManagerProvider.overrideWith(
+              () => _RoamingTestDeviceManager([]),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+
+        final manager = container.read(deviceManagerProvider.notifier);
+        manager.stopForegroundSync();
+        manager.handleScannedDeviceForTest(bedroom);
+        manager.handleScannedDeviceForTest(office);
+
+        // Scanned controllers must NOT be auto-added to saved dashboard state
+        expect(container.read(deviceManagerProvider), isEmpty);
+        expect(
+          container.read(discoveredDevicesProvider).map((d) => d.id),
+          ['smarthome_2160', 'smarthome_184b'],
+        );
+
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const DiscoveryScreen(),
+            ),
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(find.text('Discovered Devices (2)'), findsOneWidget);
+        expect(find.text('Bedroom'), findsOneWidget);
+        expect(find.text('Office'), findsOneWidget);
+        expect(find.text('Add'), findsNWidgets(2));
+
+        // User chooses to add only Bedroom
+        await tester.tap(find.text('Add').first);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(container.read(deviceManagerProvider).map((d) => d.id), ['smarthome_2160']);
+        expect(container.read(discoveredDevicesProvider).map((d) => d.id), ['smarthome_184b']);
+        expect(find.text('Discovered Devices (1)'), findsOneWidget);
+        await tester.scrollUntilVisible(find.text('Open'), 200);
+        expect(find.text('Open'), findsOneWidget);
+
+        // Re-scanning an already-added device updates its IP without duplicating it in Discovered
+        manager.handleScannedDeviceForTest(
+          bedroom.copyWith(ip: '192.168.29.150'),
+        );
+        expect(container.read(deviceManagerProvider).single.ip, '192.168.29.150');
+        expect(container.read(discoveredDevicesProvider).map((d) => d.id), ['smarthome_184b']);
+
+        manager.stopForegroundSync();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 6));
       },
     );
   });

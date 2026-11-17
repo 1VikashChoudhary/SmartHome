@@ -1073,7 +1073,7 @@ void WebServerManager::setupAPIRoutes() {
                 doc["user"] | "",
                 password,
                 doc["client_id"] | "",
-                doc["prefix"] | MQTT_DEFAULT_PREFIX
+                doc["prefix"] | ""
             );
         }
 

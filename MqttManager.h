@@ -104,6 +104,7 @@ private:
 
     void loadConfig();
     void applyClientConfig();
+    static String defaultDeviceSlug();
     String getDeviceId();
     String getDeviceName();
     void addDeviceInfo(JsonObject& device, const String& deviceId, const String& deviceName);

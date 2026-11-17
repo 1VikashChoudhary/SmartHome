@@ -9,6 +9,7 @@
 #include <ESP8266WiFi.h>
 #else
 #include <WiFi.h>
+#include <esp_mac.h>
 #endif
 #include "EventLogger.h"
 #include "SensorManager.h"
@@ -570,23 +571,17 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
         _pass.trim();
     }
 
+    const String defaultSlug = defaultDeviceSlug();
+
     _clientId = clientId;
     _clientId.trim();
     if (_clientId.length() == 0) {
-        // Generate default client ID from chip ID if none is set
-#if defined(ESP8266)
-        uint32_t chipId = (uint32_t)(ESP.getChipId() & 0xFFFF);
-#else
-        uint32_t chipId = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
-#endif
-        char defaultId[20];
-        snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", (unsigned int)chipId);
-        _clientId = String(defaultId);
+        _clientId = defaultSlug;
     }
     _prefix = prefix;
     _prefix.trim();
     if (_prefix.length() == 0) {
-        _prefix = MQTT_DEFAULT_PREFIX;
+        _prefix = defaultSlug;
     }
 
     if (_storage) {
@@ -750,24 +745,30 @@ void MqttManager::_onMessage(char* t, char* p, AsyncMqttClientMessageProperties 
 // ============================================================================
 // Private
 // ============================================================================
+String MqttManager::defaultDeviceSlug() {
+    uint8_t mac[6] = {0};
+#if defined(ESP32)
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+        WiFi.macAddress(mac);
+    }
+#else
+    WiFi.macAddress(mac);
+#endif
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%s-%02X%02X", MQTT_DEFAULT_PREFIX, mac[4], mac[5]);
+    return String(buf);
+}
+
 void MqttManager::loadConfig() {
+    const String defaultSlug = defaultDeviceSlug();
     _enabled = false;
     _broker = "";
     _port = MQTT_DEFAULT_PORT;
     _user = "";
     _pass = "";
-    _prefix = MQTT_DEFAULT_PREFIX;
+    _clientId = defaultSlug;
+    _prefix = defaultSlug;
     _lastError = "";
-
-    // Generate default client ID from chip ID
-#if defined(ESP8266)
-    uint32_t chipId = (uint32_t)(ESP.getChipId() & 0xFFFF);
-#else
-    uint32_t chipId = (uint32_t)(ESP.getEfuseMac() & 0xFFFF);
-#endif
-    char defaultId[20];
-    snprintf(defaultId, sizeof(defaultId), "smarthome-%04X", (unsigned int)chipId);
-    _clientId = String(defaultId);
 
     if (!_storage) return;
     JsonDocument doc;
@@ -781,11 +782,12 @@ void MqttManager::loadConfig() {
     _user.trim();
     _pass      = doc["pass"] | "";
     _pass.trim();
-    _clientId  = doc["client_id"] | _clientId;
+    _clientId  = doc["client_id"] | defaultSlug;
     _clientId.trim();
-    _prefix    = doc["prefix"] | MQTT_DEFAULT_PREFIX;
+    if (_clientId.length() == 0) _clientId = defaultSlug;
+    _prefix    = doc["prefix"] | defaultSlug;
     _prefix.trim();
-    if (_prefix.length() == 0) _prefix = MQTT_DEFAULT_PREFIX;
+    if (_prefix.length() == 0) _prefix = defaultSlug;
 }
 
 void MqttManager::applyClientConfig() {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/models/smart_device.dart';
 import '../core/models/relay_channel.dart';
@@ -23,6 +24,43 @@ class IsScanningNotifier extends Notifier<bool> {
 final isScanningProvider = NotifierProvider<IsScanningNotifier, bool>(
   IsScanningNotifier.new,
 );
+
+/// Holds LAN-discovered ESP controllers that have not yet been added by the user.
+class DiscoveredDevicesNotifier extends Notifier<List<SmartDevice>> {
+  @override
+  List<SmartDevice> build() => [];
+
+  void upsert(SmartDevice device) {
+    final idx = state.indexWhere(
+      (d) => (d.mac.isNotEmpty && d.mac == device.mac) || d.id == device.id,
+    );
+    if (idx >= 0) {
+      final next = List<SmartDevice>.from(state);
+      next[idx] = device;
+      state = next;
+    } else {
+      state = [...state, device];
+    }
+  }
+
+  void removeByMatch(SmartDevice device) {
+    state = state
+        .where(
+          (d) =>
+              !(d.mac.isNotEmpty && d.mac == device.mac) && d.id != device.id,
+        )
+        .toList();
+  }
+
+  void clear() {
+    state = [];
+  }
+}
+
+final discoveredDevicesProvider =
+    NotifierProvider<DiscoveredDevicesNotifier, List<SmartDevice>>(
+      DiscoveredDevicesNotifier.new,
+    );
 
 class AuthPromptRequest {
   final String deviceId;
@@ -203,11 +241,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     }
   }
 
-  /// Run network scan on demand to discover new ESPs or update IPs
+  /// Run network scan on demand to discover nearby ESPs (without auto-adding new ones)
   Future<int> scanForDevices() async {
     if (!_isAlive) return 0;
     if (ref.read(isScanningProvider)) return 0;
     ref.read(isScanningProvider.notifier).setScanning(true);
+    ref.read(discoveredDevicesProvider.notifier).clear();
 
     try {
       final discoveredList = await _discovery.discoverAll(
@@ -221,6 +260,30 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         ref.read(isScanningProvider.notifier).setScanning(false);
       }
     }
+  }
+
+  /// Explicitly add a controller selected by the user from radar discovery.
+  Future<SmartDevice?> addDiscoveredDevice(
+    SmartDevice device, {
+    String? username,
+    String? password,
+  }) async {
+    if (!_isAlive) return null;
+    _handleDiscoveredDevice(
+      device,
+      username: username,
+      password: password,
+      addIfNew: true,
+    );
+    final idx = state.indexWhere(
+      (d) => (d.mac.isNotEmpty && d.mac == device.mac) || d.id == device.id,
+    );
+    return idx >= 0 ? state[idx] : null;
+  }
+
+  @visibleForTesting
+  void handleScannedDeviceForTest(SmartDevice discovered) {
+    _handleDiscoveredDevice(discovered);
   }
 
   /// Refresh all devices once. `/api/status` is authoritative and already
@@ -280,6 +343,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           username: username,
           password: password,
           roleAuthoritative: true,
+          addIfNew: true,
         );
         return true;
       }
@@ -294,6 +358,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           discoveryDev,
           username: username,
           password: password,
+          addIfNew: true,
         );
         return true;
       }
@@ -308,6 +373,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     String? username,
     String? password,
     bool roleAuthoritative = false,
+    bool addIfNew = false,
   }) {
     if (!_isAlive) return;
     final existingIdx = state.indexWhere(
@@ -317,6 +383,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     );
 
     if (existingIdx >= 0) {
+      ref.read(discoveredDevicesProvider.notifier).removeByMatch(discovered);
       // Existing device: update IP (self-healing migration) and online status
       final old = state[existingIdx];
       if (old.ip.isNotEmpty && old.ip != discovered.ip) {
@@ -382,8 +449,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         _replaceForegroundStream(updated);
         _refreshDeviceStatus(updated);
       }
+    } else if (!addIfNew) {
+      // Radar scan candidate: surface to user instead of auto-adding to dashboard.
+      ref.read(discoveredDevicesProvider.notifier).upsert(discovered);
     } else {
-      // New device: add to list
+      // New device explicitly added by user: save and start live sync.
+      ref.read(discoveredDevicesProvider.notifier).removeByMatch(discovered);
       final cleanPass =
           (password != null && password.isNotEmpty) ? password : null;
       final effectiveUser =
@@ -1766,6 +1837,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     );
     final newList = List<SmartDevice>.from(state);
     if (existingIdx >= 0) {
+      ref.read(discoveredDevicesProvider.notifier).removeByMatch(provisioned);
       newList[existingIdx] = newList[existingIdx].copyWith(
         name: provisioned.name,
         room: provisioned.room,
@@ -1775,6 +1847,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         authPassword: provisioned.authPassword,
       );
     } else {
+      ref.read(discoveredDevicesProvider.notifier).removeByMatch(provisioned);
       newList.add(provisioned.copyWith(isOnline: false));
     }
     state = newList;

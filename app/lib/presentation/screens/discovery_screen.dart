@@ -128,23 +128,47 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     }
   }
 
+  Future<void> _addDiscoveredDevice(SmartDevice dev) async {
+    final added = await ref
+        .read(deviceManagerProvider.notifier)
+        .addDiscoveredDevice(dev);
+    if (!mounted || added == null) return;
+
+    final promptReq = ref.read(authPromptProvider);
+    if (promptReq != null && promptReq.deviceId == added.id) {
+      ref.read(authPromptProvider.notifier).clear();
+    }
+
+    if (added.needsAuth) {
+      final unlocked = await ControllerLoginDialog.show(context, ref, added);
+      if (!mounted || !unlocked) return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('"${added.name}" added to your controllers.'),
+        backgroundColor: AppColors.success,
+      ),
+    );
+  }
+
   Future<void> _triggerRadarScan(DeviceManager manager) async {
-    final beforeIds = ref.read(deviceManagerProvider).map((d) => d.id).toSet();
     final foundCount = await manager.scanForDevices();
     if (!mounted) return;
-    final afterIds = ref.read(deviceManagerProvider).map((d) => d.id).toSet();
-    final newlyAdded = afterIds.difference(beforeIds).length;
+    final unaddedCount = ref.read(discoveredDevicesProvider).length;
 
     final String message;
     final Color bgColor;
     if (foundCount == 0) {
       message = 'Scan complete: no SmartHome controllers found on local network.';
       bgColor = AppColors.warning;
-    } else if (newlyAdded > 0) {
-      message = 'Found $newlyAdded new device${newlyAdded == 1 ? '' : 's'} ($foundCount total online).';
+    } else if (unaddedCount > 0) {
+      message =
+          'Found $unaddedCount new controller${unaddedCount == 1 ? '' : 's'} — tap + Add below to include.';
       bgColor = AppColors.success;
     } else {
-      message = 'Scan complete: $foundCount device${foundCount == 1 ? '' : 's'} responded (no new devices).';
+      message =
+          'Scan complete: $foundCount added controller${foundCount == 1 ? '' : 's'} responded (no new unadded devices).';
       bgColor = AppColors.accent;
     }
     ScaffoldMessenger.of(context).showSnackBar(
@@ -158,6 +182,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceManagerProvider);
+    final discoveredDevices = ref.watch(discoveredDevicesProvider);
     final manager = ref.read(deviceManagerProvider.notifier);
     final isScanning = ref.watch(isScanningProvider);
 
@@ -446,12 +471,39 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
               ],
             ),
           ),
+          if (discoveredDevices.isNotEmpty) ...[
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Discovered Devices (${discoveredDevices.length})',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                Text(
+                  'Tap + Add to include',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            ...discoveredDevices.map(
+              (dev) => _buildDeviceTile(dev, isDiscoveredCandidate: true),
+            ),
+          ],
           const SizedBox(height: 24),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Online Devices',
+                'Added Devices',
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
@@ -487,9 +539,12 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           if (devices.isEmpty)
             Center(
               child: Padding(
-                padding: const EdgeInsets.all(32.0),
+                padding: const EdgeInsets.all(24.0),
                 child: Text(
-                  'No devices found yet. Tap refresh or add manually.',
+                  discoveredDevices.isNotEmpty
+                      ? 'No devices added yet. Tap + Add on a discovered device above or add manually.'
+                      : 'No devices added yet. Scan above to discover ESP devices or add manually.',
+                  textAlign: TextAlign.center,
                   style: TextStyle(color: AppColors.textMuted),
                 ),
               ),
@@ -573,7 +628,26 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     );
   }
 
-  Widget _buildDeviceTile(SmartDevice dev) {
+  Widget _buildDeviceTile(
+    SmartDevice dev, {
+    bool isDiscoveredCandidate = false,
+  }) {
+    final bool isAuthWarn =
+        isDiscoveredCandidate ? dev.authRequired : dev.needsAuth;
+    final Color statusColor = isAuthWarn
+        ? AppColors.warning
+        : (isDiscoveredCandidate
+              ? AppColors.accent
+              : (dev.isOnline ? AppColors.success : AppColors.danger));
+    final String statusLabel = isDiscoveredCandidate
+        ? (dev.authRequired ? 'AUTH REQ' : 'FOUND')
+        : (dev.needsAuth
+              ? 'LOCKED'
+              : (dev.isOnline ? 'ONLINE' : 'OFFLINE'));
+    final VoidCallback onAction = isDiscoveredCandidate
+        ? () => _addDiscoveredDevice(dev)
+        : () => _openDevice(dev);
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
@@ -581,42 +655,40 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
         borderRadius: BorderRadius.circular(16),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => _openDevice(dev),
+          onTap: onAction,
           borderRadius: BorderRadius.circular(16),
           splashColor: AppColors.primary.withValues(alpha: 0.2),
           highlightColor: AppColors.primary.withValues(alpha: 0.1),
           child: GlassCard(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-            borderColor: dev.needsAuth
+            borderColor: isAuthWarn
                 ? AppColors.warning.withValues(alpha: 0.45)
-                : (dev.isOnline
-                    ? AppColors.success.withValues(alpha: 0.3)
-                    : AppColors.cardBorder),
+                : (isDiscoveredCandidate
+                      ? AppColors.accent.withValues(alpha: 0.35)
+                      : (dev.isOnline
+                            ? AppColors.success.withValues(alpha: 0.3)
+                            : AppColors.cardBorder)),
             child: Row(
               children: [
                 Container(
                   width: 44,
                   height: 44,
                   decoration: BoxDecoration(
-                    color: dev.needsAuth
-                        ? AppColors.warning.withValues(alpha: 0.15)
-                        : (dev.isOnline
-                            ? AppColors.success.withValues(alpha: 0.15)
-                            : AppColors.surfaceElevated),
+                    color: statusColor.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: dev.needsAuth
-                          ? AppColors.warning.withValues(alpha: 0.4)
-                          : (dev.isOnline
-                              ? AppColors.success.withValues(alpha: 0.3)
-                              : AppColors.cardBorder),
+                      color: statusColor.withValues(alpha: 0.35),
                     ),
                   ),
                   child: Icon(
-                    dev.needsAuth ? Icons.lock_person_rounded : Icons.memory,
-                    color: dev.needsAuth
+                    isAuthWarn ? Icons.lock_person_rounded : Icons.memory,
+                    color: isAuthWarn
                         ? AppColors.warning
-                        : (dev.isOnline ? AppColors.success : AppColors.textMuted),
+                        : (isDiscoveredCandidate
+                              ? AppColors.accent
+                              : (dev.isOnline
+                                    ? AppColors.success
+                                    : AppColors.textMuted)),
                     size: 24,
                   ),
                 ),
@@ -667,25 +739,15 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: dev.needsAuth
-                                  ? AppColors.warning.withValues(alpha: 0.15)
-                                  : (dev.isOnline
-                                      ? AppColors.success.withValues(alpha: 0.15)
-                                      : AppColors.danger.withValues(alpha: 0.15)),
+                              color: statusColor.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              dev.needsAuth
-                                  ? 'LOCKED'
-                                  : (dev.isOnline ? 'ONLINE' : 'OFFLINE'),
+                              statusLabel,
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w700,
-                                color: dev.needsAuth
-                                    ? AppColors.warning
-                                    : (dev.isOnline
-                                        ? AppColors.success
-                                        : AppColors.danger),
+                                color: statusColor,
                               ),
                             ),
                           ),
@@ -713,9 +775,15 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 const SizedBox(width: 10),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        dev.needsAuth ? AppColors.warning : AppColors.primary,
-                    foregroundColor: dev.needsAuth ? Colors.black : Colors.white,
+                    backgroundColor: isDiscoveredCandidate
+                        ? AppColors.success
+                        : (dev.needsAuth
+                              ? AppColors.warning
+                              : AppColors.primary),
+                    foregroundColor:
+                        (!isDiscoveredCandidate && dev.needsAuth)
+                        ? Colors.black
+                        : Colors.white,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 14,
                       vertical: 8,
@@ -726,27 +794,42 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  onPressed: () => _openDevice(dev),
+                  onPressed: onAction,
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        dev.needsAuth ? 'Unlock' : 'Open',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: dev.needsAuth ? Colors.black : Colors.white,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        dev.needsAuth
-                            ? Icons.lock_open_rounded
-                            : Icons.arrow_forward_ios_rounded,
-                        size: 11,
-                        color: dev.needsAuth ? Colors.black : Colors.white,
-                      ),
-                    ],
+                    children: isDiscoveredCandidate
+                        ? const [
+                            Icon(Icons.add_rounded, size: 15, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text(
+                              'Add',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ]
+                        : [
+                            Text(
+                              dev.needsAuth ? 'Unlock' : 'Open',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: dev.needsAuth
+                                    ? Colors.black
+                                    : Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              dev.needsAuth
+                                  ? Icons.lock_open_rounded
+                                  : Icons.arrow_forward_ios_rounded,
+                              size: 11,
+                              color: dev.needsAuth ? Colors.black : Colors.white,
+                            ),
+                          ],
                   ),
                 ),
               ],

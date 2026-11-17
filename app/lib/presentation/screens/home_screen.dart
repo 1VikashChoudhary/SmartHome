@@ -1227,6 +1227,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   Widget _buildEmptyState(BuildContext context, DeviceManager manager) {
+    final discoveredCount = ref.watch(discoveredDevicesProvider).length;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -1244,12 +1245,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
             const SizedBox(height: 24),
             Text(
-              'No SmartHome Controllers Found',
+              discoveredCount > 0
+                  ? '$discoveredCount Controller${discoveredCount == 1 ? '' : 's'} Found Nearby'
+                  : 'No SmartHome Controllers Added',
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.textPrimary),
             ),
             const SizedBox(height: 10),
             Text(
-              'Make sure your controller is powered and connected to the same Wi-Fi network. Tap below to run our dual-engine mDNS & subnet probe radar.',
+              discoveredCount > 0
+                  ? 'Tap below to choose which detected controller${discoveredCount == 1 ? '' : 's'} you want to add to your dashboard.'
+                  : 'Make sure your controller is powered and connected to the same Wi-Fi network. Tap below to scan and choose which controllers to add.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.4),
             ),
@@ -1262,7 +1267,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               icon: const Icon(Icons.radar, color: Colors.white),
-              label: const Text('Open Radar Scanner', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+              label: Text(
+                discoveredCount > 0
+                    ? 'Choose Devices to Add ($discoveredCount)'
+                    : 'Open Radar Scanner',
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
               onPressed: () {
                 Navigator.push(
                   context,

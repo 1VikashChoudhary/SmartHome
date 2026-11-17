@@ -441,7 +441,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2);}
 <div class="form-group"><label>Broker Host / IP</label><input type="text" id="mqttBroker" placeholder="192.168.1.50"></div>
 <div class="form-row">
 <div class="form-group"><label>Port</label><input type="number" id="mqttPort" value="1883"></div>
-<div class="form-group"><label>Topic Prefix</label><input type="text" id="mqttPrefix" value="smarthome"></div>
+<div class="form-group"><label>Topic Prefix</label><input type="text" id="mqttPrefix" placeholder="Auto: smarthome-XXXX"></div>
 </div>
 <div class="form-group"><label>Client ID</label><input type="text" id="mqttClientId" placeholder="smarthome-XXXX"></div>
 <div class="form-row">
@@ -1889,7 +1889,7 @@ prefix:document.getElementById('mqttPrefix').value,
 client_id:document.getElementById('mqttClientId').value,
 user:document.getElementById('mqttUser').value,
 pass:document.getElementById('mqttPass').value
-}).then(()=>toast('MQTT saved','ok'));
+}).then(()=>{toast('MQTT saved','ok');loadSettings();});
 }
 function toggleWebAuthFields(){
 const authEn = document.getElementById('cfgWebAuth').value === '1';
@@ -2255,7 +2255,7 @@ if(d.mqtt){
 document.getElementById('mqttEn').value=d.mqtt.enabled?'1':'0';
 document.getElementById('mqttBroker').value=d.mqtt.broker||'';
 document.getElementById('mqttPort').value=d.mqtt.port||1883;
-document.getElementById('mqttPrefix').value=d.mqtt.prefix||'smarthome';
+document.getElementById('mqttPrefix').value=d.mqtt.prefix||'';
 document.getElementById('mqttClientId').value=d.mqtt.client_id||'';
 document.getElementById('mqttUser').value=d.mqtt.user||'';
 }
