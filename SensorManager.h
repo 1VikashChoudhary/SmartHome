@@ -115,6 +115,8 @@ struct UltrasonicSlotState {
     char     label[16];
     float    distanceCm;
     int      tankLevelPct;
+    bool     fault;
+    uint8_t  failCount;
 };
 
 struct Mq2SlotState {
@@ -279,6 +281,7 @@ private:
     unsigned long _lastEnvRead;
     uint8_t       _envPollCursor;
     unsigned long _lastLuxRead;
+    unsigned long _lastLightRetry[MAX_LIGHT_SENSORS];
     unsigned long _lastMQ2Read;
     unsigned long _lastUltrasonicRead;
     uint8_t       _ultrasonicCursor;
@@ -296,6 +299,15 @@ private:
     uint8_t primaryProbeIdx() const;
     uint8_t primaryUltrasonicIdx() const;
     uint8_t primaryMq2Idx() const;
+
+    // Native I2C Bus & Self-Healing Recovery
+    uint8_t       _i2cSdaPin;
+    uint8_t       _i2cSclPin;
+    unsigned long _lastI2cRecoveryMs;
+    void recoverI2cBus();
+    void recoverDhtSlot(ClimateSlotState& slot);
+    void markClimateFailure(ClimateSlotState& slot, const char* tag);
+    void markClimateSuccess(ClimateSlotState& slot, const char* tag);
 
     // Native I2C Drivers
     bool initBME280(ClimateSlotState& slot, uint8_t addr);

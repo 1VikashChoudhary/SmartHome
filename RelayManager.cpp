@@ -14,8 +14,11 @@
 
 RelayManager::RelayManager()
     : _storage(nullptr), _hw(nullptr), _numRelays(NUM_RELAYS),
-      _lastRelaySwitchTime(0), _lastStaggerStep(0),
+      _hasSwitched(false), _lastRelaySwitchTime(0), _lastStaggerStep(0),
       _statesDirty(false), _lastStateSave(0), _changeCallback(nullptr) {
+#if defined(ESP32)
+    _mux = portMUX_INITIALIZER_UNLOCKED;
+#endif
     memset(_timers, 0, sizeof(_timers));
     memset(_pendingStaggerOn, 0, sizeof(_pendingStaggerOn));
     memset(_pendingNotifyOff, 0, sizeof(_pendingNotifyOff));
@@ -63,6 +66,7 @@ void RelayManager::begin(StorageManager& storage) {
                 firstOnEnergized = true;
                 applyState(i);
                 _lastRelaySwitchTime = millis();
+                _hasSwitched = true;
                 _lastStaggerStep = millis();
             } else {
                 _pendingStaggerOn[i] = true;
@@ -137,6 +141,7 @@ void RelayManager::begin(StorageManager& storage, HardwareManager& hw) {
                 firstOnEnergized = true;
                 applyState(i);
                 _lastRelaySwitchTime = millis();
+                _hasSwitched = true;
                 _lastStaggerStep = millis();
             } else {
                 _pendingStaggerOn[i] = true;
@@ -203,6 +208,7 @@ void RelayManager::loop() {
                 if (_state[i].logicalState) {
                     applyState(i);
                     _lastRelaySwitchTime = now;
+                    _hasSwitched = true;
                     SERIAL_PRINTF("[Relay] %d staggered ON coil energized\n", i + 1);
                     if (_changeCallback) {
                         _changeCallback(i, true);
@@ -237,15 +243,26 @@ void RelayManager::loop() {
 
     // --- One-Shot Quick Timers ---
     for (uint8_t i = 0; i < _numRelays; i++) {
+        bool timerFired = false;
+        bool target = false;
+#if defined(ESP32)
+        portENTER_CRITICAL(&_mux);
+#endif
         if (_timers[i].active && _timers[i].durationMillis > 0) {
             if (now - _timers[i].startMillis >= _timers[i].durationMillis) {
-                bool target = _timers[i].targetState;
+                target = _timers[i].targetState;
                 _timers[i].active = false;
                 _timers[i].durationMillis = 0;
                 _timers[i].startMillis = 0;
-                setState(i, target);
-                SERIAL_PRINTF("[Relay] %d quick timer finished -> state %s\n", i + 1, target ? "ON" : "OFF");
+                timerFired = true;
             }
+        }
+#if defined(ESP32)
+        portEXIT_CRITICAL(&_mux);
+#endif
+        if (timerFired) {
+            setState(i, target);
+            SERIAL_PRINTF("[Relay] %d quick timer finished -> state %s\n", i + 1, target ? "ON" : "OFF");
         }
     }
 
@@ -278,14 +295,21 @@ void RelayManager::setState(uint8_t index, bool state) {
     applyState(index);
 
     // Cancel quick timer if relay has reached the target state or was switched off manually
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
     if (_timers[index].active && (state == _timers[index].targetState || !state)) {
         _timers[index].active = false;
         _timers[index].durationMillis = 0;
         _timers[index].startMillis = 0;
     }
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
 
     // Record relay switch time for EMI lockout
     _lastRelaySwitchTime = millis();
+    _hasSwitched = true;
 
     // Handle auto timers
     if (state) {
@@ -321,11 +345,22 @@ void RelayManager::allOn() {
         _pendingNotifyOff[i] = false;
         if (_state[i].logicalState && !_pendingStaggerOn[i]) continue;
 
+        if (_storage && !_state[i].logicalState) {
+            _storage->incrementRelayCycleNVS(i);
+        }
         _state[i].logicalState = true;
 
+#if defined(ESP32)
+        portENTER_CRITICAL(&_mux);
+#endif
         if (_timers[i].active && _timers[i].targetState) {
             _timers[i].active = false;
+            _timers[i].durationMillis = 0;
+            _timers[i].startMillis = 0;
         }
+#if defined(ESP32)
+        portEXIT_CRITICAL(&_mux);
+#endif
         _state[i].autoOnStart = 0;
         if (_config[i].autoOffMinutes > 0) {
             _state[i].autoOffStart = now;
@@ -348,13 +383,25 @@ void RelayManager::allOff() {
         _pendingStaggerOn[i] = false;
         if (!wasOn) continue;
 
+        if (_storage && _state[i].logicalState) {
+            _storage->incrementRelayCycleNVS(i);
+        }
         _state[i].logicalState = false;
         applyState(i);
         _lastRelaySwitchTime = now;
+        _hasSwitched = true;
 
+#if defined(ESP32)
+        portENTER_CRITICAL(&_mux);
+#endif
         if (_timers[i].active && !_timers[i].targetState) {
             _timers[i].active = false;
+            _timers[i].durationMillis = 0;
+            _timers[i].startMillis = 0;
         }
+#if defined(ESP32)
+        portEXIT_CRITICAL(&_mux);
+#endif
         _state[i].autoOffStart = 0;
         if (_config[i].autoOnMinutes > 0) {
             _state[i].autoOnStart = now;
@@ -406,6 +453,9 @@ void RelayManager::setTriggerMode(uint8_t index, TriggerMode mode) {
     _config[index].triggerMode = mode;
     applyState(index);
     saveConfig();
+    if (_hw && _hw->getTriggerMode(index) != mode) {
+        _hw->setTriggerMode(index, mode);
+    }
     SERIAL_PRINTF("[Relay] %d trigger mode → %s\n", index + 1,
                   mode == TRIGGER_ACTIVE_LOW ? "ActiveLOW" : "ActiveHIGH");
 }
@@ -467,12 +517,14 @@ void RelayManager::setManualOverride(uint8_t index, bool enabled) {
 // Wall Switch Integration & EMI Lockout
 // ============================================================================
 bool RelayManager::isInLockout() {
-    if (_lastRelaySwitchTime == 0) return false;
+    if (!_hasSwitched) return false;
     return (millis() - _lastRelaySwitchTime) < RELAY_SWITCH_LOCKOUT_MS;
 }
 
 void RelayManager::initWallSwitchStates() {
+    bool changedAny = false;
     for (uint8_t i = 0; i < _numRelays; i++) {
+        if (!isChannelEnabled(i) || !isSwitchEnabled(i)) continue;
         uint8_t pin = _hw ? _hw->getSwitchPin(i) : (i < NUM_RELAYS ? SWITCH_PINS[i] : PIN_UNUSED);
         if (pin == PIN_UNUSED) continue;
 
@@ -493,16 +545,36 @@ void RelayManager::initWallSwitchStates() {
 #endif
         bool currentSwitch = !digitalRead(pin);
         bool savedSwitch = _state[i].lastSwitchState;
+        SwitchMode swMode = _hw ? _hw->getSwitchMode(i) : SWITCH_MODE_TOGGLE;
 
-        if (currentSwitch != savedSwitch) {
-            SERIAL_PRINTF("[Relay] Switch %d changed during power off (%s→%s), toggling\n",
-                          i + 1, savedSwitch ? "ON" : "OFF", currentSwitch ? "ON" : "OFF");
-            _state[i].logicalState = !_state[i].logicalState;
+        if (_config[i].bootState == BOOT_RESTORE_LAST) {
+            if (swMode == SWITCH_MODE_FOLLOW) {
+                if (_state[i].logicalState != currentSwitch) {
+                    _state[i].logicalState = currentSwitch;
+                    changedAny = true;
+                }
+            } else if (swMode == SWITCH_MODE_FOLLOW_INV) {
+                bool desired = !currentSwitch;
+                if (_state[i].logicalState != desired) {
+                    _state[i].logicalState = desired;
+                    changedAny = true;
+                }
+            } else if (swMode == SWITCH_MODE_TOGGLE && currentSwitch != savedSwitch) {
+                SERIAL_PRINTF("[Relay] Switch %d changed during power off (%s→%s), toggling\n",
+                              i + 1, savedSwitch ? "ON" : "OFF", currentSwitch ? "ON" : "OFF");
+                _state[i].logicalState = !_state[i].logicalState;
+                changedAny = true;
+            }
         }
 
-        _state[i].lastSwitchState = currentSwitch;
+        if (_state[i].lastSwitchState != currentSwitch) {
+            _state[i].lastSwitchState = currentSwitch;
+            changedAny = true;
+        }
     }
-    _statesDirty = true;
+    if (changedAny) {
+        _statesDirty = true;
+    }
 }
 
 void RelayManager::updateSwitchState(uint8_t index) {
@@ -591,8 +663,8 @@ void RelayManager::toJson(JsonArray& arr) {
         r["switch"]   = _state[i].lastSwitchState;
 
         // Quick timer info
-        r["timer_active"]    = _timers[i].active;
-        r["timer_target"]    = _timers[i].targetState;
+        r["timer_active"]    = hasActiveTimer(i);
+        r["timer_target"]    = getTimerTargetState(i);
         r["timer_remaining"] = getTimerRemaining(i);
     }
 }
@@ -603,8 +675,8 @@ void RelayManager::stateToJson(JsonArray& arr) {
         s["id"]      = i;
         s["enabled"] = isChannelEnabled(i);
         s["state"]   = isChannelEnabled(i) ? _state[i].logicalState : false;
-        s["timer_active"]    = _timers[i].active;
-        s["timer_target"]    = _timers[i].targetState;
+        s["timer_active"]    = hasActiveTimer(i);
+        s["timer_target"]    = getTimerTargetState(i);
         s["timer_remaining"] = getTimerRemaining(i);
     }
 }
@@ -614,40 +686,78 @@ void RelayManager::stateToJson(JsonArray& arr) {
 // ============================================================================
 void RelayManager::startTimer(uint8_t index, bool targetState, uint32_t durationSeconds) {
     if (index >= _numRelays || !isChannelEnabled(index) || durationSeconds == 0) return;
-    // Set target state, duration and start timestamp FIRST before arming active flag
-    // to prevent multi-core race condition where loop() on Core 1 reads active=true while durationMillis is 0!
+    // Cap duration at max 32-bit millis range (~49.7 days) to avoid uint32 overflow
+    uint32_t safeDurationSec = (durationSeconds > 4294967UL) ? 4294967UL : durationSeconds;
+    unsigned long durMs = (unsigned long)safeDurationSec * 1000UL;
+    unsigned long now = millis();
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
     _timers[index].active = false;
     _timers[index].targetState = targetState;
-    _timers[index].startMillis = millis();
-    _timers[index].durationMillis = (unsigned long)durationSeconds * 1000UL;
+    _timers[index].startMillis = now;
+    _timers[index].durationMillis = durMs;
     _timers[index].active = true;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
     SERIAL_PRINTF("[Relay] %d quick timer started: %s in %lu s\n",
-                  index + 1, targetState ? "ON" : "OFF", (unsigned long)durationSeconds);
+                  index + 1, targetState ? "ON" : "OFF", (unsigned long)safeDurationSec);
 }
 
 void RelayManager::cancelTimer(uint8_t index) {
     if (index >= _numRelays) return;
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
     _timers[index].active = false;
     _timers[index].durationMillis = 0;
     _timers[index].startMillis = 0;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
     SERIAL_PRINTF("[Relay] %d quick timer cancelled\n", index + 1);
 }
 
 bool RelayManager::hasActiveTimer(uint8_t index) {
     if (index >= _numRelays) return false;
-    return _timers[index].active;
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
+    bool active = _timers[index].active;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
+    return active;
 }
 
 bool RelayManager::getTimerTargetState(uint8_t index) {
     if (index >= _numRelays) return false;
-    return _timers[index].targetState;
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
+    bool target = _timers[index].targetState;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
+    return target;
 }
 
 uint32_t RelayManager::getTimerRemaining(uint8_t index) {
-    if (index >= _numRelays || !_timers[index].active) return 0;
-    unsigned long elapsed = millis() - _timers[index].startMillis;
-    if (elapsed >= _timers[index].durationMillis) return 0;
-    return (uint32_t)((_timers[index].durationMillis - elapsed) / 1000UL);
+    if (index >= _numRelays) return 0;
+#if defined(ESP32)
+    portENTER_CRITICAL(&_mux);
+#endif
+    bool active = _timers[index].active;
+    unsigned long startMs = _timers[index].startMillis;
+    unsigned long durMs = _timers[index].durationMillis;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_mux);
+#endif
+    if (!active) return 0;
+    unsigned long elapsed = millis() - startMs;
+    if (elapsed >= durMs) return 0;
+    return (uint32_t)((durMs - elapsed) / 1000UL);
 }
 
 // ============================================================================

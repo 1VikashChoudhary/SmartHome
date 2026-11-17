@@ -227,7 +227,7 @@ void LCDManager::loop() {
     }
 
     // Check idle timeout in DHT+Relays mode to revert to page 0 after 5s
-    if (_displayMode == LCD_MODE_DHT_RELAY && _currentPage != 0) {
+    if (!_isAPMode && _alarmType == LCD_ALARM_NONE && _displayMode == LCD_MODE_DHT_RELAY && _currentPage != 0) {
         if (now - _lastUserInteraction >= 5000) {
             _currentPage = 0;
             _forceRedraw = true;
@@ -323,6 +323,7 @@ void LCDManager::showOTAProgress(int percent) {
 
 void LCDManager::showBootScreen(const char* deviceName) {
     if (!_enabled) return;
+    if (!deviceName) deviceName = "SmartHome";
 
     uint8_t cols = (_lcdCols <= LCD_MAX_COLS) ? _lcdCols : LCD_MAX_COLS;
 

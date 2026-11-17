@@ -70,6 +70,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
           var synced = await _api.fetchAlarms(
             dev.ip,
             password: dev.authPassword,
+            username: dev.authUsername,
           );
           if (justExpired &&
               mounted &&
@@ -84,7 +85,11 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
             await Future.delayed(const Duration(milliseconds: 1100));
             if (!mounted) return;
             synced =
-                await _api.fetchAlarms(dev.ip, password: dev.authPassword) ??
+                await _api.fetchAlarms(
+                  dev.ip,
+                  password: dev.authPassword,
+                  username: dev.authUsername,
+                ) ??
                 synced;
           }
           if (mounted && synced != null && _selectedDeviceId == dev.id) {
@@ -111,6 +116,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
   void dispose() {
     _countdownTicker?.cancel();
     _tabController.dispose();
+    _api.dispose();
     super.dispose();
   }
 
@@ -140,7 +146,11 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
   Future<void> _loadRules(SmartDevice dev, {int? generation}) async {
     final gen = generation ?? _loadGeneration;
     setState(() => _loadingRules = true);
-    final rawRules = await _api.fetchRules(dev.ip, password: dev.authPassword);
+    final rawRules = await _api.fetchRules(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
     if (!mounted || gen != _loadGeneration || _selectedDeviceId != dev.id) {
       return;
     }
@@ -158,6 +168,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
     final rawAlarms = await _api.fetchAlarms(
       dev.ip,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!mounted || gen != _loadGeneration || _selectedDeviceId != dev.id) {
       return;
@@ -193,11 +204,16 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       rule.id,
       enabled,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!mounted) return;
     if (ok) {
       // Silently sync latest rule state from controller without full-page spinner
-      final rawRules = await _api.fetchRules(dev.ip, password: dev.authPassword);
+      final rawRules = await _api.fetchRules(
+        dev.ip,
+        password: dev.authPassword,
+        username: dev.authUsername,
+      );
       if (mounted && rawRules != null && _selectedDeviceId == dev.id) {
         setState(() {
           _rules = rawRules.map((m) => AutomationRule.fromJson(m)).toList();
@@ -257,6 +273,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         dev.ip,
         rule.id,
         password: dev.authPassword,
+        username: dev.authUsername,
       );
       if (!mounted) return;
       if (ok) {
@@ -301,6 +318,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       alarm.id,
       enabled,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!mounted) return;
     if (ok) {
@@ -308,6 +326,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
       final rawAlarms = await _api.fetchAlarms(
         dev.ip,
         password: dev.authPassword,
+        username: dev.authUsername,
       );
       if (mounted && rawAlarms != null && _selectedDeviceId == dev.id) {
         setState(() {
@@ -368,6 +387,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         dev.ip,
         alarm.id,
         password: dev.authPassword,
+        username: dev.authUsername,
       );
       if (!mounted) return;
       if (ok) {
@@ -390,618 +410,6 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
         );
       }
     }
-  }
-
-  // Kept temporarily for compatibility with older navigation state. New
-  // entry points use _showRuleEditor, which exposes the complete ESP rule API.
-  // ignore: unused_element
-  void _showAddRuleSheet(BuildContext context, SmartDevice dev) {
-    final nameController = TextEditingController(
-      text: 'Auto Rule ${_rules.length + 1}',
-    );
-    int selectedSensor = 0; // 0: Temp, 1: Hum, 2: Gas
-    int selectedCondition = 0; // 0: Above, 1: Below
-    double thresholdValue = 30.0;
-    double hystValue = 0.5;
-    int selectedRelay = 0;
-    int selectedAction = 0; // 0: ON, 1: OFF
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          return Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(28),
-              ),
-              border: Border(
-                top: BorderSide(color: AppColors.cardBorder, width: 1.5),
-              ),
-            ),
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 20,
-              bottom:
-                  MediaQuery.of(ctx).viewInsets.bottom +
-                  MediaQuery.of(ctx).padding.bottom +
-                  20,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: AppColors.textMuted.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'New Hardware Sensor Rule',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close, color: AppColors.textSecondary),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Rule Name
-                  TextField(
-                    controller: nameController,
-                    style: TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'Rule Label',
-                      hintText: 'e.g. Overheat Exhaust Fan',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Sensor Selector
-                  Text(
-                    'Sensor Trigger:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  LuxurySegmentedSelector<int>(
-                    values: const [0, 1, 2],
-                    labels: {
-                      0: 'Temp (°C)',
-                      1: 'Hum (%)',
-                      2: 'Gas (${AutomationRule.gasSpecFor(dev.telemetry, 0, isEsp8266: dev.isEsp8266).unit})',
-                    },
-                    icons: const {
-                      0: Icons.thermostat,
-                      1: Icons.water_drop,
-                      2: Icons.warning,
-                    },
-                    selectedValue: selectedSensor,
-                    onSelected: (val) {
-                      setSheetState(() {
-                        selectedSensor = val;
-                        if (selectedSensor == 0) {
-                          thresholdValue = 30.0;
-                          hystValue = 0.5;
-                        } else if (selectedSensor == 1) {
-                          thresholdValue = 70.0;
-                          hystValue = 2.0;
-                        } else {
-                          final spec = AutomationRule.gasSpecFor(
-                            dev.telemetry,
-                            0,
-                            isEsp8266: dev.isEsp8266,
-                          );
-                          thresholdValue = spec.defaultThreshold;
-                          hystValue = double.parse(spec.defaultHyst);
-                        }
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Condition
-                  Text(
-                    'Trigger Condition:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  LuxurySegmentedSelector<int>(
-                    values: const [0, 1],
-                    labels: const {
-                      0: 'Greater or Equal (≥)',
-                      1: 'Less or Equal (≤)',
-                    },
-                    selectedValue: selectedCondition,
-                    onSelected: (val) =>
-                        setSheetState(() => selectedCondition = val),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Threshold Slider
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Threshold Value:',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.primaryGlow,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: AppColors.primary.withValues(alpha: 0.4),
-                          ),
-                        ),
-                        child: Text(
-                          '${thresholdValue.toStringAsFixed(selectedSensor == 2 ? 0 : 1)} ${selectedSensor == 0 ? "°C" : (selectedSensor == 1 ? "%" : AutomationRule.gasSpecFor(dev.telemetry, 0, isEsp8266: dev.isEsp8266).unit)}',
-                          style: TextStyle(
-                            color: AppColors.primaryLight,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Builder(
-                    builder: (context) {
-                      final gasSpec = AutomationRule.gasSpecFor(
-                        dev.telemetry,
-                        0,
-                        isEsp8266: dev.isEsp8266,
-                      );
-                      final maxVal = selectedSensor == 0
-                          ? 60.0
-                          : (selectedSensor == 1 ? 100.0 : gasSpec.maxVal);
-                      return Slider(
-                        value: thresholdValue.clamp(0.0, maxVal),
-                        min: 0.0,
-                        max: maxVal,
-                        divisions: selectedSensor == 2
-                            ? (gasSpec.isSgp40 ? 50 : 80)
-                            : 60,
-                        activeColor: AppColors.primary,
-                        onChanged: (value) =>
-                            setSheetState(() => thresholdValue = value),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 12),
-
-                  // Target Relay
-                  Text(
-                    'Target Relay Channel:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    initialValue: selectedRelay,
-                    dropdownColor: AppColors.surfaceElevated,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: List.generate(
-                      dev.relays.isNotEmpty ? dev.relays.length : 5,
-                      (index) {
-                        final r = index < dev.relays.length ? dev.relays[index] : null;
-                        final rName = r != null
-                            ? (r.name + (!r.enabled ? ' (Disabled)' : ''))
-                            : 'Relay ${index + 1}';
-                        return DropdownMenuItem(
-                          value: index,
-                          child: Text(rName),
-                        );
-                      },
-                    ),
-                    onChanged: (val) {
-                      if (val != null) setSheetState(() => selectedRelay = val);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Action
-                  Text(
-                    'Relay Action:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  LuxurySegmentedSelector<int>(
-                    values: const [0, 1],
-                    labels: const {0: 'Turn ON', 1: 'Turn OFF'},
-                    icons: const {0: Icons.power, 1: Icons.power_off},
-                    selectedValue: selectedAction,
-                    onSelected: (val) =>
-                        setSheetState(() => selectedAction = val),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Save Button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () async {
-                        final newRule = AutomationRule(
-                          id: 0,
-                          enabled: true,
-                          name: nameController.text.trim().isEmpty
-                              ? 'Auto Rule'
-                              : nameController.text.trim(),
-                          sensor: selectedSensor,
-                          condition: selectedCondition,
-                          threshold: thresholdValue,
-                          hysteresis: hystValue,
-                          targetRelay: selectedRelay,
-                          action: selectedAction,
-                        );
-
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.pop(ctx);
-                        final ok = await _api.saveRule(
-                          dev.ip,
-                          newRule.toJson(),
-                          password: dev.authPassword,
-                        );
-                        if (ok) {
-                          _loadRules(dev);
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: const Text(
-                                  'Rule saved to controller flash!',
-                                ),
-                                backgroundColor: AppColors.accent,
-                              ),
-                            );
-                          }
-                        } else if (mounted) {
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: const Text('Failed to save rule'),
-                              backgroundColor: AppColors.danger,
-                            ),
-                          );
-                        }
-                      },
-                      child: const Text(
-                        'Save Rule to Controller Flash',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  // Kept temporarily for compatibility with older navigation state. New
-  // entry points use _showTimerEditor, which exposes clock and delay timers.
-  // ignore: unused_element
-  void _showAddScheduleSheet(BuildContext context, SmartDevice dev) {
-    TimeOfDay selectedTime = const TimeOfDay(hour: 7, minute: 0);
-    int selectedType = 1; // 1: Daily
-    int selectedRelay = 0;
-    int selectedAction = 0; // 0: ON, 1: OFF, 2: Toggle
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheetState) {
-          return Container(
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(28),
-              ),
-              border: Border(
-                top: BorderSide(color: AppColors.cardBorder, width: 1.5),
-              ),
-            ),
-            padding: EdgeInsets.only(
-              left: 20,
-              right: 20,
-              top: 20,
-              bottom:
-                  MediaQuery.of(ctx).viewInsets.bottom +
-                  MediaQuery.of(ctx).padding.bottom +
-                  20,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: AppColors.textMuted.withValues(alpha: 0.3),
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'New Time Schedule / Alarm',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.close, color: AppColors.textSecondary),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Time Picker Button
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryGlow,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Icon(Icons.access_time, color: AppColors.accent),
-                    ),
-                    title: const Text(
-                      'Scheduled Time of Day',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '${selectedTime.format(context)} (Controller RTC/NTP time)',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ),
-                    trailing: OutlinedButton(
-                      onPressed: () async {
-                        final picked = await showTimePicker(
-                          context: ctx,
-                          initialTime: selectedTime,
-                        );
-                        if (picked != null) {
-                          setSheetState(() => selectedTime = picked);
-                        }
-                      },
-                      child: const Text('Change Time'),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Frequency / Type
-                  Text(
-                    'Schedule Frequency:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    initialValue: selectedType,
-                    dropdownColor: AppColors.surfaceElevated,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 1,
-                        child: Text('Every Day (Daily)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 3,
-                        child: Text('Weekdays Only (Mon - Fri)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 4,
-                        child: Text('Weekends Only (Sat - Sun)'),
-                      ),
-                      DropdownMenuItem(value: 0, child: Text('Run Once Only')),
-                    ],
-                    onChanged: (v) =>
-                        setSheetState(() => selectedType = v ?? 1),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Target Relay
-                  Text(
-                    'Target Relay Channel:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  DropdownButtonFormField<int>(
-                    initialValue: selectedRelay,
-                    dropdownColor: AppColors.surfaceElevated,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      ...dev.relays.map((r) => DropdownMenuItem(
-                        value: r.index,
-                        child: Text(r.name + (!r.enabled ? ' (Disabled)' : '')),
-                      )),
-                      const DropdownMenuItem(
-                        value: 255,
-                        child: Text('ALL Relays (Master)'),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) setSheetState(() => selectedRelay = val);
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Action
-                  Text(
-                    'Action to Perform:',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  LuxurySegmentedSelector<int>(
-                    values: const [0, 1, 2],
-                    labels: const {0: 'Turn ON', 1: 'Turn OFF', 2: 'Toggle'},
-                    icons: const {
-                      0: Icons.power,
-                      1: Icons.power_off,
-                      2: Icons.swap_horiz,
-                    },
-                    selectedValue: selectedAction,
-                    onSelected: (val) =>
-                        setSheetState(() => selectedAction = val),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Save Button
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      onPressed: () async {
-                        final newAlarm = ScheduledAlarm(
-                          id: 0,
-                          enabled: true,
-                          mode: 0,
-                          type: selectedType,
-                          hour: selectedTime.hour,
-                          minute: selectedTime.minute,
-                          action: selectedAction,
-                          targetRelay: selectedRelay,
-                        );
-
-                        final messenger = ScaffoldMessenger.of(context);
-                        Navigator.pop(ctx);
-                        final ok = await _api.saveAlarm(
-                          dev.ip,
-                          newAlarm.toJson(),
-                          password: dev.authPassword,
-                        );
-                        if (ok) {
-                          _loadAlarms(dev);
-                          if (mounted) {
-                            messenger.showSnackBar(
-                              SnackBar(
-                                content: const Text(
-                                  'Time schedule saved to controller!',
-                                ),
-                                backgroundColor: AppColors.accent,
-                              ),
-                            );
-                          }
-                        } else if (mounted) {
-                          messenger.showSnackBar(
-                            SnackBar(
-                              content: const Text('Failed to save schedule'),
-                              backgroundColor: AppColors.danger,
-                            ),
-                          );
-                        }
-                      },
-                      child: const Text(
-                        'Save Schedule to Hardware',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
   }
 
   String _relayLabel(SmartDevice dev, int relay) {
@@ -2003,6 +1411,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           dev.ip,
                           rule.toJson(),
                           password: dev.authPassword,
+                          username: dev.authUsername,
                         );
                         if (!sheetContext.mounted) return;
                         if (ok) {
@@ -3019,6 +2428,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           dev.ip,
                           timer.toJson(),
                           password: dev.authPassword,
+                          username: dev.authUsername,
                         );
                         if (!sheetContext.mounted) return;
                         if (ok) {
@@ -3549,7 +2959,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ═══ Top Section ═══
+                // === Top Section ===
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
                   child: Row(
@@ -3709,7 +3119,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 ),
                 const SizedBox(height: 10),
 
-                // ═══ Bottom Section: Action chip + Edit/Delete ═══
+                // === Bottom Section: Action chip + Edit/Delete ===
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
                   child: Row(
@@ -3965,7 +3375,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ═══ Top Section: Title + Status + Switch ═══
+                // === Top Section: Title + Status + Switch ===
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
                   child: Row(
@@ -4173,7 +3583,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                 ),
                 const SizedBox(height: 10),
 
-                // ═══ Bottom Section: Action chip + Countdown pill + Edit/Delete ═══
+                // === Bottom Section: Action chip + Countdown pill + Edit/Delete ===
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 8, 12),
                   child: Row(

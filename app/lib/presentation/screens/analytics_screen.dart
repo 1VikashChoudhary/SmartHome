@@ -31,7 +31,9 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     _manager = ref.read(deviceManagerProvider.notifier);
     _loadPreferences();
     _tickerTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      if (mounted) setState(() {});
+      if (mounted && ref.read(navigationIndexProvider) == 3) {
+        setState(() {});
+      }
     });
   }
 
@@ -83,11 +85,13 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
 
     // With a single controller, make the focused view convenient while still
     // preserving All Devices as the default for installations with many nodes.
+    var autoSelectedThisBuild = false;
     if (_prefsLoaded &&
         !_autoSelectedSingleDevice &&
         _selectedDeviceId == null &&
         devices.length == 1) {
       _autoSelectedSingleDevice = true;
+      autoSelectedThisBuild = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _selectedDeviceId == null) {
           _selectDevice(devices.first.id);
@@ -100,9 +104,11 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         !_initialRefreshStarted &&
         devices.isNotEmpty) {
       _initialRefreshStarted = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _refreshScope();
-      });
+      if (!autoSelectedThisBuild) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _refreshScope();
+        });
+      }
     }
 
     final selected = _selectedDeviceId == null
@@ -296,23 +302,33 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         }
       }
 
-      final isVoc = telemetry.gasUnit.toUpperCase() == 'VOC';
-      if (telemetry.gasWarming) {
+      if (!telemetry.hasActiveGas) {
         chips.add(
           _valueChip(
-            Icons.hourglass_top_rounded,
-            isVoc ? 'SGP40 warming' : 'MQ-2 warming',
-            AppColors.warning,
+            Icons.air_rounded,
+            'Gas disabled',
+            AppColors.textMuted,
           ),
         );
       } else {
-        chips.add(
-          _valueChip(
-            isVoc ? Icons.air_rounded : Icons.local_fire_department_rounded,
-            '${telemetry.gasRaw} ${telemetry.gasUnit}',
-            telemetry.gasAlarm ? AppColors.danger : AppColors.success,
-          ),
-        );
+        final isVoc = telemetry.gasUnit.toUpperCase() == 'VOC';
+        if (telemetry.gasWarming) {
+          chips.add(
+            _valueChip(
+              Icons.hourglass_top_rounded,
+              isVoc ? 'SGP40 warming' : 'MQ-2 warming',
+              AppColors.warning,
+            ),
+          );
+        } else {
+          chips.add(
+            _valueChip(
+              isVoc ? Icons.air_rounded : Icons.local_fire_department_rounded,
+              '${telemetry.gasRaw} ${telemetry.gasUnit}',
+              telemetry.gasAlarm ? AppColors.danger : AppColors.success,
+            ),
+          );
+        }
       }
 
       if (telemetry.pressureEnabled && telemetry.pressure > 300) {
@@ -530,7 +546,14 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         ),
         const SizedBox(height: 8),
         _surface(
-          child: telemetry.gasWarming
+          child: !telemetry.hasActiveGas
+              ? _notice(
+                  Icons.air_rounded,
+                  'Air safety sensor disabled',
+                  'MQ-2 / SGP40 gas and air quality monitoring is disabled in Hardware Profile.',
+                  AppColors.textMuted,
+                )
+              : telemetry.gasWarming
               ? _notice(
                   Icons.hourglass_top_rounded,
                   telemetry.gasUnit.toUpperCase() == 'VOC'

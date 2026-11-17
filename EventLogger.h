@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -54,6 +58,10 @@ private:
     bool _dirty;
     unsigned long _lastPersist;
     unsigned long _lastAutoClean;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _logMutex;
+    void ensureMutex() const;
+#endif
 
     uint32_t getTimestamp();
     void autoClean();

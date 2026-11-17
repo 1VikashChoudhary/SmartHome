@@ -287,7 +287,8 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
         String user = doc["user"] | "";
         String pass = doc["pass"] | "";
         String token = doc["token"] | "";
-        if (!_authValidator(user, pass, token)) {
+        IPAddress clientIp = client->remoteIP();
+        if (!_authValidator(clientIp, user, pass, token)) {
             sub->active = false;
             sub->authenticated = false;
             client->text("{\"type\":\"auth_error\",\"auth_required\":true,\"message\":\"Authentication required\"}");

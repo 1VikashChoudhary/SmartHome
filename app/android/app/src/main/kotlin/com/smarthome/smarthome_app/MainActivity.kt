@@ -68,8 +68,9 @@ class MainActivity : FlutterActivity() {
             }
         }
 
-        val devExtra = intent.getStringExtra(EXTRA_OPEN_DEVICE_ID)
-        if (!devExtra.isNullOrBlank()) {
+        val devExtra = intent.getStringExtra(EXTRA_OPEN_DEVICE_ID)?.trim()
+        if (NativeControlStore.isValidDeviceId(devExtra) &&
+            NativeControlStore.getDeviceById(applicationContext, devExtra!!) != null) {
             pendingDeviceId = devExtra
         }
     }
@@ -156,6 +157,22 @@ class MainActivity : FlutterActivity() {
                             "maxTileSlots" to NativeControlStore.MAX_TILE_SLOTS
                         )
                     )
+                }
+
+                "getAllowLockscreenControls" -> {
+                    result.success(NativeControlStore.getAllowLockscreenControls(applicationContext))
+                }
+
+                "setAllowLockscreenControls" -> {
+                    val allow = call.argument<Boolean>("allow") ?: false
+                    NativeControlStore.setAllowLockscreenControls(applicationContext, allow)
+                    SmartHomeTileRefreshHelper.requestAllTilesUpdate(applicationContext)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        for (dev in NativeControlStore.getDevices(applicationContext)) {
+                            SmartHomeControlsService.notifyDeviceUpdated(applicationContext, dev.id)
+                        }
+                    }
+                    result.success(true)
                 }
 
                 else -> result.notImplemented()

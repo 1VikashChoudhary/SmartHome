@@ -49,6 +49,7 @@ class AppTheme {
   static final ThemeData lightTheme = _buildLightTheme();
 
   static ThemeData _buildDarkTheme() {
+    GoogleFonts.config.allowRuntimeFetching = false;
     final baseTextTheme = GoogleFonts.plusJakartaSansTextTheme(
       ThemeData(brightness: Brightness.dark).textTheme,
     );
@@ -120,6 +121,7 @@ class AppTheme {
   }
 
   static ThemeData _buildLightTheme() {
+    GoogleFonts.config.allowRuntimeFetching = false;
     final baseTextTheme = GoogleFonts.plusJakartaSansTextTheme(
       ThemeData(brightness: Brightness.light).textTheme,
     );

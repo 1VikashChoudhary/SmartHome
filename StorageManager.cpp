@@ -5,17 +5,50 @@
  */
 
 #include "StorageManager.h"
+#include "HardwareManager.h"
+
+#if defined(ESP32)
+namespace {
+class RecursiveMutexGuard {
+public:
+    explicit RecursiveMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~RecursiveMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void StorageManager::ensureMutex() const {
+    if (!_fsMutex) {
+        _fsMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define STORAGE_LOCK() ensureMutex(); RecursiveMutexGuard _storageLockGuard(_fsMutex)
+#else
+#define STORAGE_LOCK() ((void)0)
+#endif
 
 // ============================================================================
 // Constructor
 // ============================================================================
-StorageManager::StorageManager() : _initialized(false), _writeEnabled(true) {}
+StorageManager::StorageManager() : _initialized(false), _writeEnabled(true)
+#if defined(ESP32)
+    , _fsMutex(nullptr)
+#endif
+{}
 
 // ============================================================================
 // Initialize LittleFS
 // ============================================================================
 bool StorageManager::begin() {
     if (_initialized) return true;
+#if defined(ESP32)
+    ensureMutex();
+#endif
 
 #if defined(ESP32)
     // Initialize NVS flash for wear-leveled runtime states
@@ -64,27 +97,42 @@ bool StorageManager::begin() {
 // ============================================================================
 bool StorageManager::loadJson(const char* path, JsonDocument& doc) {
     if (!_initialized) return false;
+    STORAGE_LOCK();
 
-    if (!LittleFS.exists(path)) {
+    String bakPath = String(path) + ".bak";
+    bool mainExists = LittleFS.exists(path);
+    if (!mainExists && !LittleFS.exists(bakPath)) {
         SERIAL_PRINTF("[Storage] File not found: %s\n", path);
         return false;
     }
 
-    File file = LittleFS.open(path, "r");
-    if (!file) {
-        SERIAL_PRINTF("[Storage] Failed to open: %s\n", path);
-        return false;
+    auto tryParseFile = [&](const char* targetPath) -> bool {
+        File file = LittleFS.open(targetPath, "r");
+        if (!file) return false;
+        doc.clear();
+        DeserializationError error = deserializeJson(doc, file);
+        file.close();
+        if (error) {
+            SERIAL_PRINTF("[Storage] JSON parse error in %s: %s\n", targetPath, error.c_str());
+            return false;
+        }
+        return true;
+    };
+
+    if (mainExists && tryParseFile(path)) {
+        return true;
     }
 
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-
-    if (error) {
-        SERIAL_PRINTF("[Storage] JSON parse error in %s: %s\n", path, error.c_str());
-        return false;
+    if (LittleFS.exists(bakPath) && tryParseFile(bakPath.c_str())) {
+        SERIAL_PRINTF("[Storage] Recovered %s from backup %s\n", path, bakPath.c_str());
+        if (_writeEnabled) {
+            LittleFS.remove(path);
+            LittleFS.rename(bakPath, path);
+        }
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 // ============================================================================
@@ -92,6 +140,7 @@ bool StorageManager::loadJson(const char* path, JsonDocument& doc) {
 // ============================================================================
 bool StorageManager::saveJson(const char* path, const JsonDocument& doc) {
     if (!_initialized) return false;
+    STORAGE_LOCK();
     if (!_writeEnabled) {
         SERIAL_PRINTF("[Storage] Write blocked during OTA: %s\n", path);
         return false;
@@ -110,7 +159,10 @@ bool StorageManager::saveJson(const char* path, const JsonDocument& doc) {
 // ============================================================================
 bool StorageManager::fileExists(const char* path) {
     if (!_initialized) return false;
-    return LittleFS.exists(path);
+    STORAGE_LOCK();
+    if (LittleFS.exists(path)) return true;
+    String bakPath = String(path) + ".bak";
+    return LittleFS.exists(bakPath);
 }
 
 // ============================================================================
@@ -118,11 +170,14 @@ bool StorageManager::fileExists(const char* path) {
 // ============================================================================
 bool StorageManager::deleteFile(const char* path) {
     if (!_initialized) return false;
+    STORAGE_LOCK();
     if (!_writeEnabled) {
         SERIAL_PRINTF("[Storage] Delete blocked during OTA: %s\n", path);
         return false;
     }
 
+    String bakPath = String(path) + ".bak";
+    if (LittleFS.exists(bakPath)) LittleFS.remove(bakPath);
     if (LittleFS.exists(path)) {
         bool ok = LittleFS.remove(path);
         SERIAL_PRINTF("[Storage] Delete %s: %s\n", path, ok ? "OK" : "FAIL");
@@ -144,6 +199,7 @@ bool StorageManager::isWriteEnabled() const {
 // Export ALL config files as a single JSON backup
 // ============================================================================
 String StorageManager::exportAllConfig(bool redactSecrets) {
+    STORAGE_LOCK();
     JsonDocument doc;
 
     // List of static config file paths to export from LittleFS
@@ -171,8 +227,10 @@ String StorageManager::exportAllConfig(bool redactSecrets) {
                     } else if (strcmp(path, PATH_CONFIG) == 0) {
                         if (subDoc.containsKey("web_pass")) subDoc["web_pass"] = "__REDACTED__";
                         if (subDoc.containsKey("guest_pass")) subDoc["guest_pass"] = "__REDACTED__";
-                        // Note: web_pass_hash and guest_pass_hash are already one-way SHA-256 hashes, keeping them intact
-                        // avoids corrupting logins if the backup is subsequently restored.
+                        if (subDoc.containsKey("web_pass_hash")) subDoc["web_pass_hash"] = "__REDACTED__";
+                        if (subDoc.containsKey("guest_pass_hash")) subDoc["guest_pass_hash"] = "__REDACTED__";
+                        if (subDoc.containsKey("ota_pass_md5")) subDoc["ota_pass_md5"] = "__REDACTED__";
+                        if (subDoc.containsKey("ap_pass")) subDoc["ap_pass"] = "__REDACTED__";
                     }
                 }
 
@@ -213,7 +271,8 @@ String StorageManager::exportAllConfig(bool redactSecrets) {
 // Import a config backup blob
 // ============================================================================
 bool StorageManager::importAllConfig(JsonObjectConst doc) {
-    if (!_initialized) return false;
+    if (!_initialized || !_writeEnabled) return false;
+    STORAGE_LOCK();
 
     // Map of key names to file paths
     struct ConfigMapping {
@@ -252,6 +311,10 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
         }
 
         if (matchedKey != nullptr) {
+            if (!doc[matchedKey].is<JsonObjectConst>()) {
+                SERIAL_PRINTF("[Storage] Skipping invalid non-object section: %s\n", matchedKey);
+                continue;
+            }
             JsonDocument subDoc;
             subDoc.set(doc[matchedKey]);
 
@@ -512,6 +575,11 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                     continue;
                 }
 #endif
+                String hwErr;
+                if (!HardwareManager::validateHardwareJson(subDoc.as<JsonObjectConst>(), hwErr)) {
+                    SERIAL_PRINTF("[Storage] Invalid hardware profile in backup (%s). Preserving current config.\n", hwErr.c_str());
+                    continue;
+                }
             }
 
             // Preserve local secrets if the restored backup was sanitized with __REDACTED__
@@ -549,7 +617,8 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 }
             } else if (strcmp(m.path, PATH_CONFIG) == 0 && LittleFS.exists(PATH_CONFIG)) {
                 if (subDoc["web_pass"] == "__REDACTED__" || subDoc["web_pass_hash"] == "__REDACTED__" ||
-                    subDoc["guest_pass"] == "__REDACTED__" || subDoc["guest_pass_hash"] == "__REDACTED__") {
+                    subDoc["guest_pass"] == "__REDACTED__" || subDoc["guest_pass_hash"] == "__REDACTED__" ||
+                    subDoc["ota_pass_md5"] == "__REDACTED__" || subDoc["ap_pass"] == "__REDACTED__") {
                     JsonDocument existing;
                     if (loadJson(PATH_CONFIG, existing)) {
                         if (subDoc["web_pass_hash"] == "__REDACTED__") {
@@ -580,11 +649,27 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                                 subDoc.remove("guest_pass");
                             }
                         }
+                        if (subDoc["ota_pass_md5"] == "__REDACTED__") {
+                            if (existing.containsKey("ota_pass_md5") && existing["ota_pass_md5"] != "__REDACTED__") {
+                                subDoc["ota_pass_md5"] = existing["ota_pass_md5"];
+                            } else {
+                                subDoc.remove("ota_pass_md5");
+                            }
+                        }
+                        if (subDoc["ap_pass"] == "__REDACTED__") {
+                            if (existing.containsKey("ap_pass") && existing["ap_pass"] != "__REDACTED__") {
+                                subDoc["ap_pass"] = existing["ap_pass"];
+                            } else {
+                                subDoc.remove("ap_pass");
+                            }
+                        }
                     } else {
                         if (subDoc["web_pass_hash"] == "__REDACTED__") subDoc.remove("web_pass_hash");
                         if (subDoc["web_pass"] == "__REDACTED__") subDoc.remove("web_pass");
                         if (subDoc["guest_pass_hash"] == "__REDACTED__") subDoc.remove("guest_pass_hash");
                         if (subDoc["guest_pass"] == "__REDACTED__") subDoc.remove("guest_pass");
+                        if (subDoc["ota_pass_md5"] == "__REDACTED__") subDoc.remove("ota_pass_md5");
+                        if (subDoc["ap_pass"] == "__REDACTED__") subDoc.remove("ap_pass");
                     }
                 }
             } else if (strcmp(m.path, PATH_RELAY_STATES) == 0 && subDoc.containsKey("states")) {
@@ -664,11 +749,16 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 restored++;
                 SERIAL_PRINTF("[Storage] Restored: %s\n", m.path);
             }
-        } else if (isFullBackup && m.wipeIfMissingInFullBackup && LittleFS.exists(m.path)) {
+        } else if (isFullBackup && m.wipeIfMissingInFullBackup) {
             // If this is a full backup and an optional module file was not present when
-            // the backup was created (meaning the module was at factory defaults), delete
-            // any subsequently created file so the module genuinely reverts to the backup state!
-            if (deleteFile(m.path)) {
+            // the backup was created (meaning the module was at factory defaults), wipe
+            // any subsequently created state/file so the module genuinely reverts to default!
+            if (strcmp(m.path, PATH_RELAY_STATES) == 0) {
+                clearNVSState();
+                restored++;
+                Serial.println(F("[Storage-NVS] Cleared relay states in NVS (missing in full backup)."));
+            }
+            if (LittleFS.exists(m.path) && deleteFile(m.path)) {
                 restored++;
                 SERIAL_PRINTF("[Storage] Removed post-backup config to restore default state: %s\n", m.path);
             }
@@ -694,6 +784,7 @@ bool StorageManager::importAllConfig(const String& jsonBlob) {
 // Factory Reset — delete all config files
 // ============================================================================
 void StorageManager::factoryReset() {
+    STORAGE_LOCK();
     Serial.println(F("[Storage] === FACTORY RESET ==="));
 
     const char* allFiles[] = {
@@ -818,13 +909,15 @@ void StorageManager::createDefaultConfig() {
 // Internal: Write string content to file
 // ============================================================================
 bool StorageManager::writeFile(const char* path, const String& content) {
+    STORAGE_LOCK();
     if (!_writeEnabled) {
         SERIAL_PRINTF("[Storage] Write helper blocked during OTA: %s\n", path);
         return false;
     }
 
-    // Write to a temporary file first, then rename for atomic write
+    // Write to a temporary file first, then swap via .bak so power loss never leaves config missing
     String tempPath = String(path) + ".tmp";
+    String bakPath  = String(path) + ".bak";
 
     File file = LittleFS.open(tempPath, "w");
     if (!file) {
@@ -842,11 +935,27 @@ bool StorageManager::writeFile(const char* path, const String& content) {
         return false;
     }
 
-    // Atomic rename: remove old, rename temp to target
-    LittleFS.remove(path);
+    bool hadOriginal = LittleFS.exists(path);
+    if (hadOriginal) {
+        if (LittleFS.exists(bakPath)) LittleFS.remove(bakPath);
+        if (!LittleFS.rename(path, bakPath)) {
+            SERIAL_PRINTF("[Storage] Backup rename failed for %s\n", path);
+            LittleFS.remove(tempPath);
+            return false;
+        }
+    }
+
     if (!LittleFS.rename(tempPath, path)) {
         SERIAL_PRINTF("[Storage] Rename failed for %s\n", path);
+        if (hadOriginal && LittleFS.exists(bakPath)) {
+            LittleFS.rename(bakPath, path);
+        }
+        LittleFS.remove(tempPath);
         return false;
+    }
+
+    if (hadOriginal && LittleFS.exists(bakPath)) {
+        LittleFS.remove(bakPath);
     }
 
     SERIAL_PRINTF("[Storage] Saved: %s (%u bytes)\n", path, written);
@@ -904,6 +1013,7 @@ void StorageManager::listFiles() {
 
 bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* switchStates, uint8_t count) {
     if (!logicalStates) return false;
+    STORAGE_LOCK();
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -930,6 +1040,7 @@ bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* s
 
 bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates, uint8_t count) {
     if (!logicalStates) return false;
+    STORAGE_LOCK();
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE_STATE, NVS_READONLY, &handle);
     if (err != ESP_OK) {
@@ -958,6 +1069,7 @@ bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates,
 
 void StorageManager::incrementRelayCycleNVS(uint8_t index) {
     if (index >= MAX_RELAYS) return;
+    STORAGE_LOCK();
     char key[16];
     snprintf(key, sizeof(key), "cyc_%u", index);
     nvs_handle_t handle;
@@ -973,6 +1085,7 @@ void StorageManager::incrementRelayCycleNVS(uint8_t index) {
 
 uint32_t StorageManager::getRelayCycleNVS(uint8_t index) {
     if (index >= MAX_RELAYS) return 0;
+    STORAGE_LOCK();
     char key[16];
     snprintf(key, sizeof(key), "cyc_%u", index);
     nvs_handle_t handle;
@@ -985,6 +1098,7 @@ uint32_t StorageManager::getRelayCycleNVS(uint8_t index) {
 }
 
 void StorageManager::clearNVSState() {
+    STORAGE_LOCK();
     nvs_handle_t handle;
     if (nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle) == ESP_OK) {
         nvs_erase_all(handle);
@@ -1011,8 +1125,15 @@ static bool eepromValid() {
 }
 
 static void eepromInitHeader() {
-    EEPROM.write(EEPROM_OFF_MAGIC, EEPROM_MAGIC_0);
-    EEPROM.write(EEPROM_OFF_MAGIC + 1, EEPROM_MAGIC_1);
+    if (!eepromValid()) {
+        // Zero-initialize erased 0xFF EEPROM bytes before stamping magic header
+        // so logical relay masks / switch masks / cycle counters start cleanly at 0.
+        for (int i = 0; i < 256; i++) {
+            EEPROM.write(i, 0);
+        }
+        EEPROM.write(EEPROM_OFF_MAGIC, EEPROM_MAGIC_0);
+        EEPROM.write(EEPROM_OFF_MAGIC + 1, EEPROM_MAGIC_1);
+    }
 }
 
 static void eepromWrite32(int offset, uint32_t val) {
@@ -1071,7 +1192,7 @@ void StorageManager::incrementRelayCycleNVS(uint8_t index) {
     uint32_t count = eepromRead32(EEPROM_OFF_CYCLES + (index * 4));
     count++;
     eepromWrite32(EEPROM_OFF_CYCLES + (index * 4), count);
-    EEPROM.commit();
+    // Defer EEPROM.commit() to RelayManager's coalesced saveRelayStatesNVS() window to prevent flash wear
 }
 
 uint32_t StorageManager::getRelayCycleNVS(uint8_t index) {

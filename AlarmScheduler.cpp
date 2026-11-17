@@ -9,9 +9,12 @@
 
 AlarmScheduler::AlarmScheduler()
     : _storage(nullptr), _alarmCount(0), _lastCheck(0),
-      _lastFiredMinuteKey(-1), _actionCallback(nullptr) {
+      _actionCallback(nullptr) {
     memset(_alarms, 0, sizeof(_alarms));
     memset(_delayArmedMillis, 0, sizeof(_delayArmedMillis));
+    for (uint8_t i = 0; i < MAX_ALARMS; i++) {
+        _lastFiredMinuteKey[i] = -1;
+    }
 }
 
 void AlarmScheduler::begin(StorageManager& storage) {
@@ -41,9 +44,6 @@ void AlarmScheduler::loop() {
         currentMinuteKey = (int32_t)((timeInfo.tm_yday * 1440) + (hour * 60) + minute);
     }
 
-    // Prevent double-fire of clock alarms within the exact same minute
-    bool skipClockChecks = (currentMinuteKey >= 0 && currentMinuteKey == _lastFiredMinuteKey);
-
     bool fired = false;
     bool changed = false;
     for (uint8_t i = 0; i < _alarmCount; i++) {
@@ -68,16 +68,17 @@ void AlarmScheduler::loop() {
                         continue;
                     }
                 }
-                if (epochNow < a.createdAt + (a.delayMinutes * 60UL)) continue;
+                if (epochNow < a.createdAt + ((uint64_t)a.delayMinutes * 60ULL)) continue;
             } else {
-                // Offline fallback using millis()
+                // Offline fallback using millis() (64-bit product avoids 32-bit overflow above 71,582m)
                 if (_delayArmedMillis[i] == 0) {
                     _delayArmedMillis[i] = (now == 0) ? 1 : now;
                 }
-                if (now - _delayArmedMillis[i] < (unsigned long)a.delayMinutes * 60000UL) continue;
+                if ((uint64_t)(now - _delayArmedMillis[i]) < (uint64_t)a.delayMinutes * 60000ULL) continue;
             }
         } else {
-            if (!hasLocalTime || skipClockChecks) continue;
+            if (!hasLocalTime) continue;
+            if (currentMinuteKey >= 0 && currentMinuteKey == _lastFiredMinuteKey[i]) continue;
             if (a.type == ALARM_ONCE && a.fired) continue;
             if (!shouldFire(a, hour, minute, dow)) continue;
         }
@@ -100,7 +101,7 @@ void AlarmScheduler::loop() {
 
         fired = true;
         if (a.mode != SCHEDULE_DELAY && currentMinuteKey >= 0) {
-            _lastFiredMinuteKey = currentMinuteKey;
+            _lastFiredMinuteKey[i] = currentMinuteKey;
         }
     }
 
@@ -119,6 +120,7 @@ bool AlarmScheduler::addAlarm(const ScheduledAlarm& alarm) {
     uint8_t idx = _alarmCount;
     _alarms[idx] = alarm;
     _delayArmedMillis[idx] = 0;
+    _lastFiredMinuteKey[idx] = -1;
     if (_alarms[idx].id == 0) {
         _alarms[idx].id = getNextId();
     }
@@ -137,6 +139,7 @@ bool AlarmScheduler::updateAlarm(uint8_t id, const ScheduledAlarm& alarm) {
     _alarms[idx] = alarm;
     _alarms[idx].id = id; // Preserve ID
     _delayArmedMillis[idx] = 0; // Reset runtime timer on update
+    _lastFiredMinuteKey[idx] = -1;
     if (_alarms[idx].mode == SCHEDULE_DELAY && _alarms[idx].enabled) {
         armDelayAlarm((uint8_t)idx, true);
     }
@@ -152,10 +155,12 @@ bool AlarmScheduler::deleteAlarm(uint8_t id) {
     for (int i = idx; i < _alarmCount - 1; i++) {
         _alarms[i] = _alarms[i + 1];
         _delayArmedMillis[i] = _delayArmedMillis[i + 1];
+        _lastFiredMinuteKey[i] = _lastFiredMinuteKey[i + 1];
     }
     _alarmCount--;
     memset(&_alarms[_alarmCount], 0, sizeof(ScheduledAlarm));
     _delayArmedMillis[_alarmCount] = 0;
+    _lastFiredMinuteKey[_alarmCount] = -1;
     save();
     return true;
 }
@@ -166,6 +171,7 @@ bool AlarmScheduler::enableAlarm(uint8_t id, bool enabled) {
 
     _alarms[idx].enabled = enabled;
     if (enabled) {
+        _lastFiredMinuteKey[idx] = -1;
         if (_alarms[idx].mode == SCHEDULE_DELAY) {
             _alarms[idx].fired = false;
             _delayArmedMillis[idx] = 0;
@@ -189,11 +195,12 @@ const ScheduledAlarm* AlarmScheduler::getAlarm(uint8_t id) {
 uint8_t AlarmScheduler::getAlarmCount() { return _alarmCount; }
 
 uint8_t AlarmScheduler::getNextId() {
-    uint8_t maxId = 0;
-    for (uint8_t i = 0; i < _alarmCount; i++) {
-        if (_alarms[i].id > maxId) maxId = _alarms[i].id;
+    for (uint16_t candidate = 1; candidate <= 255; candidate++) {
+        if (findAlarmIndex((uint8_t)candidate) < 0) {
+            return (uint8_t)candidate;
+        }
     }
-    return maxId + 1;
+    return 1;
 }
 
 void AlarmScheduler::save() {

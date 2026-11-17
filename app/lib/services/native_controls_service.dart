@@ -235,4 +235,26 @@ class NativeControlsService {
       return 0;
     }
   }
+
+  Future<bool> getAllowLockscreenControls() async {
+    if (!_isAndroidNative) return false;
+    try {
+      final allow = await _channel.invokeMethod<bool>('getAllowLockscreenControls');
+      return allow == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> setAllowLockscreenControls(bool allow) async {
+    if (!_isAndroidNative) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>('setAllowLockscreenControls', {
+        'allow': allow,
+      });
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
 }

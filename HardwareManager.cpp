@@ -261,7 +261,8 @@ bool HardwareManager::isSafeOutputPin(uint8_t pin) {
     if (pin == 34 || pin == 35 || pin == 36 || pin == 39) return false;
     // Disallow UART0 pins (1, 3) to protect serial monitor
     if (pin == 1 || pin == 3) return false;
-    // Allowed output pins: 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33
+    // Allowed output pins (GPIO 2, 12, 15 carry boot strapping badges in capabilities/UI):
+    // 2, 4, 5, 12, 13, 14, 15, 16, 17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33
     return (pin == 2 || pin == 4 || pin == 5 || pin == 12 || pin == 13 ||
             pin == 14 || pin == 15 || pin == 16 || pin == 17 || pin == 18 ||
             pin == 19 || pin == 21 || pin == 22 || pin == 23 || pin == 25 ||
@@ -737,29 +738,73 @@ void HardwareManager::toJson(JsonObject& obj) const {
     obj["btn_multi_pin"] = _config.btnMultiPin;
 }
 
-bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
-    HardwareConfig newCfg;
+static bool readPinField(JsonObjectConst obj, const char* key, uint8_t defaultPin,
+                         uint8_t& outPin, const String& label, String& outError) {
+    if (!obj.containsKey(key) || obj[key].isNull()) {
+        outPin = defaultPin;
+        return true;
+    }
+    if (!obj[key].is<long>()) {
+        outError = label + F(": GPIO pin must be an integer");
+        return false;
+    }
+    long raw = obj[key].as<long>();
+    if (raw < 0 || raw > 255) {
+        outError = label + F(": GPIO pin out of range (") + String(raw) + ")";
+        return false;
+    }
+    outPin = (uint8_t)raw;
+    return true;
+}
+
+static bool readByteRangeField(JsonObjectConst obj, const char* key, uint8_t defaultVal,
+                               uint8_t maxVal, uint8_t& outVal, const String& label, String& outError) {
+    if (!obj.containsKey(key) || obj[key].isNull()) {
+        outVal = defaultVal;
+        return true;
+    }
+    if (!obj[key].is<long>()) {
+        outError = label + F(": field must be an integer");
+        return false;
+    }
+    long raw = obj[key].as<long>();
+    if (raw < 0 || raw > (long)maxVal) {
+        outError = label + F(": value out of range (") + String(raw) + ")";
+        return false;
+    }
+    outVal = (uint8_t)raw;
+    return true;
+}
+
+bool HardwareManager::parseHardwareJson(JsonObjectConst obj, HardwareConfig& newCfg, String& outError) {
     memset(&newCfg, 0, sizeof(newCfg));
 
     const char* bName = obj["board_name"] | "Custom";
     strncpy(newCfg.boardName, bName, sizeof(newCfg.boardName) - 1);
     newCfg.boardName[sizeof(newCfg.boardName) - 1] = '\0';
 
-    newCfg.numRelays = obj["num_relays"] | 0;
-    if (newCfg.numRelays > MAX_RELAYS) newCfg.numRelays = MAX_RELAYS;
+    long rawNumRelays = obj.containsKey("num_relays") ? obj["num_relays"].as<long>() : 0;
+    if (rawNumRelays < 0 || rawNumRelays > MAX_RELAYS) {
+        outError = String(F("Number of relays out of range (0-")) + String(MAX_RELAYS) + ")";
+        return false;
+    }
+    newCfg.numRelays = (uint8_t)rawNumRelays;
 
     JsonArrayConst chArr = obj["channels"].as<JsonArrayConst>();
     uint8_t idx = 0;
     for (JsonObjectConst ch : chArr) {
         if (idx >= MAX_RELAYS) break;
-        uint8_t rPin = ch["relay_pin"] | PIN_UNUSED;
-        uint8_t sPin = ch["switch_pin"] | PIN_UNUSED;
-        uint8_t swMode = ch["switch_mode"] | (uint8_t)SWITCH_MODE_TOGGLE;
-        uint8_t trigMode = ch["trigger"] | (uint8_t)TRIGGER_ACTIVE_LOW;
-        if (swMode > SWITCH_MODE_DETACHED || trigMode > TRIGGER_ACTIVE_HIGH) {
-            outError = "Channel " + String(idx + 1) + ": invalid switch_mode or trigger mode";
-            return false;
-        }
+        String chTag = "Channel " + String(idx + 1);
+        uint8_t rPin = PIN_UNUSED;
+        uint8_t sPin = PIN_UNUSED;
+        uint8_t swMode = (uint8_t)SWITCH_MODE_TOGGLE;
+        uint8_t trigMode = (uint8_t)TRIGGER_ACTIVE_LOW;
+        if (!readPinField(ch, "relay_pin", PIN_UNUSED, rPin, chTag + F(" Relay"), outError)) return false;
+        if (!readPinField(ch, "switch_pin", PIN_UNUSED, sPin, chTag + F(" Switch"), outError)) return false;
+        if (!readByteRangeField(ch, "switch_mode", (uint8_t)SWITCH_MODE_TOGGLE, SWITCH_MODE_DETACHED,
+                                swMode, chTag + F(" switch_mode"), outError)) return false;
+        if (!readByteRangeField(ch, "trigger", (uint8_t)TRIGGER_ACTIVE_LOW, TRIGGER_ACTIVE_HIGH,
+                                trigMode, chTag + F(" trigger"), outError)) return false;
         newCfg.channels[idx].enabled       = ch.containsKey("enabled") ? (bool)ch["enabled"] : (rPin != PIN_UNUSED);
         newCfg.channels[idx].relayPin      = rPin;
         newCfg.channels[idx].switchEnabled = ch.containsKey("switch_enabled") ? (bool)ch["switch_enabled"] : (sPin != PIN_UNUSED);
@@ -814,16 +859,17 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t cIdx = 0;
         for (JsonObjectConst c : arr) {
-            uint8_t dType = c["type"] | (uint8_t)CLIMATE_NONE;
-            if (dType > CLIMATE_DS18B20) { outError = "Invalid climate sensor type"; return false; }
+            uint8_t dType = (uint8_t)CLIMATE_NONE;
+            if (!readByteRangeField(c, "type", (uint8_t)CLIMATE_NONE, CLIMATE_DS18B20,
+                                    dType, "Climate " + String(cIdx + 1), outError)) return false;
             ClimateSensorType ct = (ClimateSensorType)dType;
             uint8_t addr = 0;
             uint8_t pin = PIN_UNUSED;
             if (isI2cClimateType(ct)) {
-                addr = c["i2c_addr"] | (uint8_t)0;
+                if (!readByteRangeField(c, "i2c_addr", 0, 127, addr, "Climate " + String(cIdx + 1) + F(" i2c_addr"), outError)) return false;
                 if (addr == 0) addr = defaultI2cAddrForClimate(ct);
             } else if (isOneWireClimateType(ct)) {
-                pin = c["pin"] | PIN_UNUSED;
+                if (!readPinField(c, "pin", PIN_UNUSED, pin, "Climate " + String(cIdx + 1), outError)) return false;
             }
             newCfg.climates[cIdx].type    = ct;
             newCfg.climates[cIdx].pin     = pin;
@@ -835,15 +881,16 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.numClimates = cIdx;
     } else if (obj.containsKey("dht")) {
         JsonObjectConst dht = obj["dht"];
-        uint8_t dPin = dht["pin"] | defDhtPin;
-        uint8_t dType = dht["type"] | (uint8_t)(dPin != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE);
-        if (dType > CLIMATE_DS18B20) { outError = "Invalid climate sensor type"; return false; }
+        uint8_t dPin = defDhtPin;
+        if (!readPinField(dht, "pin", defDhtPin, dPin, F("Climate 1"), outError)) return false;
+        uint8_t dType = (uint8_t)(dPin != PIN_UNUSED ? CLIMATE_DHT22 : CLIMATE_NONE);
+        if (!readByteRangeField(dht, "type", dType, CLIMATE_DS18B20, dType, F("Climate 1"), outError)) return false;
         if (dType != CLIMATE_NONE) {
             ClimateSensorType ct = (ClimateSensorType)dType;
             uint8_t addr = 0;
             uint8_t pin = PIN_UNUSED;
             if (isI2cClimateType(ct)) {
-                addr = dht["i2c_addr"] | (uint8_t)0;
+                if (!readByteRangeField(dht, "i2c_addr", 0, 127, addr, F("Climate 1 i2c_addr"), outError)) return false;
                 if (addr == 0) addr = defaultI2cAddrForClimate(ct);
             } else if (isOneWireClimateType(ct)) {
                 pin = dPin;
@@ -854,12 +901,8 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
             newCfg.climates[0].i2cAddr = addr;
             assignDefaultLabel(newCfg.climates[0].label, sizeof(newCfg.climates[0].label), nullptr, "Climate", 0);
         }
-    } else if (defDhtPin != PIN_UNUSED) {
-        newCfg.numClimates = 1;
-        newCfg.climates[0].type    = CLIMATE_DHT22;
-        newCfg.climates[0].pin     = defDhtPin;
-        newCfg.climates[0].i2cAddr = 0;
-        assignDefaultLabel(newCfg.climates[0].label, sizeof(newCfg.climates[0].label), nullptr, "Climate", 0);
+    } else {
+        newCfg.numClimates = 0;
     }
 
     // 2. Ambient Light Sensors
@@ -871,10 +914,12 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t lIdx = 0;
         for (JsonObjectConst l : arr) {
-            uint8_t lType = l["type"] | (uint8_t)LIGHT_NONE;
-            if (lType > LIGHT_BH1750) { outError = "Invalid ambient light sensor type"; return false; }
+            uint8_t lType = (uint8_t)LIGHT_NONE;
+            if (!readByteRangeField(l, "type", (uint8_t)LIGHT_NONE, LIGHT_BH1750,
+                                    lType, "Light " + String(lIdx + 1), outError)) return false;
             LightSensorType lt = (LightSensorType)lType;
-            uint8_t addr = l["i2c_addr"] | (uint8_t)0;
+            uint8_t addr = 0;
+            if (!readByteRangeField(l, "i2c_addr", 0, 127, addr, "Light " + String(lIdx + 1) + F(" i2c_addr"), outError)) return false;
             if (addr == 0 && lt == LIGHT_BH1750) addr = defaultI2cAddrForLight(lt);
             newCfg.lights[lIdx].type    = lt;
             newCfg.lights[lIdx].i2cAddr = addr;
@@ -885,11 +930,12 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.numLights = lIdx;
     } else if (obj.containsKey("light")) {
         JsonObjectConst light = obj["light"];
-        uint8_t lType = light["type"] | (uint8_t)LIGHT_NONE;
-        if (lType > LIGHT_BH1750) { outError = "Invalid ambient light sensor type"; return false; }
+        uint8_t lType = (uint8_t)LIGHT_NONE;
+        if (!readByteRangeField(light, "type", (uint8_t)LIGHT_NONE, LIGHT_BH1750, lType, F("Light 1"), outError)) return false;
         if (lType != LIGHT_NONE) {
             LightSensorType lt = (LightSensorType)lType;
-            uint8_t addr = light["i2c_addr"] | (uint8_t)0;
+            uint8_t addr = 0;
+            if (!readByteRangeField(light, "i2c_addr", 0, 127, addr, F("Light 1 i2c_addr"), outError)) return false;
             if (addr == 0) addr = defaultI2cAddrForLight(lt);
             newCfg.numLights = 1;
             newCfg.lights[0].type    = lt;
@@ -907,10 +953,13 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t mIdx = 0;
         for (JsonObjectConst m : arr) {
-            uint8_t mType = m["type"] | (uint8_t)MOTION_NONE;
-            if (mType > MOTION_RADAR_LD2410) { outError = "Invalid motion sensor type"; return false; }
+            uint8_t mType = (uint8_t)MOTION_NONE;
+            if (!readByteRangeField(m, "type", (uint8_t)MOTION_NONE, MOTION_RADAR_LD2410,
+                                    mType, "Motion " + String(mIdx + 1), outError)) return false;
+            uint8_t mPin = PIN_UNUSED;
+            if (!readPinField(m, "pin", PIN_UNUSED, mPin, "Motion " + String(mIdx + 1), outError)) return false;
             newCfg.motions[mIdx].type = (MotionSensorType)mType;
-            newCfg.motions[mIdx].pin  = m["pin"] | PIN_UNUSED;
+            newCfg.motions[mIdx].pin  = mPin;
             assignDefaultLabel(newCfg.motions[mIdx].label, sizeof(newCfg.motions[mIdx].label),
                                m["label"] | "", "Motion", mIdx);
             mIdx++;
@@ -918,12 +967,14 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.numMotions = mIdx;
     } else if (obj.containsKey("motion")) {
         JsonObjectConst mot = obj["motion"];
-        uint8_t mType = mot["type"] | (uint8_t)MOTION_NONE;
-        if (mType > MOTION_RADAR_LD2410) { outError = "Invalid motion sensor type"; return false; }
+        uint8_t mType = (uint8_t)MOTION_NONE;
+        if (!readByteRangeField(mot, "type", (uint8_t)MOTION_NONE, MOTION_RADAR_LD2410, mType, F("Motion 1"), outError)) return false;
         if (mType != MOTION_NONE) {
+            uint8_t mPin = defMotionPin;
+            if (!readPinField(mot, "pin", defMotionPin, mPin, F("Motion 1"), outError)) return false;
             newCfg.numMotions = 1;
             newCfg.motions[0].type = (MotionSensorType)mType;
-            newCfg.motions[0].pin  = mot["pin"] | defMotionPin;
+            newCfg.motions[0].pin  = mPin;
             assignDefaultLabel(newCfg.motions[0].label, sizeof(newCfg.motions[0].label), nullptr, "Motion", 0);
         }
     }
@@ -937,10 +988,13 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t pIdx = 0;
         for (JsonObjectConst p : arr) {
-            uint8_t pType = p["type"] | (uint8_t)PROBE_NONE;
-            if (pType > PROBE_DS18B20) { outError = "Invalid probe sensor type"; return false; }
+            uint8_t pType = (uint8_t)PROBE_NONE;
+            if (!readByteRangeField(p, "type", (uint8_t)PROBE_NONE, PROBE_DS18B20,
+                                    pType, "Probe " + String(pIdx + 1), outError)) return false;
+            uint8_t pPin = PIN_UNUSED;
+            if (!readPinField(p, "pin", PIN_UNUSED, pPin, "Probe " + String(pIdx + 1), outError)) return false;
             newCfg.probes[pIdx].type = (ProbeSensorType)pType;
-            newCfg.probes[pIdx].pin  = p["pin"] | PIN_UNUSED;
+            newCfg.probes[pIdx].pin  = pPin;
             assignDefaultLabel(newCfg.probes[pIdx].label, sizeof(newCfg.probes[pIdx].label),
                                p["label"] | "", "Probe", pIdx);
             pIdx++;
@@ -948,12 +1002,14 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.numProbes = pIdx;
     } else if (obj.containsKey("probe")) {
         JsonObjectConst prb = obj["probe"];
-        uint8_t pType = prb["type"] | (uint8_t)PROBE_NONE;
-        if (pType > PROBE_DS18B20) { outError = "Invalid probe sensor type"; return false; }
+        uint8_t pType = (uint8_t)PROBE_NONE;
+        if (!readByteRangeField(prb, "type", (uint8_t)PROBE_NONE, PROBE_DS18B20, pType, F("Probe 1"), outError)) return false;
         if (pType != PROBE_NONE) {
+            uint8_t pPin = defProbePin;
+            if (!readPinField(prb, "pin", defProbePin, pPin, F("Probe 1"), outError)) return false;
             newCfg.numProbes = 1;
             newCfg.probes[0].type = (ProbeSensorType)pType;
-            newCfg.probes[0].pin  = prb["pin"] | defProbePin;
+            newCfg.probes[0].pin  = pPin;
             assignDefaultLabel(newCfg.probes[0].label, sizeof(newCfg.probes[0].label), nullptr, "Probe", 0);
         }
     }
@@ -967,17 +1023,21 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t uIdx = 0;
         for (JsonObjectConst u : arr) {
-            uint8_t uType = u["type"] | (uint8_t)ULTRASONIC_NONE;
-            if (uType > ULTRASONIC_JSN_SR04T) { outError = "Invalid ultrasonic sensor type"; return false; }
+            String uTag = "Ultrasonic Tank " + String(uIdx + 1);
+            uint8_t uType = (uint8_t)ULTRASONIC_NONE;
+            if (!readByteRangeField(u, "type", (uint8_t)ULTRASONIC_NONE, ULTRASONIC_JSN_SR04T, uType, uTag, outError)) return false;
             int depthVal = u["tank_depth"] | 150;
             int airVal   = u["air_gap"] | 15;
             if (depthVal < 0 || depthVal > 65535 || airVal < 0 || airVal > 65535) {
                 outError = "Ultrasonic Tank Sensor: Tank depth and air gap must be valid positive values";
                 return false;
             }
+            uint8_t trigPin = PIN_UNUSED, echoPin = PIN_UNUSED;
+            if (!readPinField(u, "trig_pin", PIN_UNUSED, trigPin, uTag + F(" Trig"), outError)) return false;
+            if (!readPinField(u, "echo_pin", PIN_UNUSED, echoPin, uTag + F(" Echo"), outError)) return false;
             newCfg.ultrasonics[uIdx].type         = (UltrasonicSensorType)uType;
-            newCfg.ultrasonics[uIdx].trigPin      = u["trig_pin"] | PIN_UNUSED;
-            newCfg.ultrasonics[uIdx].echoPin      = u["echo_pin"] | PIN_UNUSED;
+            newCfg.ultrasonics[uIdx].trigPin      = trigPin;
+            newCfg.ultrasonics[uIdx].echoPin      = echoPin;
             newCfg.ultrasonics[uIdx].tankDepthCm  = (uint16_t)depthVal;
             newCfg.ultrasonics[uIdx].tankAirGapCm = (uint16_t)airVal;
             assignDefaultLabel(newCfg.ultrasonics[uIdx].label, sizeof(newCfg.ultrasonics[uIdx].label),
@@ -987,8 +1047,8 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         newCfg.numUltrasonics = uIdx;
     } else if (obj.containsKey("ultrasonic")) {
         JsonObjectConst us = obj["ultrasonic"];
-        uint8_t uType = us["type"] | (uint8_t)ULTRASONIC_NONE;
-        if (uType > ULTRASONIC_JSN_SR04T) { outError = "Invalid ultrasonic sensor type"; return false; }
+        uint8_t uType = (uint8_t)ULTRASONIC_NONE;
+        if (!readByteRangeField(us, "type", (uint8_t)ULTRASONIC_NONE, ULTRASONIC_JSN_SR04T, uType, F("Ultrasonic Tank 1"), outError)) return false;
         if (uType != ULTRASONIC_NONE) {
             int depthVal = us["tank_depth"] | 150;
             int airVal   = us["air_gap"] | 15;
@@ -996,10 +1056,13 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
                 outError = "Ultrasonic Tank Sensor: Tank depth and air gap must be valid positive values";
                 return false;
             }
+            uint8_t trigPin = defTrigPin, echoPin = defEchoPin;
+            if (!readPinField(us, "trig_pin", defTrigPin, trigPin, F("Ultrasonic Tank 1 Trig"), outError)) return false;
+            if (!readPinField(us, "echo_pin", defEchoPin, echoPin, F("Ultrasonic Tank 1 Echo"), outError)) return false;
             newCfg.numUltrasonics = 1;
             newCfg.ultrasonics[0].type         = (UltrasonicSensorType)uType;
-            newCfg.ultrasonics[0].trigPin      = us["trig_pin"] | defTrigPin;
-            newCfg.ultrasonics[0].echoPin      = us["echo_pin"] | defEchoPin;
+            newCfg.ultrasonics[0].trigPin      = trigPin;
+            newCfg.ultrasonics[0].echoPin      = echoPin;
             newCfg.ultrasonics[0].tankDepthCm  = (uint16_t)depthVal;
             newCfg.ultrasonics[0].tankAirGapCm = (uint16_t)airVal;
             assignDefaultLabel(newCfg.ultrasonics[0].label, sizeof(newCfg.ultrasonics[0].label), nullptr, "Tank", 0);
@@ -1015,19 +1078,24 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         }
         uint8_t gIdx = 0;
         for (JsonObjectConst g : arr) {
-            uint8_t gType = g["type"] | (uint8_t)GAS_MQ2;
-            if (gType > GAS_SGP40) { outError = "Invalid gas sensor type"; return false; }
+            String gTag = "Gas " + String(gIdx + 1);
+            uint8_t gType = (uint8_t)GAS_MQ2;
+            if (!readByteRangeField(g, "type", (uint8_t)GAS_MQ2, GAS_SGP40, gType, gTag, outError)) return false;
             newCfg.mq2Sensors[gIdx].enabled = g["enabled"] | true;
             newCfg.mq2Sensors[gIdx].type    = gType;
             if (gType == GAS_SGP40) {
-                uint8_t addr = g["i2c_addr"] | (uint8_t)0x59;
+                uint8_t addr = 0x59;
+                if (!readByteRangeField(g, "i2c_addr", 0x59, 127, addr, gTag + F(" i2c_addr"), outError)) return false;
                 if (addr == 0) addr = 0x59;
                 newCfg.mq2Sensors[gIdx].analogPin  = PIN_UNUSED;
                 newCfg.mq2Sensors[gIdx].digitalPin = PIN_UNUSED;
                 newCfg.mq2Sensors[gIdx].i2cAddr    = addr;
             } else {
-                newCfg.mq2Sensors[gIdx].analogPin  = g["analog_pin"] | PIN_UNUSED;
-                newCfg.mq2Sensors[gIdx].digitalPin = g["digital_pin"] | PIN_UNUSED;
+                uint8_t aPin = PIN_UNUSED, dPin = PIN_UNUSED;
+                if (!readPinField(g, "analog_pin", PIN_UNUSED, aPin, gTag + F(" Analog"), outError)) return false;
+                if (!readPinField(g, "digital_pin", PIN_UNUSED, dPin, gTag + F(" Digital"), outError)) return false;
+                newCfg.mq2Sensors[gIdx].analogPin  = aPin;
+                newCfg.mq2Sensors[gIdx].digitalPin = dPin;
                 newCfg.mq2Sensors[gIdx].i2cAddr    = 0;
             }
             assignDefaultLabel(newCfg.mq2Sensors[gIdx].label, sizeof(newCfg.mq2Sensors[gIdx].label),
@@ -1039,53 +1107,61 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
         JsonObjectConst mq2 = obj["mq2"];
         bool en = mq2["enabled"] | true;
         if (en) {
+            uint8_t aPin = defMq2APin, dPin = defMq2DPin;
+            if (!readPinField(mq2, "analog_pin", defMq2APin, aPin, F("MQ-2 Analog"), outError)) return false;
+            if (!readPinField(mq2, "digital_pin", defMq2DPin, dPin, F("MQ-2 Digital"), outError)) return false;
             newCfg.numMq2s = 1;
             newCfg.mq2Sensors[0].enabled    = true;
             newCfg.mq2Sensors[0].type       = GAS_MQ2;
-            newCfg.mq2Sensors[0].analogPin  = mq2["analog_pin"] | defMq2APin;
-            newCfg.mq2Sensors[0].digitalPin = mq2["digital_pin"] | defMq2DPin;
+            newCfg.mq2Sensors[0].analogPin  = aPin;
+            newCfg.mq2Sensors[0].digitalPin = dPin;
             newCfg.mq2Sensors[0].i2cAddr    = 0;
             assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
         }
     } else {
-        newCfg.numMq2s = 1;
-        newCfg.mq2Sensors[0].enabled    = true;
-        newCfg.mq2Sensors[0].type       = GAS_MQ2;
-        newCfg.mq2Sensors[0].analogPin  = defMq2APin;
-        newCfg.mq2Sensors[0].digitalPin = defMq2DPin;
-        newCfg.mq2Sensors[0].i2cAddr    = 0;
-        assignDefaultLabel(newCfg.mq2Sensors[0].label, sizeof(newCfg.mq2Sensors[0].label), nullptr, "Gas", 0);
+        newCfg.numMq2s = 0;
     }
 
     if (obj.containsKey("buzzer")) {
         JsonObjectConst buz = obj["buzzer"];
-        newCfg.buzzerEnabled = buz["enabled"] | true;
-        newCfg.buzzerPin     = buz["pin"] | defBuzPin;
+        newCfg.buzzerEnabled = buz["enabled"] | false;
+        if (!readPinField(buz, "pin", PIN_UNUSED, newCfg.buzzerPin, F("Buzzer"), outError)) return false;
     } else {
-        newCfg.buzzerEnabled = true;
-        newCfg.buzzerPin     = defBuzPin;
+        newCfg.buzzerEnabled = false;
+        newCfg.buzzerPin     = PIN_UNUSED;
     }
 
     if (obj.containsKey("lcd")) {
         JsonObjectConst lcd = obj["lcd"];
-        newCfg.lcdEnabled  = lcd["enabled"] | true;
-        newCfg.lcdI2cAddr = lcd["i2c_addr"] | 0x27;
-        newCfg.lcdCols    = lcd["cols"] | 16;
-        newCfg.lcdRows    = lcd["rows"] | 2;
-        newCfg.i2cSdaPin  = lcd["sda_pin"] | defSdaPin;
-        newCfg.i2cSclPin  = lcd["scl_pin"] | defSclPin;
+        newCfg.lcdEnabled  = lcd["enabled"] | false;
+        if (!readByteRangeField(lcd, "i2c_addr", 0x27, 127, newCfg.lcdI2cAddr, F("LCD i2c_addr"), outError)) return false;
+        if (!readByteRangeField(lcd, "cols", 16, 40, newCfg.lcdCols, F("LCD cols"), outError)) return false;
+        if (!readByteRangeField(lcd, "rows", 2, 4, newCfg.lcdRows, F("LCD rows"), outError)) return false;
+        if (!readPinField(lcd, "sda_pin", PIN_UNUSED, newCfg.i2cSdaPin, F("I2C SDA"), outError)) return false;
+        if (!readPinField(lcd, "scl_pin", PIN_UNUSED, newCfg.i2cSclPin, F("I2C SCL"), outError)) return false;
     } else {
-        newCfg.lcdEnabled  = true;
+        newCfg.lcdEnabled  = false;
         newCfg.lcdI2cAddr = 0x27;
         newCfg.lcdCols    = 16;
         newCfg.lcdRows    = 2;
-        newCfg.i2cSdaPin  = defSdaPin;
-        newCfg.i2cSclPin  = defSclPin;
+        newCfg.i2cSdaPin  = PIN_UNUSED;
+        newCfg.i2cSclPin  = PIN_UNUSED;
     }
 
-    newCfg.btnMultiPin = obj["btn_multi_pin"] | defBtnPin;
+    if (!readPinField(obj, "btn_multi_pin", PIN_UNUSED, newCfg.btnMultiPin, F("Multi-Button"), outError)) return false;
+    (void)defBtnPin;
 
-    if (!validateConfig(newCfg, outError)) {
+    return validateConfig(newCfg, outError);
+}
+
+bool HardwareManager::validateHardwareJson(JsonObjectConst obj, String& outError) {
+    HardwareConfig tmpCfg;
+    return parseHardwareJson(obj, tmpCfg, outError);
+}
+
+bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
+    HardwareConfig newCfg;
+    if (!parseHardwareJson(obj, newCfg, outError)) {
         return false;
     }
 

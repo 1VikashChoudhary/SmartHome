@@ -292,5 +292,29 @@ void main() {
       expect(legacy.ultrasonics.first.tankDepthCm, equals(180));
       expect(legacy.mq2Sensors, isEmpty);
     });
+
+    test('copyWith(dhtType: ClimateSensorType.none) removes primary climate slot cleanly', () {
+      const initial = HardwareProfile(
+        boardName: 'Test Board',
+        numRelays: 1,
+        channels: [ChannelHardwareConfig(relayPin: 16, switchPin: 13)],
+        climates: [
+          ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4),
+          ClimateSensorSlotConfig(type: ClimateSensorType.bme280, i2cAddr: 0x76),
+        ],
+      );
+      final profile = initial.copyWith(dhtType: ClimateSensorType.none);
+      expect(profile.climates.length, equals(1));
+      expect(profile.climates.first.type, equals(ClimateSensorType.bme280));
+
+      final empty = const HardwareProfile(
+        boardName: 'Test Board',
+        numRelays: 1,
+        channels: [ChannelHardwareConfig(relayPin: 16, switchPin: 13)],
+        climates: [ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4)],
+      ).copyWith(dhtType: ClimateSensorType.none);
+      expect(empty.climates, isEmpty);
+      expect(empty.dhtType, equals(ClimateSensorType.none));
+    });
   });
 }

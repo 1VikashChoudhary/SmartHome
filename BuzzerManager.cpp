@@ -44,7 +44,8 @@ const uint8_t  BuzzerManager::PATTERN_CANCEL_LEN = 4;
 BuzzerManager::BuzzerManager()
     : _storage(nullptr), _buzzerPin(PIN_BUZZER), _hwAllowed(true), _enabled(DEFAULT_BUZZER_ENABLED), _muted(false),
       _alarming(false), _alarmType(0), _volume(BUZZER_DEFAULT_VOLUME),
-      _muteStart(0), _toneOn(false), _patternStep(0), _stepStart(0) {}
+      _muteStart(0), _toneOn(false), _patternStep(0), _stepStart(0),
+      _hasResumeAlarm(false), _resumeAlarmType(0) {}
 
 void BuzzerManager::begin(StorageManager& storage) {
     _storage = &storage;
@@ -55,6 +56,7 @@ void BuzzerManager::begin(StorageManager& storage) {
     if (_hwAllowed) {
 #if defined(ESP8266)
         pinMode(_buzzerPin, OUTPUT);
+        analogWriteRange(255);
         analogWriteFreq(BUZZER_DEFAULT_FREQ);
         analogWrite(_buzzerPin, 0);
 #elif ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -82,6 +84,7 @@ void BuzzerManager::begin(StorageManager& storage, HardwareManager& hw) {
     if (_hwAllowed) {
 #if defined(ESP8266)
         pinMode(_buzzerPin, OUTPUT);
+        analogWriteRange(255);
         analogWriteFreq(BUZZER_DEFAULT_FREQ);
         analogWrite(_buzzerPin, 0);
 #elif ESP_ARDUINO_VERSION_MAJOR >= 3
@@ -123,7 +126,13 @@ void BuzzerManager::loop() {
 
     // Step duration of 0 means end (for non-repeating patterns)
     if (stepDuration == 0) {
-        stopAlarm();
+        if (_hasResumeAlarm) {
+            uint8_t resumeType = _resumeAlarmType;
+            _hasResumeAlarm = false;
+            startAlarm(resumeType);
+        } else {
+            stopAlarm();
+        }
         return;
     }
 
@@ -135,6 +144,11 @@ void BuzzerManager::loop() {
         if (_patternStep >= patLen) {
             if (doesPatternRepeat(_alarmType)) {
                 _patternStep = 0; // Loop
+            } else if (_hasResumeAlarm) {
+                uint8_t resumeType = _resumeAlarmType;
+                _hasResumeAlarm = false;
+                startAlarm(resumeType);
+                return;
             } else {
                 stopAlarm();
                 return;
@@ -155,6 +169,16 @@ void BuzzerManager::loop() {
 void BuzzerManager::startAlarm(uint8_t type) {
     if (!_enabled) return;
 
+    // Preserve active repeating alarm (Gas/Temp/Fault/Scheduled) while playing a transient chirp/test beep.
+    if (!doesPatternRepeat(type)) {
+        if (_alarming && doesPatternRepeat(_alarmType)) {
+            _resumeAlarmType = _alarmType;
+            _hasResumeAlarm = true;
+        }
+    } else {
+        _hasResumeAlarm = false;
+    }
+
     _alarmType = type;
     _alarming = true;
     _patternStep = 0;
@@ -168,6 +192,7 @@ void BuzzerManager::startAlarm(uint8_t type) {
 
 void BuzzerManager::stopAlarm() {
     _alarming = false;
+    _hasResumeAlarm = false;
     _patternStep = 0;
     toneOff();
 }
@@ -229,15 +254,17 @@ void BuzzerManager::saveConfig() {
 
 void BuzzerManager::toneOn() {
     if (_muted || !_enabled || _buzzerPin == PIN_UNUSED) return;
+    // Maximum acoustic output for a passive piezo occurs at 50% duty (128/255); 100% DC stays silent.
+    uint8_t duty = (_volume == 0) ? 0 : (uint8_t)constrain((int)_volume / 2, 1, 128);
 #if defined(ESP8266)
     analogWriteFreq(BUZZER_DEFAULT_FREQ);
-    analogWrite(_buzzerPin, map(_volume, 0, 255, 0, 1023));
+    analogWrite(_buzzerPin, duty);
 #elif ESP_ARDUINO_VERSION_MAJOR >= 3
     ledcWriteTone(_buzzerPin, BUZZER_DEFAULT_FREQ);
-    ledcWrite(_buzzerPin, _volume);
+    ledcWrite(_buzzerPin, duty);
 #else
     ledcWriteTone(BUZZER_LEDC_CHANNEL, BUZZER_DEFAULT_FREQ);
-    ledcWrite(BUZZER_LEDC_CHANNEL, _volume);
+    ledcWrite(BUZZER_LEDC_CHANNEL, duty);
 #endif
     _toneOn = true;
 }

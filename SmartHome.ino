@@ -130,21 +130,38 @@ String wsDataProvider() {
 // Alarm action callback — dispatches alarm actions to modules
 // ============================================================================
 void onAlarmAction(AlarmAction action, uint8_t relay) {
+    auto applyRespectingOverride = [&](uint8_t ch, bool targetState) {
+        if (!relayMgr.isChannelEnabled(ch) || relayMgr.getManualOverride(ch)) return;
+        relayMgr.setState(ch, targetState);
+    };
+
     switch (action) {
         case ACTION_RELAY_ON:
-            if (relay == 0xFF || relay == 255) relayMgr.allOn();
-            else if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, true);
+            if (relay == 0xFF || relay == 255) {
+                for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
+                    applyRespectingOverride(i, true);
+                }
+            } else if (relay < relayMgr.getRelayCount()) {
+                applyRespectingOverride(relay, true);
+            }
             break;
         case ACTION_RELAY_OFF:
-            if (relay == 0xFF || relay == 255) relayMgr.allOff();
-            else if (relay < relayMgr.getRelayCount()) relayMgr.setState(relay, false);
+            if (relay == 0xFF || relay == 255) {
+                for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
+                    applyRespectingOverride(i, false);
+                }
+            } else if (relay < relayMgr.getRelayCount()) {
+                applyRespectingOverride(relay, false);
+            }
             break;
         case ACTION_RELAY_TOGGLE:
             if (relay == 0xFF || relay == 255) {
                 for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
-                    if (relayMgr.isChannelEnabled(i)) relayMgr.toggle(i);
+                    if (relayMgr.isChannelEnabled(i) && !relayMgr.getManualOverride(i)) {
+                        relayMgr.toggle(i);
+                    }
                 }
-            } else if (relay < relayMgr.getRelayCount()) {
+            } else if (relay < relayMgr.getRelayCount() && !relayMgr.getManualOverride(relay)) {
                 relayMgr.toggle(relay);
             }
             break;
@@ -152,10 +169,14 @@ void onAlarmAction(AlarmAction action, uint8_t relay) {
             buzzerMgr.startAlarm(BUZZER_ALARM_SCHEDULED);
             break;
         case ACTION_ALL_ON:
-            relayMgr.allOn();
+            for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
+                applyRespectingOverride(i, true);
+            }
             break;
         case ACTION_ALL_OFF:
-            relayMgr.allOff();
+            for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
+                applyRespectingOverride(i, false);
+            }
             break;
     }
     logger.logInfo("Alarm", "Scheduled action fired: " + String((int)action));
@@ -172,12 +193,14 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 lcdMgr.showAlarm(LCD_ALARM_GAS);
                 logger.logCritical("Sensor", F("GAS ALARM triggered!"));
                 wsMgr.broadcastAlarm("gas", true);
+                relayMgr.activateFailsafe();
                 break;
             case ALARM_TYPE_TEMP:
                 buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
                 lcdMgr.showAlarm(LCD_ALARM_TEMP);
                 logger.logCritical("Sensor", F("HIGH TEMPERATURE alarm!"));
                 wsMgr.broadcastAlarm("temperature", true);
+                relayMgr.activateFailsafe();
                 break;
             case ALARM_TYPE_SENSOR_FAULT:
                 buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
@@ -199,7 +222,7 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
             }
             lcdMgr.showAlarm(LCD_ALARM_TEMP);
-        } else if (sensorMgr.isDHTFault()) {
+        } else if (sensorMgr.hasAnySensorFault()) {
             if (!buzzerMgr.isAlarming() || buzzerMgr.getActiveAlarmType() != BUZZER_ALARM_FAULT) {
                 buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
             }
@@ -477,13 +500,33 @@ void setup() {
 
     // --- OTA ---
     bool enableArduinoOta = false;
-    String otaAdminPass = "";
+    String otaSecret = "";
+    bool otaSecretIsHash = false;
     JsonDocument otaCfg;
     if (storage.loadJson(PATH_CONFIG, otaCfg)) {
         enableArduinoOta = otaCfg["arduino_ota"] | false;
-        otaAdminPass = otaCfg["web_pass"] | "";
+        String otaMd5 = otaCfg["ota_pass_md5"] | "";
+        String otaPlain = otaCfg["web_pass"] | "";
+        if (otaMd5.length() == 32) {
+            otaSecret = otaMd5;
+            otaSecretIsHash = true;
+        } else if (otaPlain.length() > 0) {
+            otaSecret = otaPlain;
+            otaSecretIsHash = false;
+        } else {
+            // If web_auth was already migrated before ota_pass_md5 existed, do not fall back to public hostname.
+            // Keep ArduinoOTA locked with a non-public hash until the user re-saves web_pass once.
+            String passHash = otaCfg["web_pass_hash"] | "";
+            if ((otaCfg["web_auth"] | false) && passHash.length() >= 32) {
+                otaSecret = passHash.substring(0, 32);
+                otaSecretIsHash = true;
+                if (enableArduinoOta) {
+                    Serial.println(F("[OTA] Notice: Re-save your web admin password once in Settings to enable ArduinoOTA password matching."));
+                }
+            }
+        }
     }
-    otaMgr.begin(wifiMgr.getHostname(), enableArduinoOta, otaAdminPass);
+    otaMgr.begin(wifiMgr.getHostname(), enableArduinoOta, otaSecret, otaSecretIsHash);
     otaMgr.setStartCallback(onOTAStart);
     otaMgr.setProgressCallback(onOTAProgress);
     otaMgr.setEndCallback(onOTAEnd);
@@ -503,10 +546,19 @@ void setup() {
     // --- WebSocket ---
     wsMgr.begin(webServer.getServer());
     wsMgr.setDataProvider(wsDataProvider);
-    wsMgr.setAuthValidator([](const String& user, const String& pass, const String& token) -> bool {
-        if (!webServer.isAuthEnabled()) return true;
-        if (webServer.verifyWsToken(token)) return true;
-        return webServer.verifyCredentials(user, pass);
+    wsMgr.setAuthValidator([](const IPAddress& ip, const String& user, const String& pass, const String& token) -> bool {
+        if (!webServer.isAuthConfigured()) return true;
+        if (webServer.isRateLimited(ip)) return false;
+        if (webServer.verifyWsToken(token)) {
+            webServer.resetRateLimit(ip);
+            return true;
+        }
+        if (webServer.verifyCredentials(user, pass)) {
+            webServer.resetRateLimit(ip);
+            return true;
+        }
+        webServer.recordFailedAttempt(ip);
+        return false;
     });
 
     // --- Web Server (must be last — depends on all other modules) ---
@@ -603,6 +655,9 @@ void loop() {
 
     // --- Handle deferred reboot ---
     if (webServer.isRebootRequested() && (millis() - webServer.getRebootRequestTime() >= webServer.getRebootDelay())) {
+        if (webServer.consumeRollbackRequested()) {
+            otaMgr.triggerManualRollback();
+        }
         ESP.restart();
     }
 

@@ -911,22 +911,26 @@ class HardwareProfile {
     final curClimates = this.climates;
     final nextClimates = climates ??
         (dhtType != null || dhtPin != null
-            ? (curClimates.isEmpty
-                ? [
-                    ClimateSensorSlotConfig(
-                      type: dhtType ?? this.dhtType,
-                      pin: dhtPin ?? this.dhtPin,
-                      i2cAddr: (dhtType ?? this.dhtType).defaultI2cAddr,
-                    ),
-                  ]
-                : [
-                    curClimates.first.copyWith(
-                      type: dhtType,
-                      pin: dhtPin,
-                      i2cAddr: dhtType?.defaultI2cAddr,
-                    ),
-                    ...curClimates.skip(1),
-                  ])
+            ? (dhtType == ClimateSensorType.none
+                ? (curClimates.isEmpty
+                    ? const <ClimateSensorSlotConfig>[]
+                    : curClimates.skip(1).toList())
+                : (curClimates.isEmpty
+                    ? [
+                        ClimateSensorSlotConfig(
+                          type: dhtType ?? this.dhtType,
+                          pin: dhtPin ?? this.dhtPin,
+                          i2cAddr: (dhtType ?? this.dhtType).defaultI2cAddr,
+                        ),
+                      ]
+                    : [
+                        curClimates.first.copyWith(
+                          type: dhtType,
+                          pin: dhtPin,
+                          i2cAddr: dhtType?.defaultI2cAddr,
+                        ),
+                        ...curClimates.skip(1),
+                      ]))
             : curClimates);
     final curLights = this.lights;
     final nextLights = lights ??

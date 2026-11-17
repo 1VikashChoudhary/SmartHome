@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-66%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-110%2B%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
@@ -360,7 +360,7 @@ sequenceDiagram
 ```
 
 1. **Power On**: Power the controller via 5V/2A power supply.
-2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX` using the password displayed on the LCD (`SmartHome@<Last4MAC>!`).
+2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX` using the SoftAP password displayed on the LCD (factory default `SmartHome@<Last4MAC>!`, or custom `"ap_pass"` if configured in `config.json`). Note that configured Admin authentication also protects `/api/config/wifi` and `/ws` in AP mode.
 3. **Captive Portal**: Open your browser to `http://192.168.4.1` and connect the controller to your home Wi-Fi network.
 4. **Access Dashboard**: Open `http://<device_ip>` or launch the Flutter companion app.
 5. **Set Passwords**: Go to **Settings > Security & Privilege Tiers** and set your **Admin** and **Guest** passwords.
@@ -420,7 +420,7 @@ SmartHome/
     ├── lib/                       # Dart application source code
     │   └── presentation/screens/
     │       └── about_screen.dart  # About & Sponsorship screen (UPI + PayPal)
-    └── test/                      # Automated unit and widget test suite (66 tests)
+    └── test/                      # Automated unit and widget test suite (110+ tests)
 ```
 
 ---

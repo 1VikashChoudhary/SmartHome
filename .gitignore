@@ -31,3 +31,6 @@ firmware_build_verify/
 *.pem
 *.key
 *.crt
+*.jks
+*.keystore
+**/key.properties

@@ -79,7 +79,7 @@ class SmartDevice {
     final fw = json['fw_version'] as String? ?? '3.2.0';
     final relaysCount = (json['num_relays'] as num?)?.toInt() ?? 5;
     final auth = json['auth_required'] as bool? ?? false;
-    final role = json['auth_role'] as String? ?? 'admin';
+    final role = json['auth_role'] as String? ?? (auth ? 'guest' : 'admin');
     final up = json['uptime'] as String? ?? '';
     final platform = json['platform'] as String? ??
         (json['model']?.toString().toUpperCase().contains('ESP8266') == true ? 'ESP8266' : 'ESP32');
@@ -119,7 +119,7 @@ class SmartDevice {
     final fw = json['fw_version'] as String? ?? '3.2.0';
     final relaysCount = (json['num_relays'] as num?)?.toInt() ?? 5;
     final auth = json['auth_required'] as bool? ?? false;
-    final role = json['auth_role'] as String? ?? 'admin';
+    final role = json['auth_role'] as String? ?? (auth ? 'guest' : 'admin');
     final rssi = (json['rssi'] as num?)?.toInt() ?? -60;
     final signal = (json['signal'] as num?)?.toInt() ?? 75;
     final up = json['uptime'] as String? ?? '';

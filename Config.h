@@ -204,7 +204,7 @@ enum BootStateMode : uint8_t {
 // ============================================================================
 #define DHT_TYPE            DHT22
 #define DHT_READ_INTERVAL   2000      // ms — DHT22 minimum sampling period
-#define DHT_FAIL_THRESHOLD  3         // Consecutive failures before fault flag
+#define DHT_FAIL_THRESHOLD  5         // Consecutive failures before fault flag (~10s glitch immunity)
 #define DHT_TEMP_ALARM_DEFAULT 45.0f  // °C — default high temperature alarm
 #define DHT_TEMP_OFFSET_DEFAULT 0.0f  // °C — calibration offset
 #define DHT_HUM_OFFSET_DEFAULT  0.0f  // % — calibration offset

@@ -17,6 +17,10 @@ import 'batch_ota_screen.dart';
 class DeviceScreen extends ConsumerStatefulWidget {
   final String deviceId;
 
+  static final List<String> _activeRouteDeviceIds = [];
+  static bool isViewing(String deviceId) =>
+      _activeRouteDeviceIds.isNotEmpty && _activeRouteDeviceIds.last == deviceId;
+
   const DeviceScreen({super.key, required this.deviceId});
 
   @override
@@ -27,6 +31,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   @override
   void initState() {
     super.initState();
+    DeviceScreen._activeRouteDeviceIds.add(widget.deviceId);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final devices = ref.read(deviceManagerProvider);
@@ -38,6 +43,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         manager.fetchDeviceRelays(widget.deviceId);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    final idx = DeviceScreen._activeRouteDeviceIds.lastIndexOf(widget.deviceId);
+    if (idx >= 0) {
+      DeviceScreen._activeRouteDeviceIds.removeAt(idx);
+    }
+    super.dispose();
   }
 
   static const List<String> _commonRooms = [
@@ -392,13 +406,19 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                           Navigator.pop(ctx);
                           await manager.logoutDevice(device.id);
                           if (context.mounted) {
+                            final refreshed = ref
+                                .read(deviceManagerProvider)
+                                .firstWhere(
+                                  (d) => d.id == device.id,
+                                  orElse: () => device,
+                                );
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text('Logged out of ${device.name}.'),
                                 behavior: SnackBarBehavior.floating,
                               ),
                             );
-                            _showCredentialsDialog(context, device);
+                            _showCredentialsDialog(context, refreshed);
                           }
                         },
                         child: const Text('Log Out', style: TextStyle(color: Colors.white)),

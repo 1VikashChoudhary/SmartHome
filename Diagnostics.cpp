@@ -8,7 +8,11 @@
 
 Diagnostics::Diagnostics()
     : _minFreeHeap(UINT32_MAX), _lastCheck(0), _bootTime(0),
-      _rolloverCount(0), _lastMillis(0) {}
+      _rolloverCount(0), _lastMillis(0)
+#if defined(ESP32)
+    , _uptimeMux(portMUX_INITIALIZER_UNLOCKED)
+#endif
+{}
 
 void Diagnostics::begin() {
     _bootTime = millis();
@@ -32,10 +36,16 @@ void Diagnostics::begin() {
 
 void Diagnostics::loop() {
     unsigned long now = millis();
+#if defined(ESP32)
+    portENTER_CRITICAL(&_uptimeMux);
+#endif
     if (now < _lastMillis) {
         _rolloverCount++;
     }
     _lastMillis = now;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_uptimeMux);
+#endif
     if (now - _lastCheck < DIAG_UPDATE_INTERVAL) return;
     _lastCheck = now;
 
@@ -66,7 +76,8 @@ float Diagnostics::getHeapFragmentation() {
     uint32_t maxBlock = ESP.getMaxAllocHeap();
     uint32_t freeHeap = ESP.getFreeHeap();
     if (freeHeap == 0) return 100.0f;
-    return (1.0f - ((float)maxBlock / (float)freeHeap)) * 100.0f;
+    float frag = (1.0f - ((float)maxBlock / (float)freeHeap)) * 100.0f;
+    return constrain(frag, 0.0f, 100.0f);
 #endif
 }
 
@@ -90,11 +101,17 @@ String Diagnostics::getUptimeString() {
 
 unsigned long Diagnostics::getUptimeSeconds() {
     unsigned long now = millis();
+#if defined(ESP32)
+    portENTER_CRITICAL(&_uptimeMux);
+#endif
     if (now < _lastMillis) {
         _rolloverCount++;
     }
     _lastMillis = now;
     uint64_t totalMs = ((uint64_t)_rolloverCount << 32) | (uint64_t)now;
+#if defined(ESP32)
+    portEXIT_CRITICAL(&_uptimeMux);
+#endif
     return (unsigned long)(totalMs / 1000ULL);
 }
 
@@ -108,11 +125,11 @@ String Diagnostics::getChipModel() {
 #endif
 }
 
-uint8_t Diagnostics::getChipRevision() {
+uint16_t Diagnostics::getChipRevision() {
 #if defined(ESP8266)
     return 0;
 #else
-    return ESP.getChipRevision();
+    return (uint16_t)ESP.getChipRevision();
 #endif
 }
 

@@ -10,6 +10,8 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <esp_task_wdt.h>
 #include <esp_arduino_version.h>
 #include <esp_ota_ops.h>
@@ -37,10 +39,10 @@ class OTAManager {
 public:
     OTAManager();
 
-    void begin(const String& hostname, bool enableArduinoOta = false, const String& otaPassword = "");
+    void begin(const String& hostname, bool enableArduinoOta = false, const String& otaPassword = "", bool isMd5Hash = false);
     void loop();
 
-    void setArduinoOtaEnabled(bool enabled, const String& hostname = "", const String& password = "");
+    void setArduinoOtaEnabled(bool enabled, const String& hostname = "", const String& password = "", bool isMd5Hash = false);
     bool isArduinoOtaEnabled() const { return _arduinoOtaEnabled; }
 
     bool isUpdating();
@@ -59,7 +61,8 @@ public:
     // Call from the AsyncWebServer upload handler.
     // Returns true while update is in progress, false when done/failed.
     bool handleHttpUpload(uint8_t* data, size_t len, size_t index, size_t contentLen,
-                          bool isFirmware, bool isFinal);
+                          bool isFirmware, bool isFinal, const void* owner = nullptr, bool* outConflict = nullptr);
+    void abortHttpUpload(const char* reason = "Upload aborted", const void* owner = nullptr);
     bool lastHttpUpdateOk() const;
     String lastHttpError() const;
 
@@ -71,9 +74,10 @@ public:
 private:
     bool _arduinoOtaEnabled;
     String _hostname;
-    String _otaPassword;  // Dynamic admin password for ArduinoOTA
-    bool _isUpdating;
-    int _progress;
+    String _otaPassword;  // Dynamic admin password or MD5 hash for ArduinoOTA
+    bool _otaPasswordIsHash;
+    volatile bool _isUpdating;
+    volatile int _progress;
     String _statusString;
 
     void (*_progressCb)(int, int);
@@ -83,10 +87,22 @@ private:
 
     // HTTP OTA state
     bool _httpUpdateOk;
+    volatile bool _httpInProgress;
+    volatile bool _httpRejected;
+    bool _httpBegun;
+    uint8_t _httpHeaderBuf[2];
+    uint8_t _httpHeaderLen;
+    const void* _activeUploadOwner;
+    volatile unsigned long _lastHttpChunkMs;
     String _httpLastError;
     size_t _httpTotalSize;
     int _otaLastReportedPct;
     int _httpLastReportedPct;
+
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _otaMutex;
+    void ensureMutex() const;
+#endif
 
     // Rollback stability verification state
     bool _stabilityCheckPending;

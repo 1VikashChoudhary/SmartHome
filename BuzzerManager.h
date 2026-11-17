@@ -68,6 +68,8 @@ private:
     bool _toneOn;
     uint8_t _patternStep;
     unsigned long _stepStart;
+    bool _hasResumeAlarm;
+    uint8_t _resumeAlarmType;
 
     // Pattern definitions: arrays of {onMs, offMs, ...} terminated by 0
     // Gas: rapid 100/100

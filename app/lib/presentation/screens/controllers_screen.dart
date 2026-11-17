@@ -364,9 +364,9 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                     username: _userController.text.trim().isEmpty
                         ? 'admin'
                         : _userController.text.trim(),
-                    password: _passController.text.trim().isEmpty
+                    password: _passController.text.isEmpty
                         ? null
-                        : _passController.text.trim(),
+                        : _passController.text,
                   );
 
               if (context.mounted) {
@@ -1380,7 +1380,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                   label: 'FREE HEAP',
                   value: dev.freeHeap > 0
                       ? '${(dev.freeHeap / 1024).toStringAsFixed(0)} KB'
-                      : '155 KB',
+                      : '--',
                   sub: 'Internal RAM',
                   icon: Icons.memory_rounded,
                   iconColor: AppColors.tempAmber,
@@ -1403,7 +1403,12 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
             builder: (context) {
               final t = dev.telemetry;
               final pills = <Widget>[];
-              final showDht = t.dhtEnabled && !t.dhtError && (t.temperature != 0 || t.humidity > 0);
+              final activeClimates =
+                  t.climates.where((c) => c.enabled).toList();
+              final hasHum = activeClimates.isNotEmpty
+                  ? activeClimates.first.humidityEnabled
+                  : t.humidityEnabled;
+              final showDht = t.dhtEnabled && !t.dhtError;
               if (showDht) {
                 pills.add(
                   Container(
@@ -1439,42 +1444,44 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                     ),
                   ),
                 );
-                pills.add(
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.cyan.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: AppColors.cyan.withValues(alpha: 0.25),
+                if (hasHum) {
+                  pills.add(
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
                       ),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.water_drop_rounded,
-                          size: 14,
-                          color: AppColors.cyan,
+                      decoration: BoxDecoration(
+                        color: AppColors.cyan.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: AppColors.cyan.withValues(alpha: 0.25),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${t.humidity.toStringAsFixed(0)} %',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.water_drop_rounded,
+                            size: 14,
                             color: AppColors.cyan,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 4),
+                          Text(
+                            '${t.humidity.toStringAsFixed(0)} %',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.cyan,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                );
+                  );
+                }
               }
-              if (t.gasRaw > 0 || t.gasAlarm) {
+              if (t.gasEnabled && (t.gasRaw > 0 || t.gasAlarm)) {
                 pills.add(
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -1502,7 +1509,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          '${t.gasRaw} ADC',
+                          '${t.gasRaw} ${t.gasUnit}',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,

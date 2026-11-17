@@ -271,12 +271,14 @@ public:
     bool load();
     void toJson(JsonObject& obj) const;
     bool fromJson(JsonObjectConst obj, String& outError);
+    static bool validateHardwareJson(JsonObjectConst obj, String& outError);
 
     // Helper: list presets and valid pins for Web/App UI
     static void getPresetsJson(JsonArray& arr);
     static void getPinCapabilitiesJson(JsonObject& obj);
 
 private:
+    static bool parseHardwareJson(JsonObjectConst obj, HardwareConfig& newCfg, String& outError);
     StorageManager* _storage;
     HardwareConfig _config;
 

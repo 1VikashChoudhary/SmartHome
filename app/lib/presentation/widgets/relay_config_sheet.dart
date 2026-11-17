@@ -45,6 +45,8 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
   bool _isSaving = false;
   bool _isLoading = false;
   bool _isSynced = false;
+  bool _hasLocalEdits = false;
+  bool _suppressNameEditTrack = false;
 
   static const List<Map<String, dynamic>> _applianceCategories = [
     {'id': 'light', 'label': 'Light', 'icon': Icons.lightbulb_outline},
@@ -61,6 +63,11 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.relay.name);
+    _nameController.addListener(() {
+      if (!_suppressNameEditTrack && !_hasLocalEdits) {
+        _hasLocalEdits = true;
+      }
+    });
     final rawIcon = widget.relay.iconType.toLowerCase();
     _iconType = _applianceCategories.any((c) => c['id'] == rawIcon) ? rawIcon : 'light';
     _triggerMode = widget.relay.trigger == 1 ? 1 : 0;
@@ -83,10 +90,19 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
     if (relays != null &&
         widget.relay.index >= 0 &&
         widget.relay.index < relays.length) {
+      if (_hasLocalEdits) {
+        setState(() {
+          _isLoading = false;
+          _isSynced = true;
+        });
+        return;
+      }
       final live = relays[widget.relay.index];
       final rawIcon = live.iconType.toLowerCase();
       setState(() {
+        _suppressNameEditTrack = true;
         _nameController.text = live.name;
+        _suppressNameEditTrack = false;
         _iconType = _applianceCategories.any((c) => c['id'] == rawIcon) ? rawIcon : 'light';
         _triggerMode = live.trigger == 1 ? 1 : 0;
         _bootState = live.boot.clamp(0, 2);
@@ -374,7 +390,10 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                 final icon = cat['icon'] as IconData;
                 final isSelected = _iconType == id;
                 return GestureDetector(
-                  onTap: () => setState(() => _iconType = id),
+                  onTap: () => setState(() {
+                    _iconType = id;
+                    _hasLocalEdits = true;
+                  }),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     decoration: BoxDecoration(
@@ -448,7 +467,10 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                 1: 'Active HIGH',
               },
               selectedValue: _triggerMode,
-              onSelected: (val) => setState(() => _triggerMode = val),
+              onSelected: (val) => setState(() {
+                _triggerMode = val;
+                _hasLocalEdits = true;
+              }),
             ),
             const SizedBox(height: 18),
 
@@ -489,7 +511,10 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                 2: 'Always OFF',
               },
               selectedValue: _bootState,
-              onSelected: (val) => setState(() => _bootState = val),
+              onSelected: (val) => setState(() {
+                _bootState = val;
+                _hasLocalEdits = true;
+              }),
             ),
             const SizedBox(height: 18),
 
@@ -506,7 +531,10 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                                 title: 'Custom Auto-OFF (Minutes)',
                                 value: _autoOffMinutes,
                                 enabled: !isGuest,
-                                onChanged: (v) => setState(() => _autoOffMinutes = v),
+                                onChanged: (v) => setState(() {
+                                  _autoOffMinutes = v;
+                                  _hasLocalEdits = true;
+                                }),
                               ),
                             ],
                           ),
@@ -522,7 +550,10 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                                 title: 'Custom Auto-ON (Minutes)',
                                 value: _autoOnMinutes,
                                 enabled: !isGuest,
-                                onChanged: (v) => setState(() => _autoOnMinutes = v),
+                                onChanged: (v) => setState(() {
+                                  _autoOnMinutes = v;
+                                  _hasLocalEdits = true;
+                                }),
                               ),
                             ],
                           ),
@@ -575,7 +606,12 @@ class _RelayConfigSheetState extends State<RelayConfigSheet> {
                     activeTrackColor: AppColors.success.withValues(alpha: 0.35),
                     inactiveThumbColor: isDark ? const Color(0xFF64748B) : const Color(0xFFCBD5E1),
                     inactiveTrackColor: AppColors.surfaceElevated,
-                    onChanged: isGuest ? null : (v) => setState(() => _failsafe = v),
+                    onChanged: isGuest
+                        ? null
+                        : (v) => setState(() {
+                            _failsafe = v;
+                            _hasLocalEdits = true;
+                          }),
                   ),
                 ],
               ),

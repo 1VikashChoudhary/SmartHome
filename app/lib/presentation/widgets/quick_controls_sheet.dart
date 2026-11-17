@@ -49,6 +49,7 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
     (i) => QuickTileSlotConfig(slot: i + 1),
   );
   NativePlatformCapabilities _caps = const NativePlatformCapabilities();
+  bool _allowLockscreen = false;
   bool _loading = true;
   bool _handledInitialPrompt = false;
 
@@ -64,12 +65,14 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
     final results = await Future.wait([
       _native.getPlatformCapabilities(),
       _native.getTileSlots(),
+      _native.getAllowLockscreenControls(),
     ]);
     if (!mounted) return;
     setState(() {
       _caps = results[0] as NativePlatformCapabilities;
       final fetched = results[1] as List<QuickTileSlotConfig>;
       if (fetched.isNotEmpty) _slots = fetched;
+      _allowLockscreen = results[2] as bool;
       _loading = false;
     });
 
@@ -168,8 +171,9 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
       final dev = _findDevice(devices, devId);
       final relay = _findRelay(dev, relayId);
       final name = relay?.name ?? 'All Relays';
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         SnackBar(
           content: Text(
             'Pinned "$name" to Quick Settings Tile $slot.',
@@ -204,6 +208,7 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
     final labelController = TextEditingController(
       text: current.customLabel ?? '',
     );
+    bool isSaving = false;
 
     final bool? saved = await showDialog<bool>(
       context: context,
@@ -363,17 +368,29 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
                 ),
-                onPressed: () async {
-                  await _native.syncDevices(devices, force: true);
-                  await _native.setTileSlot(
-                    slot: current.slot,
-                    deviceId: selectedDevId,
-                    relayId: selectedRelayId,
-                    customLabel: labelController.text.trim(),
-                  );
-                  if (ctx.mounted) Navigator.pop(ctx, true);
-                },
-                child: const Text('Save Tile'),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        setDlgState(() => isSaving = true);
+                        await _native.syncDevices(devices, force: true);
+                        await _native.setTileSlot(
+                          slot: current.slot,
+                          deviceId: selectedDevId,
+                          relayId: selectedRelayId,
+                          customLabel: labelController.text.trim(),
+                        );
+                        if (ctx.mounted) Navigator.pop(ctx, true);
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Save Tile'),
               ),
             ],
           );
@@ -512,7 +529,40 @@ class _QuickControlsSheetState extends ConsumerState<QuickControlsSheet> {
                   ),
                 ),
                 if (!isPinMode) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(
+                      'Allow Toggling While Locked',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _allowLockscreen
+                          ? 'Tiles and Device Controls can switch relays without unlocking.'
+                          : 'Locked phone requires PIN/biometrics before switching (Recommended).',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _allowLockscreen
+                            ? AppColors.warning
+                            : AppColors.textMuted,
+                      ),
+                    ),
+                    value: _allowLockscreen,
+                    activeTrackColor: AppColors.warning,
+                    onChanged: (val) async {
+                      setState(() => _allowLockscreen = val);
+                      final ok = await _native.setAllowLockscreenControls(val);
+                      if (!ok && mounted) {
+                        setState(() => _allowLockscreen = !val);
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 6),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(

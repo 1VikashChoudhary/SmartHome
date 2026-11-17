@@ -13,19 +13,57 @@
 
 OTAManager* OTAManager::_instance = nullptr;
 
+#if defined(ESP32)
+namespace {
+class OtaMutexGuard {
+public:
+    explicit OtaMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~OtaMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void OTAManager::ensureMutex() const {
+    if (!_otaMutex) {
+        _otaMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define OTA_LOCK() ensureMutex(); OtaMutexGuard _otaLockGuard(_otaMutex)
+#else
+#define OTA_LOCK() ((void)0)
+#endif
+
 OTAManager::OTAManager()
-    : _arduinoOtaEnabled(false), _hostname(""), _otaPassword(""),
+    : _arduinoOtaEnabled(false), _hostname(""), _otaPassword(""), _otaPasswordIsHash(false),
       _isUpdating(false), _progress(0), _statusString("Idle"),
       _progressCb(nullptr), _startCb(nullptr), _endCb(nullptr), _errorCb(nullptr),
-      _httpUpdateOk(false), _httpTotalSize(0),
+      _httpUpdateOk(false), _httpInProgress(false), _httpRejected(false),
+      _httpBegun(false), _httpHeaderLen(0),
+      _activeUploadOwner(nullptr), _lastHttpChunkMs(0),
+      _httpTotalSize(0),
       _otaLastReportedPct(-1), _httpLastReportedPct(-1),
-      _stabilityCheckPending(false), _stabilityCheckStart(0) {
+      _stabilityCheckPending(false), _stabilityCheckStart(0)
+#if defined(ESP32)
+    , _otaMutex(nullptr)
+#endif
+{
+    _httpHeaderBuf[0] = 0;
+    _httpHeaderBuf[1] = 0;
     _instance = this;
 }
 
-void OTAManager::begin(const String& hostname, bool enableArduinoOta, const String& otaPassword) {
+void OTAManager::begin(const String& hostname, bool enableArduinoOta, const String& otaPassword, bool isMd5Hash) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _hostname = hostname;
     _otaPassword = otaPassword;
+    _otaPasswordIsHash = isMd5Hash;
     _arduinoOtaEnabled = false;
 
 #if defined(ESP32)
@@ -54,23 +92,38 @@ void OTAManager::begin(const String& hostname, bool enableArduinoOta, const Stri
 #endif
 
     if (enableArduinoOta) {
-        setArduinoOtaEnabled(true);
+        setArduinoOtaEnabled(true, _hostname, _otaPassword, _otaPasswordIsHash);
     } else {
         Serial.println(F("[OTA] ArduinoOTA (port 3232) disabled by default. HTTP OTA active."));
     }
 }
 
-void OTAManager::setArduinoOtaEnabled(bool enabled, const String& hostname, const String& password) {
-    if (hostname.length() > 0) _hostname = hostname;
-    if (password.length() > 0) _otaPassword = password;
+void OTAManager::setArduinoOtaEnabled(bool enabled, const String& hostname, const String& password, bool isMd5Hash) {
+    bool configChanged = false;
+    if (hostname.length() > 0 && hostname != _hostname) {
+        _hostname = hostname;
+        configChanged = true;
+    }
+    if (password.length() > 0 && (password != _otaPassword || isMd5Hash != _otaPasswordIsHash)) {
+        _otaPassword = password;
+        _otaPasswordIsHash = isMd5Hash;
+        configChanged = true;
+    }
     if (_hostname.length() == 0) _hostname = OTA_HOSTNAME_PREFIX;
-    if (_arduinoOtaEnabled == enabled) return;
+    if (_arduinoOtaEnabled == enabled && !(enabled && configChanged)) return;
+    if (_arduinoOtaEnabled && enabled && configChanged) {
+        ArduinoOTA.end();
+    }
     _arduinoOtaEnabled = enabled;
     if (_arduinoOtaEnabled) {
         ArduinoOTA.setHostname(_hostname.c_str());
-        // Use admin web password if available, fallback to hostname-based password
+        // Use admin web password (or precomputed MD5 hash) if available; fallback to hostname only when none exists
         if (_otaPassword.length() > 0) {
-            ArduinoOTA.setPassword(_otaPassword.c_str());
+            if (_otaPasswordIsHash) {
+                ArduinoOTA.setPasswordHash(_otaPassword.c_str());
+            } else {
+                ArduinoOTA.setPassword(_otaPassword.c_str());
+            }
         } else {
             ArduinoOTA.setPassword(_hostname.c_str());
         }
@@ -93,6 +146,16 @@ void OTAManager::setArduinoOtaEnabled(bool enabled, const String& hostname, cons
 void OTAManager::loop() {
     if (_arduinoOtaEnabled) {
         ArduinoOTA.handle();
+    }
+
+    // Safety net: if an HTTP OTA client drops silently mid-stream without TCP disconnect notification,
+    // abort after 30s of inactivity. Guard with lock-free check first so Core 1 loop() never stalls
+    // behind AsyncTCP's flash writes.
+    if (_httpInProgress && (millis() - _lastHttpChunkMs > 30000UL)) {
+        OTA_LOCK();
+        if (_httpInProgress && (millis() - _lastHttpChunkMs > 30000UL)) {
+            abortHttpUpload("HTTP OTA transfer timed out");
+        }
     }
 
     // Zero-Brick Guarantee: 30-second stability check
@@ -192,7 +255,7 @@ bool OTAManager::triggerManualRollback() {
 
 bool OTAManager::isUpdating() { return _isUpdating; }
 int OTAManager::getProgress() { return _progress; }
-String OTAManager::getStatusString() { return _statusString; }
+String OTAManager::getStatusString() { OTA_LOCK(); return _statusString; }
 
 void OTAManager::setProgressCallback(void (*cb)(int, int)) { _progressCb = cb; }
 void OTAManager::setStartCallback(void (*cb)()) { _startCb = cb; }
@@ -317,47 +380,116 @@ void OTAManager::onOTAError(ota_error_t error) {
 // HTTP OTA — called from WebServerManager upload handler
 // ============================================================================
 
-bool OTAManager::lastHttpUpdateOk() const { return _httpUpdateOk; }
-String OTAManager::lastHttpError() const   { return _httpLastError; }
+bool OTAManager::lastHttpUpdateOk() const { OTA_LOCK(); return _httpUpdateOk; }
+String OTAManager::lastHttpError() const   { OTA_LOCK(); return _httpLastError; }
+
+void OTAManager::abortHttpUpload(const char* reason, const void* owner) {
+    OTA_LOCK();
+    if (!_httpInProgress && !_isUpdating) return;
+    if (owner != nullptr && _activeUploadOwner != nullptr && owner != _activeUploadOwner) return;
+    _httpRejected = true;
+    _httpInProgress = false;
+    bool wasBegun = _httpBegun;
+    _httpBegun = false;
+    _httpHeaderLen = 0;
+    _activeUploadOwner = nullptr;
+    _isUpdating = false;
+    _httpUpdateOk = false;
+    _httpLastReportedPct = -1;
+    _httpLastError = (reason && reason[0]) ? String(reason) : String("Upload aborted");
+    _statusString = "Error: " + _httpLastError;
+    if (wasBegun) {
+        OTA_ABORT();
+    }
+    restoreWdt();
+    SERIAL_PRINTF("[OTA-HTTP] Aborted: %s\n", _httpLastError.c_str());
+    if (_errorCb) _errorCb(_httpLastError);
+}
 
 bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
                                    size_t index, size_t contentLen,
-                                   bool isFirmware, bool isFinal) {
+                                   bool isFirmware, bool isFinal,
+                                   const void* owner, bool* outConflict) {
+    OTA_LOCK();
+    if (outConflict) *outConflict = false;
     if (index == 0) {
-        // ---- First chunk — begin update ----
+        if (_httpInProgress || _isUpdating) {
+            if (outConflict) *outConflict = true;
+            return false;
+        }
+        // ---- First chunk — initialize state ----
+        _httpRejected = false;
+        _httpBegun = false;
+        _httpHeaderLen = 0;
+        _httpInProgress = true;
+        _activeUploadOwner = owner;
+        _lastHttpChunkMs = millis();
         _isUpdating   = true;
         _httpUpdateOk = false;
         _httpLastError.clear();
         _progress = 0;
         _httpTotalSize = contentLen; // cache for progress calculation
         _httpLastReportedPct = -1;
-
-        int command = isFirmware ? U_FLASH : U_SPIFFS;
         _statusString = isFirmware ? "Updating Firmware" : "Updating Filesystem";
+    } else if (_httpRejected || !_httpInProgress ||
+               (owner != nullptr && _activeUploadOwner != nullptr && owner != _activeUploadOwner)) {
+        return false;
+    }
 
-        // Integrity check: Verify image format (Magic 0xE9, segment count)
+    _lastHttpChunkMs = millis();
+
+    size_t dataOffset = 0;
+    if (!_httpBegun) {
         if (isFirmware) {
-            if (len >= 1 && data[0] != 0xE9) {
+            // Accumulate the first 2 bytes across chunks so 0/1-byte first chunks cannot bypass header checks.
+            while (_httpHeaderLen < 2 && dataOffset < len) {
+                _httpHeaderBuf[_httpHeaderLen++] = data[dataOffset++];
+            }
+            if (_httpHeaderLen >= 1 && _httpHeaderBuf[0] != 0xE9) {
                 _httpLastError = "Invalid firmware binary format (Magic 0xE9 missing)";
                 _statusString  = "Error: " + _httpLastError;
                 _isUpdating    = false;
-                SERIAL_PRINTF("[OTA-HTTP] Upload rejected: magic byte 0x%02X != 0xE9\n", data[0]);
+                _httpInProgress = false;
+                _httpBegun     = false;
+                _httpHeaderLen = 0;
+                _activeUploadOwner = nullptr;
+                _httpRejected  = true;
+                SERIAL_PRINTF("[OTA-HTTP] Upload rejected: magic byte 0x%02X != 0xE9\n", _httpHeaderBuf[0]);
                 if (_errorCb) _errorCb(_httpLastError);
                 return false;
             }
-            if (len >= 2) {
-                uint8_t segments = data[1];
-                if (segments == 0 || segments > 16) {
-                    _httpLastError = "Corrupted firmware image: invalid segment count (" + String(segments) + ")";
+            if (_httpHeaderLen < 2) {
+                if (isFinal) {
+                    _httpLastError = "Invalid firmware binary (truncated header)";
                     _statusString  = "Error: " + _httpLastError;
                     _isUpdating    = false;
-                    SERIAL_PRINTF("[OTA-HTTP] Upload rejected: invalid segment count %u\n", segments);
+                    _httpInProgress = false;
+                    _httpBegun     = false;
+                    _httpHeaderLen = 0;
+                    _activeUploadOwner = nullptr;
+                    _httpRejected  = true;
                     if (_errorCb) _errorCb(_httpLastError);
                     return false;
                 }
+                return true; // Wait for next chunk to inspect segment count
+            }
+            uint8_t segments = _httpHeaderBuf[1];
+            if (segments == 0 || segments > 16) {
+                _httpLastError = "Corrupted firmware image: invalid segment count (" + String(segments) + ")";
+                _statusString  = "Error: " + _httpLastError;
+                _isUpdating    = false;
+                _httpInProgress = false;
+                _httpBegun     = false;
+                _httpHeaderLen = 0;
+                _activeUploadOwner = nullptr;
+                _httpRejected  = true;
+                SERIAL_PRINTF("[OTA-HTTP] Upload rejected: invalid segment count %u\n", segments);
+                if (_errorCb) _errorCb(_httpLastError);
+                return false;
             }
         }
 
+        int command = isFirmware ? U_FLASH : U_SPIFFS;
         // ALWAYS use UPDATE_SIZE_UNKNOWN for HTTP OTA on ESP32.
         // On ESP8266, runAsync(true) and sketch space calculation are used.
 #if !defined(ESP8266)
@@ -399,25 +531,52 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
             _httpLastError = "Not enough space: " + String(OTA_ERROR_STR());
             _statusString  = "Error: " + _httpLastError;
             _isUpdating    = false;
+            _httpInProgress = false;
+            _httpBegun     = false;
+            _httpHeaderLen = 0;
+            _activeUploadOwner = nullptr;
+            _httpRejected  = true;
             SERIAL_PRINTF("[OTA-HTTP] begin() failed: %s\n", OTA_ERROR_STR());
             restoreWdt();
             if (_errorCb) _errorCb(_httpLastError);
             return false;
         }
 
+        _httpBegun = true;
         if (_startCb) _startCb();
+
+        if (isFirmware && _httpHeaderLen > 0) {
+            if (Update.write(_httpHeaderBuf, _httpHeaderLen) != _httpHeaderLen) {
+                _httpLastError = "Header write failed: " + String(OTA_ERROR_STR());
+                _statusString  = "Error: " + _httpLastError;
+                _isUpdating    = false;
+                _httpInProgress = false;
+                _httpBegun     = false;
+                _httpHeaderLen = 0;
+                _activeUploadOwner = nullptr;
+                _httpRejected  = true;
+                OTA_ABORT();
+                restoreWdt();
+                if (_errorCb) _errorCb(_httpLastError);
+                return false;
+            }
+        }
     }
 
-    // ---- Write chunk ----
+    // ---- Write remaining chunk bytes ----
 #if defined(ESP32)
     esp_task_wdt_reset(); // Feed WDT every chunk
 #else
     ESP.wdtFeed();
 #endif
-    if (Update.write(data, len) != len) {
+    size_t remainLen = len - dataOffset;
+    if (remainLen > 0 && Update.write(data + dataOffset, remainLen) != remainLen) {
         _httpLastError = "Write failed: " + String(OTA_ERROR_STR());
         _statusString  = "Error: " + _httpLastError;
         _isUpdating    = false;
+        _httpInProgress = false;
+        _activeUploadOwner = nullptr;
+        _httpRejected  = true;
         _httpLastReportedPct = -1;
         SERIAL_PRINTF("[OTA-HTTP] write() failed: %s\n", OTA_ERROR_STR());
         OTA_ABORT();
@@ -444,6 +603,8 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
     // ---- Final chunk — commit ----
     if (isFinal) {
         _httpLastReportedPct = -1;
+        _httpInProgress = false;
+        _activeUploadOwner = nullptr;
         SERIAL_PRINTF("[OTA-HTTP] Finalising, written=%u\n", written);
         if (!Update.end(true)) {
             _httpLastError = "Flash verify failed: " + String(OTA_ERROR_STR());

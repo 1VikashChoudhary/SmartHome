@@ -24,9 +24,22 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
     if (now - _lastCheck < 1000) return; // Evaluate every 1 second
     _lastCheck = now;
 
+    auto applyRuleAction = [&](uint8_t targetRelay, bool state) {
+        if (targetRelay == 0xFF) {
+            for (uint8_t ch = 0; ch < relayMgr.getRelayCount(); ch++) {
+                if (relayMgr.isChannelEnabled(ch) && !relayMgr.getManualOverride(ch)) {
+                    relayMgr.setState(ch, state);
+                }
+            }
+        } else if (targetRelay < relayMgr.getRelayCount() && !relayMgr.getManualOverride(targetRelay)) {
+            relayMgr.setState(targetRelay, state);
+        }
+    };
+
     for (uint8_t i = 0; i < _ruleCount; i++) {
         AutomationRule& r = _rules[i];
         if (!r.enabled) continue;
+        if (r.targetRelay != 0xFF && relayMgr.getManualOverride(r.targetRelay)) continue;
 
         float val = 0.0f;
         if (!readSensorValue(sensorMgr, r.sensor, r.sensorIndex, val) || isnan(val)) {
@@ -38,11 +51,7 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
                 if (val >= r.threshold) {
                     r.triggered = true;
                     bool state = (r.action == RULE_ACT_RELAY_ON);
-                    if (r.targetRelay == 0xFF) {
-                        if (state) relayMgr.allOn(); else relayMgr.allOff();
-                    } else if (r.targetRelay < MAX_RELAYS) {
-                        relayMgr.setState(r.targetRelay, state);
-                    }
+                    applyRuleAction(r.targetRelay, state);
                     SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f >= th=%.1f -> Relay %d %s\n",
                                   r.id, r.name, (int)r.sensorIndex + 1, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
                 }
@@ -60,11 +69,7 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
                 if (val <= r.threshold) {
                     r.triggered = true;
                     bool state = (r.action == RULE_ACT_RELAY_ON);
-                    if (r.targetRelay == 0xFF) {
-                        if (state) relayMgr.allOn(); else relayMgr.allOff();
-                    } else if (r.targetRelay < MAX_RELAYS) {
-                        relayMgr.setState(r.targetRelay, state);
-                    }
+                    applyRuleAction(r.targetRelay, state);
                     SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f <= th=%.1f -> Relay %d %s\n",
                                   r.id, r.name, (int)r.sensorIndex + 1, val, r.threshold, r.targetRelay + 1, state ? "ON" : "OFF");
                 }
@@ -186,11 +191,12 @@ uint8_t RuleManager::getRuleCount() {
 }
 
 uint8_t RuleManager::getNextId() {
-    uint8_t maxId = 0;
-    for (uint8_t i = 0; i < _ruleCount; i++) {
-        if (_rules[i].id > maxId) maxId = _rules[i].id;
+    for (uint16_t candidate = 1; candidate <= 255; candidate++) {
+        if (findRuleIndex((uint8_t)candidate) < 0) {
+            return (uint8_t)candidate;
+        }
     }
-    return maxId + 1;
+    return 1;
 }
 
 void RuleManager::save() {
@@ -260,6 +266,7 @@ bool RuleManager::fromJson(const JsonObject& obj, AutomationRule& rule) {
     if (rule.condition > RULE_COND_BELOW) return false;
     if (rule.action > RULE_ACT_RELAY_OFF) return false;
     if (rule.targetRelay >= MAX_RELAYS && rule.targetRelay != 0xFF) return false;
+    if (!isfinite(rule.threshold) || !isfinite(rule.hysteresis) || rule.hysteresis < 0.0f) return false;
     return true;
 }
 

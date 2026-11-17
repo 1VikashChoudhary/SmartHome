@@ -38,12 +38,13 @@ object NativeEspClient {
     fun fetchStatus(context: Context, device: NativeDevice): NativeStatusResult {
         val host = NativeControlStore.sanitizeHost(device.ip)
         if (host.isEmpty()) return NativeStatusResult(false, false, null)
-        if (device.authLocked) return NativeStatusResult(false, true, null)
+        if (device.authLocked && device.authPassword.isNullOrEmpty()) return NativeStatusResult(false, true, null)
 
         var conn: HttpURLConnection? = null
         return try {
             val url = URL("http://$host/api/status")
             conn = (url.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
                 requestMethod = "GET"
                 connectTimeout = 2500
                 readTimeout = 3500
@@ -88,7 +89,7 @@ object NativeEspClient {
     ): Pair<Boolean, Boolean> {
         val host = NativeControlStore.sanitizeHost(device.ip)
         if (host.isEmpty()) return Pair(false, false)
-        if (device.authLocked) return Pair(false, true)
+        if (device.authLocked && device.authPassword.isNullOrEmpty()) return Pair(false, true)
 
         val endpoint = if (relayId == NativeControlStore.ALL_RELAYS_ID) {
             "/api/relay/all"
@@ -107,6 +108,7 @@ object NativeEspClient {
         return try {
             val url = URL("http://$host$endpoint")
             conn = (url.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
                 requestMethod = "POST"
                 doOutput = true
                 connectTimeout = 2500

@@ -216,19 +216,32 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                   : () async {
                       final navigator =
                           Navigator.of(context, rootNavigator: true);
+                      final messenger = ScaffoldMessenger.maybeOf(context);
                       setState(() => _isMuting = true);
-                      await manager.controlBuzzer(
+                      final muted = await manager.controlBuzzer(
                         widget.deviceId,
                         action: 'mute',
                       );
                       if (!mounted) return;
                       navigator.pop();
-                      navigator.push(
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              DeviceScreen(deviceId: widget.deviceId),
-                        ),
-                      );
+                      if (!muted) {
+                        messenger?.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Could not mute buzzer. Check connection or admin permissions.',
+                            ),
+                            backgroundColor: AppColors.warning,
+                          ),
+                        );
+                      }
+                      if (!DeviceScreen.isViewing(widget.deviceId)) {
+                        navigator.push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                DeviceScreen(deviceId: widget.deviceId),
+                          ),
+                        );
+                      }
                     },
               icon: _isMuting
                   ? const SizedBox(
@@ -259,20 +272,38 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
                   ? null
                   : () async {
                       setState(() => _isShuttingOff = true);
-                      await manager.controlBuzzer(
+                      final muted = await manager.controlBuzzer(
                         widget.deviceId,
                         action: 'mute',
                       );
-                      await manager.setAllRelays(widget.deviceId, 'off');
+                      final shutoffOk = await manager.setAllRelays(
+                        widget.deviceId,
+                        'off',
+                      );
                       if (!context.mounted) return;
                       final messenger = ScaffoldMessenger.maybeOf(context);
+                      if (!shutoffOk) {
+                        setState(() => _isShuttingOff = false);
+                        messenger?.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Emergency shutoff failed! Check connection or admin permissions.',
+                            ),
+                            backgroundColor: AppColors.danger,
+                          ),
+                        );
+                        return;
+                      }
                       Navigator.pop(context);
                       messenger?.showSnackBar(
-                        const SnackBar(
+                        SnackBar(
                           content: Text(
-                            'Emergency All OFF executed and buzzer muted.',
+                            muted
+                                ? 'Emergency All OFF executed and buzzer muted.'
+                                : 'All relays turned OFF, but failed to mute buzzer.',
                           ),
-                          backgroundColor: AppColors.danger,
+                          backgroundColor:
+                              muted ? AppColors.danger : AppColors.warning,
                         ),
                       );
                     },

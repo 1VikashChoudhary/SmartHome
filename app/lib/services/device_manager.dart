@@ -103,8 +103,10 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   int _activeStreamIntervalSeconds = 10;
   bool _foregroundSyncEnabled = true;
   bool _disposed = false;
+  final Completer<void> _initCompleter = Completer<void>();
 
   bool get _isAlive => !_disposed && ref.mounted;
+  Future<void> ensureInitialized() => _initCompleter.future;
 
   @override
   List<SmartDevice> build() {
@@ -123,6 +125,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         client.dispose();
       }
       _wsClients.clear();
+      _discovery.dispose();
+      _api.dispose();
     });
 
     _init();
@@ -171,40 +175,47 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   Future<void> _init() async {
-    final saved = await _storage.loadDevices();
-    if (!_isAlive) return;
-    for (final device in saved) {
-      ApiClient.registerDeviceUsername(device.ip, device.authUsername);
-    }
-    state = saved;
-    NativeControlsService.instance.syncDevices(saved);
-
-    // The app is a companion: while it is visible, every registered controller
-    // stays synchronised at a restrained 10-second cadence. This preserves
-    // live Dashboard/Controllers data without the former 1-second flood.
-    if (_foregroundSyncEnabled && saved.isNotEmpty) {
-      await startForegroundSync();
+    try {
+      final saved = await _storage.loadDevices();
       if (!_isAlive) return;
-    }
+      for (final device in saved) {
+        ApiClient.registerDeviceUsername(device.ip, device.authUsername);
+      }
+      state = saved;
+      NativeControlsService.instance.syncDevices(saved);
 
-    // Perform auto-discovery only if no devices exist yet.
-    if (saved.isEmpty) {
-      await scanForDevices();
+      // The app is a companion: while it is visible, every registered controller
+      // stays synchronised at a restrained 10-second cadence. This preserves
+      // live Dashboard/Controllers data without the former 1-second flood.
+      if (_foregroundSyncEnabled && saved.isNotEmpty) {
+        await startForegroundSync();
+        if (!_isAlive) return;
+      }
+
+      // Perform auto-discovery only if no devices exist yet.
+      if (saved.isEmpty) {
+        await scanForDevices();
+      }
+    } finally {
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
     }
   }
 
   /// Run network scan on demand to discover new ESPs or update IPs
-  Future<void> scanForDevices() async {
-    if (!_isAlive) return;
-    if (ref.read(isScanningProvider)) return;
+  Future<int> scanForDevices() async {
+    if (!_isAlive) return 0;
+    if (ref.read(isScanningProvider)) return 0;
     ref.read(isScanningProvider.notifier).setScanning(true);
 
     try {
-      await _discovery.discoverAll(
+      final discoveredList = await _discovery.discoverAll(
         onDeviceFound: (discovered) {
           if (_isAlive) _handleDiscoveredDevice(discovered);
         },
       );
+      return discoveredList.length;
     } finally {
       if (_isAlive) {
         ref.read(isScanningProvider.notifier).setScanning(false);
@@ -251,30 +262,52 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (ip.isEmpty) return false;
 
     final client = ApiClient(defaultUsername: username);
-    final statusJson = await client.fetchStatus(ip, password: password);
-    if (!_isAlive) return false;
-    if (statusJson != null) {
-      final dev = SmartDevice.fromStatus(statusJson, ip);
-      _handleDiscoveredDevice(dev, username: username, password: password);
-      return true;
-    }
-    final discoveryDev = await client.probeDiscovery(ip);
-    if (!_isAlive) return false;
-    if (discoveryDev != null) {
-      _handleDiscoveredDevice(
-        discoveryDev,
-        username: username,
+    try {
+      final res = await client.fetchStatusDetailed(
+        ip,
         password: password,
+        username: username,
+        skipUnauthorizedCallback: true,
       );
-      return true;
+      if (!_isAlive) return false;
+      if (res.unauthorized) {
+        return false;
+      }
+      if (res.data != null) {
+        final dev = SmartDevice.fromStatus(res.data!, ip);
+        _handleDiscoveredDevice(
+          dev,
+          username: username,
+          password: password,
+          roleAuthoritative: true,
+        );
+        return true;
+      }
+      final discoveryDev = await client.probeDiscovery(ip);
+      if (!_isAlive) return false;
+      if (discoveryDev != null) {
+        if (discoveryDev.authRequired && (password == null || password.isEmpty) &&
+            (username == null || username.trim().isEmpty || username.trim().toLowerCase() == 'admin')) {
+          return false;
+        }
+        _handleDiscoveredDevice(
+          discoveryDev,
+          username: username,
+          password: password,
+        );
+        return true;
+      }
+      return false;
+    } finally {
+      client.dispose();
     }
-    return false;
   }
 
   void _handleDiscoveredDevice(
     SmartDevice discovered, {
     String? username,
     String? password,
+    bool roleAuthoritative = false,
   }) {
     if (!_isAlive) return;
     final existingIdx = state.indexWhere(
@@ -314,6 +347,15 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
           !discovered.authRequired ||
           cleanProvidedPass != null ||
           explicitGuestNoPass;
+      final resolvedExistingRole = !discovered.authRequired
+          ? 'admin'
+          : (roleAuthoritative && discovered.authRole.isNotEmpty)
+          ? discovered.authRole
+          : (username != null &&
+                username.trim().isNotEmpty &&
+                username.trim().toLowerCase() != 'admin')
+          ? 'guest'
+          : old.authRole;
       final updated = old.copyWith(
         ip: discovered.ip,
         isOnline: true,
@@ -322,6 +364,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         authLocked: missingCredentials
             ? true
             : (shouldUnlock ? false : old.authLocked),
+        authRole: resolvedExistingRole,
         authPassword: effectivePass,
         authUsername: effectiveUser,
       );
@@ -665,6 +708,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       _activeAlertKeys.remove(tempKey);
     }
 
+    final faultKey = '${finalDev.id}:sensor_fault';
+    if (!finalDev.telemetry.dhtFault && !finalDev.telemetry.probeFault) {
+      _activeAlertKeys.remove(faultKey);
+    }
+
     final newList = List<SmartDevice>.from(state);
     newList[idx] = finalDev;
     state = newList;
@@ -791,7 +839,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       _handleDeviceAuthError(dev.id, promptUser: true);
       return;
     }
-    if (relayIndex < 0 || relayIndex >= dev.relays.length) return;
+    if (relayIndex < 0 ||
+        relayIndex >= dev.relays.length ||
+        !dev.relays[relayIndex].enabled) {
+      return;
+    }
 
     final oldState = dev.relays[relayIndex].state;
     final newState = !oldState;
@@ -821,6 +873,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       relayIndex,
       newState ? 'on' : 'off',
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!_isAlive) return;
     if (!ok) {
@@ -840,6 +893,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final revList = List<SmartDevice>.from(state);
         revList[currentIdx] = latest.copyWith(relays: revRelays);
         state = revList;
+        _checkAndStartCountdownTicker();
         NativeControlsService.instance.syncDevices(revList);
       }
     }
@@ -867,6 +921,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       relayIndex,
       action,
       durationSeconds,
+      username: dev.authUsername,
       password: dev.authPassword,
     );
     if (!_isAlive) return ok;
@@ -907,6 +962,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       relayIndex,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!_isAlive) return ok;
     if (ok) {
@@ -989,15 +1045,15 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   /// Master ON / OFF for all relays on a device
-  Future<void> setAllRelays(String deviceId, String action) async {
-    if (!_isAlive) return;
+  Future<bool> setAllRelays(String deviceId, String action) async {
+    if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
-    if (idx < 0) return;
+    if (idx < 0) return false;
 
     final dev = state[idx];
     if (dev.needsAuth) {
       _handleDeviceAuthError(dev.id, promptUser: true);
-      return;
+      return false;
     }
     final oldRelays = List<RelayChannel>.from(dev.relays);
     final targetState = action == 'on';
@@ -1021,8 +1077,9 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       action,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
-    if (!_isAlive) return;
+    if (!_isAlive) return false;
     if (ok) {
       _setDeviceOnlineState(deviceId, true);
       Future.delayed(const Duration(milliseconds: 700), () {
@@ -1038,8 +1095,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         final revList = List<SmartDevice>.from(state);
         revList[currentIdx] = state[currentIdx].copyWith(relays: oldRelays);
         state = revList;
+        _checkAndStartCountdownTicker();
+        NativeControlsService.instance.syncDevices(revList);
       }
     }
+    return ok;
   }
 
   /// Assign device to room
@@ -1056,25 +1116,37 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     await _storage.saveDevices(newList);
   }
 
-  /// Update custom device name (persists to both ESP32 flash and local phone storage)
+  /// Update custom device name (persists to ESP32 flash and reverts local name on failure)
   Future<bool> updateDeviceName(String deviceId, String newName) async {
     if (!_isAlive) return false;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
 
     final dev = state[idx];
+    final prevName = dev.name;
     final updated = dev.copyWith(name: newName);
     final newList = List<SmartDevice>.from(state);
     newList[idx] = updated;
     state = newList;
 
-    await _storage.saveDevices(newList);
-    return await _api.saveDeviceConfig(
+    final ok = await _api.saveDeviceConfig(
       dev.ip,
       {'device_name': newName},
       password: dev.authPassword,
       username: dev.authUsername,
     );
+    if (!_isAlive) return ok;
+    if (ok) {
+      await _storage.saveDevices(state);
+    } else {
+      final curIdx = state.indexWhere((d) => d.id == deviceId);
+      if (curIdx >= 0) {
+        final revList = List<SmartDevice>.from(state);
+        revList[curIdx] = revList[curIdx].copyWith(name: prevName);
+        state = revList;
+      }
+    }
+    return ok;
   }
 
   /// Update stored login credentials for an existing controller and verify connectivity
@@ -1092,19 +1164,20 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final cleanPass = (password == null || password.isEmpty) ? null : password;
 
     // Verify credentials against the controller before unlocking or persisting them
-    final statusJson = await _api.fetchStatus(
+    final statusRes = await _api.fetchStatusDetailed(
       dev.ip,
       password: cleanPass,
       username: cleanUser,
       skipUnauthorizedCallback: true,
     );
-    if (!_isAlive) return statusJson != null;
+    if (!_isAlive) return statusRes.data != null;
 
     final curIdx = state.indexWhere((d) => d.id == deviceId);
-    if (curIdx < 0) return statusJson != null;
+    if (curIdx < 0) return statusRes.data != null;
     final current = state[curIdx];
 
-    if (statusJson != null) {
+    if (statusRes.data != null) {
+      final statusJson = statusRes.data!;
       ApiClient.registerDeviceUsername(current.ip, cleanUser);
       final isGuestUser = cleanUser.toLowerCase() != 'admin';
       final updated = current.copyWith(
@@ -1129,8 +1202,16 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       return true;
     }
 
-    // Credentials rejected or unreachable: keep device locked without persisting bad password
-    _handleDeviceAuthError(current.id, promptUser: false);
+    if (statusRes.unauthorized) {
+      // Explicitly rejected credentials: lock device without persisting bad password
+      _handleDeviceAuthError(current.id, promptUser: false);
+      return false;
+    }
+
+    // Controller timed out or unreachable offline: mark offline without locking auth
+    final newList = List<SmartDevice>.from(state);
+    newList[curIdx] = current.copyWith(isOnline: false);
+    state = newList;
     return false;
   }
 
@@ -1182,7 +1263,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
-    return await _api.reboot(dev.ip, password: dev.authPassword);
+    return await _api.reboot(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Fetch live hardware relay configuration directly from ESP32 flash
@@ -1228,7 +1313,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
-    return await _api.fetchConfig(dev.ip, password: dev.authPassword);
+    return await _api.fetchConfig(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Wi-Fi credentials are persisted by the selected controller. A successful
@@ -1248,6 +1337,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       ssid,
       password,
       authPassword: dev.authPassword,
+      authUsername: dev.authUsername,
     );
   }
 
@@ -1259,7 +1349,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
-    return _api.saveMqttConfig(dev.ip, config, password: dev.authPassword);
+    return _api.saveMqttConfig(
+      dev.ip,
+      config,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Save per-relay hardware configuration
@@ -1278,6 +1373,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       payload,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
     if (!_isAlive) return ok;
     if (ok) {
@@ -1297,7 +1393,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return [];
     final dev = state[idx];
-    final raw = await _api.fetchAlarms(dev.ip, password: dev.authPassword);
+    final raw = await _api.fetchAlarms(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
     if (raw == null) return [];
     return raw.map((e) => ScheduledAlarm.fromJson(e)).toList();
   }
@@ -1312,6 +1412,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       alarm.toJson(),
       password: dev.authPassword,
+      username: dev.authUsername,
     );
   }
 
@@ -1330,6 +1431,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       alarmId,
       enabled,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
   }
 
@@ -1339,7 +1441,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
-    return await _api.deleteAlarm(dev.ip, alarmId, password: dev.authPassword);
+    return await _api.deleteAlarm(
+      dev.ip,
+      alarmId,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Control Buzzer
@@ -1360,6 +1467,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     return await _api.controlBuzzer(
       dev.ip,
       payload,
+      username: dev.authUsername,
       password: dev.authPassword,
     );
   }
@@ -1390,6 +1498,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     return await _api.saveSensorCalibration(
       dev.ip,
       payload,
+      username: dev.authUsername,
       password: dev.authPassword,
     );
   }
@@ -1425,6 +1534,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       payload,
       password: dev.authPassword,
+      username: dev.authUsername,
     );
   }
 
@@ -1434,7 +1544,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return [];
     final dev = state[idx];
-    final raw = await _api.fetchLogs(dev.ip, password: dev.authPassword);
+    final raw = await _api.fetchLogs(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
     if (raw == null) return [];
     return raw.map((e) => SystemLogEntry.fromJson(e)).toList();
   }
@@ -1445,7 +1559,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
-    return await _api.clearLogs(dev.ip, password: dev.authPassword);
+    return await _api.clearLogs(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Fetch Diagnostics
@@ -1454,7 +1572,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
     final dev = state[idx];
-    final raw = await _api.fetchDiagnostics(dev.ip, password: dev.authPassword);
+    final raw = await _api.fetchDiagnostics(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
     if (raw == null) return null;
     return DeviceDiagnostics.fromJson(raw);
   }
@@ -1465,7 +1587,11 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return false;
     final dev = state[idx];
-    return await _api.factoryReset(dev.ip, password: dev.authPassword);
+    return await _api.factoryReset(
+      dev.ip,
+      password: dev.authPassword,
+      username: dev.authUsername,
+    );
   }
 
   /// Export Backup
@@ -1551,14 +1677,23 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       final newUser = config['web_user']?.toString().trim();
       final newPass = config['web_pass']?.toString();
 
+      final disablingAuth =
+          config.containsKey('web_auth') && config['web_auth'] == false;
+      final hasWebUserKey = config.containsKey('web_user');
+      final nextUsername = hasWebUserKey
+          ? ((newUser != null && newUser.isNotEmpty) ? newUser : 'admin')
+          : current.authUsername;
       final updated = current.copyWith(
         name: (newName != null && newName.isNotEmpty) ? newName : current.name,
         hostname: (newHost != null && newHost.isNotEmpty)
             ? newHost
             : current.hostname,
-        authUsername: (newUser != null && newUser.isNotEmpty)
-            ? newUser
-            : current.authUsername,
+        authRequired: config.containsKey('web_auth')
+            ? (config['web_auth'] == true)
+            : current.authRequired,
+        authLocked: disablingAuth ? false : current.authLocked,
+        authRole: disablingAuth ? 'admin' : current.authRole,
+        authUsername: nextUsername,
         authPassword: (newPass != null && newPass.isNotEmpty)
             ? newPass
             : current.authPassword,
@@ -1569,7 +1704,13 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       await _storage.saveDevices(list);
       if (!_isAlive) return ok;
       ApiClient.registerDeviceUsername(updated.ip, updated.authUsername);
-      if (config.containsKey('web_user') || config.containsKey('web_pass')) {
+      if (config.containsKey('web_auth') ||
+          config.containsKey('web_user') ||
+          config.containsKey('web_pass') ||
+          config.containsKey('guest_auth') ||
+          config.containsKey('guest_user') ||
+          config.containsKey('guest_pass') ||
+          config['guest_pass_clear'] == true) {
         _replaceForegroundStream(updated);
       }
     }
@@ -1584,6 +1725,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
 
     _wsClients[deviceId]?.dispose();
     _wsClients.remove(deviceId);
+    _refreshEpochs.remove(deviceId);
+    _refreshingDeviceIds.remove(deviceId);
     _activeAlertKeys.removeWhere((k) => k.startsWith('$deviceId:'));
 
     if (removed != null && removed.ip.isNotEmpty) {
@@ -1620,11 +1763,15 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       newList.add(provisioned.copyWith(isOnline: false));
     }
     state = newList;
+    ApiClient.registerDeviceUsername(
+      provisioned.ip,
+      provisioned.authUsername ?? 'admin',
+    );
     await _storage.saveDevices(newList);
   }
 
   /// Export the full Multi-Controller Hub configuration to a single JSON string.
-  Future<String> exportHubBackupJson({bool includeCredentials = true}) async {
+  Future<String> exportHubBackupJson({bool includeCredentials = false}) async {
     if (!_isAlive) return '';
     return await _storage.exportHubBackupJson(
       state,
@@ -1642,11 +1789,20 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       client.dispose();
     }
     _wsClients.clear();
+    _activeAlertKeys.clear();
+    _refreshEpochs.clear();
+    _refreshingDeviceIds.clear();
 
+    for (final oldDev in state) {
+      if (oldDev.ip.isNotEmpty) {
+        ApiClient.unregisterDevice(oldDev.ip);
+      }
+    }
     for (final dev in restored) {
       ApiClient.registerDeviceUsername(dev.ip, dev.authUsername);
     }
     state = restored;
+    _checkAndStartCountdownTicker();
     NativeControlsService.instance.syncDevices(restored, force: true);
 
     if (_foregroundSyncEnabled && restored.isNotEmpty) {

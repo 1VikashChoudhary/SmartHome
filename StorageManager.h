@@ -14,6 +14,8 @@
 #include <ArduinoJson.h>
 #include <LittleFS.h>
 #if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <nvs.h>
 #include <nvs_flash.h>
 #elif defined(ESP8266)
@@ -88,6 +90,10 @@ public:
 private:
     bool _initialized;
     bool _writeEnabled;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _fsMutex;
+    void ensureMutex() const;
+#endif
 
     // Create default config file if it doesn't exist
     void ensureDefaults();

@@ -15,6 +15,139 @@ class BatchOtaScreen extends ConsumerStatefulWidget {
 
   @override
   ConsumerState<BatchOtaScreen> createState() => _BatchOtaScreenState();
+
+  // `min_spiffs.csv` reserves a 0x1E0000-byte application OTA partition.
+  static const int _minimumFirmwareBytes = 10 * 1024;
+  static const int _maximumFirmwareBytes = 0x1E0000;
+  // ESP8266 4M1M / 4M2M OTA slot safely caps around ~1 MB (~1,044,464 bytes).
+  static const int _maximumEsp8266FirmwareBytes = 1044464;
+
+  /// Returns `true` when [bytes] starts with a valid ESP32 `esp_app_desc_t` magic header.
+  static bool hasEsp32AppDesc(Uint8List bytes) =>
+      bytes.length >= 36 &&
+      bytes[32] == 0x32 &&
+      bytes[33] == 0x54 &&
+      bytes[34] == 0xCD &&
+      bytes[35] == 0xAB;
+
+  /// Filters eligible online admin-unlocked controllers for a batch OTA flash.
+  /// When [selectedDeviceId] is null ("Flash ALL" mode) and [isFilesystemOta] is false,
+  /// targets are matched strictly by the binary's chip architecture header.
+  static List<SmartDevice> selectTargetDevicesForFlash({
+    required List<SmartDevice> devices,
+    required Uint8List bytes,
+    required bool isFilesystemOta,
+    String? selectedDeviceId,
+  }) {
+    if (selectedDeviceId != null) {
+      return devices
+          .where(
+            (d) =>
+                d.id == selectedDeviceId &&
+                d.isOnline &&
+                !d.isGuest &&
+                !d.needsAuth,
+          )
+          .toList();
+    }
+    final isEsp32Image = !isFilesystemOta && hasEsp32AppDesc(bytes);
+    return devices.where((d) {
+      if (!d.isOnline || d.isGuest || d.needsAuth) return false;
+      if (!isFilesystemOta) {
+        if (isEsp32Image && d.isEsp8266) return false;
+        if (!isEsp32Image && !d.isEsp8266) return false;
+      }
+      return true;
+    }).toList();
+  }
+
+  /// Validates a candidate OTA `.bin` against size, image magic, and target chip architecture.
+  static String? validateFirmwareBytes({
+    required String filename,
+    required Uint8List bytes,
+    required bool isFilesystemOta,
+    SmartDevice? targetDevice,
+  }) {
+    final name = filename.toLowerCase();
+    if (!name.endsWith('.bin')) {
+      return isFilesystemOta
+          ? 'Select a .bin filesystem image.'
+          : 'Select a .bin application firmware image.';
+    }
+    if (bytes.length < _minimumFirmwareBytes) {
+      return isFilesystemOta
+          ? 'This file is too small to be a valid filesystem image.'
+          : 'This file is too small to be SmartHome application firmware.';
+    }
+    if (bytes.length > _maximumFirmwareBytes) {
+      return 'This image is larger than this controller’s OTA partition.';
+    }
+    if (isFilesystemOta) {
+      if (targetDevice == null) {
+        return 'Filesystem OTA is restricted to a single target controller.';
+      }
+      const forbiddenArtifacts = ['merged', 'bootloader', 'partition'];
+      if (forbiddenArtifacts.any(name.contains)) {
+        return 'Select a LittleFS/SPIFFS filesystem image, not a merged, bootloader, or partition file.';
+      }
+    } else {
+      if (name.contains('8266') && bytes.length > _maximumEsp8266FirmwareBytes) {
+        return 'This ESP8266 firmware image exceeds the 1 MB OTA flash slot.';
+      }
+      if (bytes.length < 2 ||
+          bytes[0] != 0xE9 ||
+          bytes[1] == 0 ||
+          bytes[1] > 16) {
+        return 'This is not a valid application firmware image.';
+      }
+      const unsupportedArtifacts = [
+        'merged',
+        'bootloader',
+        'partition',
+        'spiffs',
+        'littlefs',
+        'fs.bin',
+      ];
+      if (unsupportedArtifacts.any(name.contains)) {
+        return 'Select the application file (for example SmartHome.ino.bin), not a merged, bootloader, partition, or filesystem image.';
+      }
+    }
+
+    final hasEsp32AppDescHeader = !isFilesystemOta && hasEsp32AppDesc(bytes);
+
+    if (!isFilesystemOta && targetDevice == null) {
+      if (name.contains('esp32') &&
+          !name.contains('esp8266') &&
+          !hasEsp32AppDescHeader) {
+        return 'The filename indicates ESP32, but this binary does not contain an ESP32 application header.';
+      }
+      if (name.contains('8266') && hasEsp32AppDescHeader) {
+        return 'The filename indicates ESP8266, but this binary contains an ESP32 application header.';
+      }
+    }
+
+    if (targetDevice != null) {
+      final dev = targetDevice;
+      if (!isFilesystemOta) {
+        if (dev.isEsp8266 && hasEsp32AppDescHeader) {
+          return 'The selected binary contains an ESP32 image header, but target is ${dev.name} (ESP8266).';
+        }
+        if (!dev.isEsp8266 && !hasEsp32AppDescHeader) {
+          return 'The selected binary does not contain an ESP32 application header, so it cannot be flashed to ${dev.name} (ESP32).';
+        }
+        if (dev.isEsp8266 && bytes.length > _maximumEsp8266FirmwareBytes) {
+          return 'This image exceeds ${dev.name}’s ESP8266 (~1 MB) OTA slot.';
+        }
+      }
+      if (dev.isEsp8266 && name.contains('esp32') && !name.contains('esp8266')) {
+        return 'The selected binary appears to be for ESP32, but target is ${dev.name} (ESP8266).';
+      }
+      if (!dev.isEsp8266 && name.contains('8266')) {
+        return 'The selected binary appears to be for ESP8266, but target is ${dev.name} (ESP32).';
+      }
+    }
+    return null;
+  }
 }
 
 class _OtaVerification {
@@ -46,14 +179,6 @@ class _OtaVerification {
 }
 
 class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
-  // `min_spiffs.csv` reserves a 0x1E0000-byte application OTA partition.
-  // Checking this before upload avoids asking a controller to erase/write an
-  // image that can never fit. The ESP32 Update library performs the final,
-  // authoritative capacity check too.
-  static const int _minimumFirmwareBytes = 10 * 1024;
-  static const int _maximumFirmwareBytes = 0x1E0000;
-  // ESP8266 4M1M / 4M2M OTA slot safely caps around ~1 MB (~1,044,464 bytes).
-  static const int _maximumEsp8266FirmwareBytes = 1044464;
   static const Duration _rebootVerificationTimeout = Duration(seconds: 45);
   static const Duration _rebootPollInterval = Duration(seconds: 2);
 
@@ -64,6 +189,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   int _selectedFileSize = 0;
   Uint8List? _firmwareBytes;
 
+  bool _isFilesystemOta = false;
   bool _isUploading = false;
   double _uploadProgress = 0.0;
   String _uploadStatusText = '';
@@ -73,6 +199,12 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   void initState() {
     super.initState();
     _selectedDeviceId = widget.preselectedDeviceId;
+  }
+
+  @override
+  void dispose() {
+    _api.dispose();
+    super.dispose();
   }
 
   Future<void> _pickFirmwareFile() async {
@@ -126,52 +258,21 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   }
 
   String? _validateFirmwareFile(String filename, Uint8List bytes, List<SmartDevice> devices) {
-    final name = filename.toLowerCase();
-    if (!name.endsWith('.bin')) {
-      return 'Select a .bin application firmware image.';
-    }
-    if (bytes.length < _minimumFirmwareBytes) {
-      return 'This file is too small to be SmartHome application firmware.';
-    }
-    if (bytes.length > _maximumFirmwareBytes) {
-      return 'This image is larger than this controller’s OTA application partition.';
-    }
-    if (name.contains('8266') && bytes.length > _maximumEsp8266FirmwareBytes) {
-      return 'This ESP8266 firmware image exceeds the 1 MB OTA flash slot.';
-    }
-    if (bytes.length < 2 ||
-        bytes[0] != 0xE9 ||
-        bytes[1] == 0 ||
-        bytes[1] > 16) {
-      return 'This is not a valid application firmware image.';
-    }
-    const unsupportedArtifacts = [
-      'merged',
-      'bootloader',
-      'partition',
-      'spiffs',
-      'littlefs',
-      'fs.bin',
-    ];
-    if (unsupportedArtifacts.any(name.contains)) {
-      return 'Select the application file (for example SmartHome.ino.bin), not a merged, bootloader, partition, or filesystem image.';
-    }
+    SmartDevice? targetDevice;
     if (_selectedDeviceId != null) {
-      final targets = devices.where((d) => d.id == _selectedDeviceId).toList();
-      if (targets.isNotEmpty) {
-        final dev = targets.first;
-        if (dev.isEsp8266 && bytes.length > _maximumEsp8266FirmwareBytes) {
-          return 'This image exceeds ${dev.name}’s ESP8266 (~1 MB) OTA slot.';
-        }
-        if (dev.isEsp8266 && name.contains('esp32') && !name.contains('esp8266')) {
-          return 'The selected binary appears to be for ESP32, but target is ${dev.name} (ESP8266).';
-        }
-        if (!dev.isEsp8266 && name.contains('8266')) {
-          return 'The selected binary appears to be for ESP8266, but target is ${dev.name} (ESP32).';
+      for (final d in devices) {
+        if (d.id == _selectedDeviceId) {
+          targetDevice = d;
+          break;
         }
       }
     }
-    return null;
+    return BatchOtaScreen.validateFirmwareBytes(
+      filename: filename,
+      bytes: bytes,
+      isFilesystemOta: _isFilesystemOta,
+      targetDevice: targetDevice,
+    );
   }
 
   Future<void> _startFlash() async {
@@ -186,25 +287,13 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
     }
 
     final devices = ref.read(deviceManagerProvider);
-    final filenameLower = (_selectedFileName ?? '').toLowerCase();
-    final bool isEsp8266Binary = filenameLower.contains('8266');
-    final bool isEsp32Binary = filenameLower.contains('esp32') && !isEsp8266Binary;
-
-    final targetDevices = _selectedDeviceId == null
-        ? devices.where((d) {
-            if (!d.isOnline || d.isGuest || d.needsAuth) return false;
-            // When flashing ALL controllers, smartly filter by architecture if binary name specifies it
-            if (isEsp8266Binary && !d.isEsp8266) return false;
-            if (isEsp32Binary && d.isEsp8266) return false;
-            return true;
-          }).toList()
-        : devices
-              .where((d) =>
-                  d.id == _selectedDeviceId &&
-                  d.isOnline &&
-                  !d.isGuest &&
-                  !d.needsAuth)
-              .toList();
+    final filename = _selectedFileName ?? '';
+    final targetDevices = BatchOtaScreen.selectTargetDevicesForFlash(
+      devices: devices,
+      bytes: _firmwareBytes!,
+      isFilesystemOta: _isFilesystemOta,
+      selectedDeviceId: _selectedDeviceId,
+    );
 
     if (targetDevices.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -219,35 +308,16 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
     }
 
     for (final dev in targetDevices) {
-      if (dev.isEsp8266 &&
-          _firmwareBytes!.length > _maximumEsp8266FirmwareBytes) {
+      final validationError = BatchOtaScreen.validateFirmwareBytes(
+        filename: filename,
+        bytes: _firmwareBytes!,
+        isFilesystemOta: _isFilesystemOta,
+        targetDevice: dev,
+      );
+      if (validationError != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Selected binary exceeds ${dev.name} (ESP8266) 1 MB OTA limit.',
-            ),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-        return;
-      }
-      if (dev.isEsp8266 && isEsp32Binary) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Selected binary is for ESP32, but target is ${dev.name} (ESP8266).',
-            ),
-            backgroundColor: AppColors.danger,
-          ),
-        );
-        return;
-      }
-      if (!dev.isEsp8266 && isEsp8266Binary) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Selected binary is for ESP8266, but target is ${dev.name} (ESP32).',
-            ),
+            content: Text(validationError),
             backgroundColor: AppColors.danger,
           ),
         );
@@ -255,16 +325,27 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
       }
     }
 
+    final bool isFs = _isFilesystemOta;
+    if (isFs && _selectedDeviceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Filesystem OTA is only allowed on a single controller.'),
+          backgroundColor: AppColors.danger,
+        ),
+      );
+      return;
+    }
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.surface,
         title: Text(
-          'Confirm Firmware OTA',
+          isFs ? 'Confirm Filesystem OTA' : 'Confirm Firmware OTA',
           style: TextStyle(color: AppColors.textPrimary),
         ),
         content: Text(
           'Target: ${targetDevices.length == 1 ? targetDevices.first.name : "${targetDevices.length} Controllers"}\n'
+          'Mode: ${isFs ? "Filesystem (LittleFS/SPIFFS)" : "Application Firmware"}\n'
           'Binary: $_selectedFileName (${(_selectedFileSize / 1024).toStringAsFixed(1)} KB)\n\n'
           'The controller(s) will reboot upon completion. Do not cut power during flashing.',
           style: TextStyle(color: AppColors.textSecondary),
@@ -311,6 +392,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
 
       final before = await _api.fetchOtaStatus(
         dev.ip,
+        username: dev.authUsername,
         password: dev.authPassword,
       );
       if (!mounted) return;
@@ -324,8 +406,10 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
       final result = await _api.uploadFirmware(
         dev.ip,
         _firmwareBytes!,
-        _selectedFileName ?? 'firmware.bin',
+        _selectedFileName ?? (isFs ? 'littlefs.bin' : 'firmware.bin'),
+        username: dev.authUsername,
         password: dev.authPassword,
+        isFilesystem: isFs,
         onProgress: (sent, total) {
           if (total > 0 && mounted) {
             setState(() {
@@ -414,6 +498,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
 
       final status = await _api.fetchOtaStatus(
         device.ip,
+        username: device.authUsername,
         password: device.authPassword,
       );
       if (!mounted) return const _OtaVerification.cancelled();
@@ -424,10 +509,17 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
           _uploadProgress = (deviceIndex + 0.92) / deviceCount;
           _deviceFlashStatus[device.id] = 'Controller is rebooting...';
         });
-      } else if (sawOffline || attempts >= 4) {
-        if (before != null && !status.differsFrom(before)) {
+      } else if (sawOffline ||
+          (!_isFilesystemOta && before != null && status.differsFrom(before)) ||
+          (!_isFilesystemOta && before != null && attempts >= 4)) {
+        if (!_isFilesystemOta && before != null && !status.differsFrom(before)) {
           return _OtaVerification.returnedUnchanged(
             'Controller returned, but reports the same version/build. Check that a newly compiled SmartHome.ino.bin was selected.',
+          );
+        }
+        if (_isFilesystemOta) {
+          return _OtaVerification.verified(
+            'Verified: filesystem updated and controller restarted.',
           );
         }
         final identity = [
@@ -599,8 +691,47 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                   ],
                   onChanged: _isUploading
                       ? null
-                      : (val) => setState(() => _selectedDeviceId = val),
+                      : (val) => setState(() {
+                            _selectedDeviceId = val;
+                            if (val == null && _isFilesystemOta) {
+                              _isFilesystemOta = false;
+                              _firmwareBytes = null;
+                              _selectedFileName = null;
+                              _selectedFileSize = 0;
+                            }
+                          }),
                 ),
+                if (validSelectedId != null) ...[
+                  const SizedBox(height: 12),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      'Filesystem Image (LittleFS / SPIFFS)',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _isFilesystemOta
+                          ? 'Flashes filesystem partition (/api/ota/upload?type=fs). Single controller only.'
+                          : 'Default: flashes main SmartHome firmware application.',
+                      style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+                    ),
+                    value: _isFilesystemOta,
+                    activeTrackColor: AppColors.warning,
+                    onChanged: _isUploading
+                        ? null
+                        : (val) => setState(() {
+                              _isFilesystemOta = val;
+                              _firmwareBytes = null;
+                              _selectedFileName = null;
+                              _selectedFileSize = 0;
+                              _uploadStatusText = '';
+                            }),
+                  ),
+                ],
               ],
             ),
           ),

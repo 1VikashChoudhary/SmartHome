@@ -32,7 +32,7 @@ public:
     uint8_t getClientCount();
 
     // Authentication
-    typedef bool (*WsAuthValidatorCallback)(const String& user, const String& pass, const String& token);
+    typedef bool (*WsAuthValidatorCallback)(const IPAddress& clientIp, const String& user, const String& pass, const String& token);
     void setAuthentication(const String& user, const String& pass);
     void setAuthValidator(WsAuthValidatorCallback cb);
 

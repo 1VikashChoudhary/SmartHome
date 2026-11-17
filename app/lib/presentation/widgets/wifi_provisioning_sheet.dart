@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/smart_device.dart';
 import '../../core/network/api_client.dart';
 import '../../core/theme/app_colors.dart';
 import '../../services/device_manager.dart';
+import '../../services/discovery_service.dart';
 import 'glass_card.dart';
 
 class WifiProvisioningSheet extends ConsumerStatefulWidget {
@@ -78,11 +80,12 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
     _deviceNameController.dispose();
     _adminUserController.dispose();
     _adminPassController.dispose();
+    _api.dispose();
     super.dispose();
   }
 
   Future<void> _probeAndScanAp({bool forceRefresh = true}) async {
-    if (!mounted) return;
+    if (!mounted || _isProbingAp || _isScanningWifi || _isProvisioning) return;
     setState(() {
       _isProbingAp = true;
       _errorText = null;
@@ -142,6 +145,7 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
   }
 
   Future<void> _provisionDevice() async {
+    if (_isProvisioning) return;
     final ssid = _ssidController.text.trim();
     final wifiPass = _wifiPassController.text;
     final devName = _deviceNameController.text.trim().isEmpty
@@ -171,6 +175,7 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
     });
 
     final apDev = _apDevice ?? await _api.probeDiscovery(_apHost);
+    if (!mounted) return;
     final sent = await _api.saveWifiConfig(
       _apHost,
       ssid,
@@ -217,9 +222,32 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
     await Future.delayed(const Duration(seconds: 3));
     if (!mounted) return;
 
-    // Trigger LAN discovery scan so the newly onboarded controller is found on the home router
-    manager.scanForDevices();
+    // Only scan LAN immediately if a non-SoftAP private subnet is reachable
+    // (e.g., OS already switched back to router Wi-Fi or wired LAN is active).
+    bool hasNonApLan = false;
+    try {
+      final rawIfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      final targets = rawIfaces
+          .map(
+            (i) => (
+              name: i.name,
+              addresses: i.addresses.map((a) => a.address).toList(),
+            ),
+          )
+          .toList();
+      final resolved = DiscoveryService.resolveLanSubnets(interfaces: targets);
+      hasNonApLan = resolved.subnets.any((s) => s != '192.168.4');
+    } catch (_) {}
 
+    if (hasNonApLan) {
+      manager.scanForDevices();
+    }
+
+    if (!mounted) return;
     setState(() {
       _isProvisioning = false;
       _statusStepText = null;
@@ -230,7 +258,9 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(
-          '$devName configured for "$ssid" ($_selectedRoom)! Scanning LAN...',
+          hasNonApLan
+              ? '$devName configured for "$ssid" ($_selectedRoom)! Scanning LAN...'
+              : '$devName configured for "$ssid" ($_selectedRoom)! Reconnect Wi-Fi to "$ssid" and tap Scan.',
         ),
         backgroundColor: AppColors.success,
       ),

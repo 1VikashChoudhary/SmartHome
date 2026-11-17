@@ -45,6 +45,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     _ipController.dispose();
     _userController.dispose();
     _passController.dispose();
+    _api.dispose();
     super.dispose();
   }
 
@@ -92,6 +93,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
         _passController.clear();
         final promptReq = ref.read(authPromptProvider);
         if (promptReq != null) {
+          ref.read(authPromptProvider.notifier).clear();
           final devices = ref.read(deviceManagerProvider);
           final idx = devices.indexWhere((d) => d.id == promptReq.deviceId);
           if (idx >= 0 && devices[idx].needsAuth) {
@@ -126,6 +128,33 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     }
   }
 
+  Future<void> _triggerRadarScan(DeviceManager manager) async {
+    final beforeIds = ref.read(deviceManagerProvider).map((d) => d.id).toSet();
+    final foundCount = await manager.scanForDevices();
+    if (!mounted) return;
+    final afterIds = ref.read(deviceManagerProvider).map((d) => d.id).toSet();
+    final newlyAdded = afterIds.difference(beforeIds).length;
+
+    final String message;
+    final Color bgColor;
+    if (foundCount == 0) {
+      message = 'Scan complete: no SmartHome controllers found on local network.';
+      bgColor = AppColors.warning;
+    } else if (newlyAdded > 0) {
+      message = 'Found $newlyAdded new device${newlyAdded == 1 ? '' : 's'} ($foundCount total online).';
+      bgColor = AppColors.success;
+    } else {
+      message = 'Scan complete: $foundCount device${foundCount == 1 ? '' : 's'} responded (no new devices).';
+      bgColor = AppColors.accent;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: bgColor,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceManagerProvider);
@@ -148,7 +177,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   )
                 : const Icon(Icons.refresh),
             tooltip: 'Scan Now',
-            onPressed: isScanning ? null : () => manager.scanForDevices(),
+            onPressed: isScanning ? null : () => _triggerRadarScan(manager),
           ),
         ],
       ),
@@ -403,14 +432,15 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                         : const Icon(Icons.search, size: 18),
                     label: Text(
                       isScanning
-                          ? 'Scanning Network (takes ~4s)...'
+                          ? 'Scanning Network (takes ~3s)...'
                           : 'Scan For New Device',
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13,
                       ),
                     ),
-                    onPressed: isScanning ? null : () => manager.scanForDevices(),
+                    onPressed:
+                        isScanning ? null : () => _triggerRadarScan(manager),
                   ),
                 ),
               ],

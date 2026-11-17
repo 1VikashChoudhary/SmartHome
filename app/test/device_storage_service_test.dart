@@ -130,5 +130,33 @@ void main() {
         expect(await service.loadMonitoringDeviceId(), isNull);
       },
     );
+
+    test(
+      'deleteDeviceCredentials serializes after in-flight saveDevices',
+      () async {
+        final service = DeviceStorageService();
+        final secure = FlutterSecureStorage();
+        final dev = SmartDevice(
+          id: 'race_dev_1',
+          ip: '192.168.1.99',
+          mac: 'AA:BB:CC:DD:EE:01',
+          hostname: 'smarthome',
+          name: 'Race Test',
+          authRequired: true,
+          authRole: 'admin',
+          authPassword: 'racePassword123',
+        );
+
+        await Future.wait([
+          service.saveDevices([dev]),
+          service.deleteDeviceCredentials('race_dev_1'),
+        ]);
+
+        expect(
+          await secure.read(key: 'smarthome_device_pass_race_dev_1'),
+          isNull,
+        );
+      },
+    );
   });
 }

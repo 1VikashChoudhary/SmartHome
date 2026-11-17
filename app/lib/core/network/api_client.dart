@@ -53,6 +53,7 @@ class ApiClient {
   static void Function(String host)? onUnauthorized;
   final Dio _dio;
   final String? defaultUsername;
+  DateTime? _lastConnectionResetAt;
 
   ApiClient({this.defaultUsername})
     : _dio = Dio(
@@ -75,7 +76,9 @@ class ApiClient {
               _usernameByHost[_hostKey(options.uri.host, options.uri.port)];
           final user = (requestedUser != null && requestedUser.isNotEmpty)
               ? requestedUser
-              : knownUser;
+              : ((defaultUsername != null && defaultUsername!.trim().isNotEmpty)
+                    ? defaultUsername!.trim()
+                    : knownUser);
           final hasPassword = password != null && password.isNotEmpty;
           final hasCustomUser =
               user != null &&
@@ -98,9 +101,14 @@ class ApiClient {
               (error.type == DioExceptionType.connectionError ||
                   error.type == DioExceptionType.connectionTimeout ||
                   error.type == DioExceptionType.receiveTimeout)) {
-            // Discard stale pooled sockets after AP-bridge roaming so retries
-            // open a fresh socket with updated ARP/L2 routing.
-            resetConnections();
+            final now = DateTime.now();
+            if (_lastConnectionResetAt == null ||
+                now.difference(_lastConnectionResetAt!).inSeconds >= 3) {
+              _lastConnectionResetAt = now;
+              // Discard stale pooled sockets after AP-bridge roaming so retries
+              // open a fresh socket with updated ARP/L2 routing.
+              resetConnections();
+            }
           }
           final skipUnauthorized =
               error.requestOptions.extra['smarthome_skip_unauthorized'] == true;
@@ -135,13 +143,26 @@ class ApiClient {
     }
   }
 
-  static void registerDeviceUsername(String ipOrHost, String? username) {
+  void dispose() {
+    _dio.close(force: true);
+  }
+
+  static (String host, int port) _parseHostAndPort(String ipOrHost) {
     final host = sanitizeHost(ipOrHost);
+    if (host.isEmpty) return ('', 80);
+    final parsed = Uri.tryParse('http://$host');
+    if (parsed != null && parsed.host.isNotEmpty) {
+      final port = parsed.hasPort ? parsed.port : 80;
+      return (parsed.host, port);
+    }
+    return (host, 80);
+  }
+
+  static void registerDeviceUsername(String ipOrHost, String? username) {
+    final (host, port) = _parseHostAndPort(ipOrHost);
     if (host.isEmpty) return;
-    final parts = host.split(':');
-    final port = parts.length > 1 ? int.tryParse(parts.last) ?? 80 : 80;
     _usernameByHost[_hostKey(
-      parts.first,
+      host,
       port,
     )] = (username == null || username.trim().isEmpty)
         ? 'admin'
@@ -149,20 +170,16 @@ class ApiClient {
   }
 
   static void unregisterDevice(String ipOrHost) {
-    final host = sanitizeHost(ipOrHost);
+    final (host, port) = _parseHostAndPort(ipOrHost);
     if (host.isEmpty) return;
-    final parts = host.split(':');
-    final port = parts.length > 1 ? int.tryParse(parts.last) ?? 80 : 80;
-    _usernameByHost.remove(_hostKey(parts.first, port));
+    _usernameByHost.remove(_hostKey(host, port));
   }
 
   @visibleForTesting
   static bool hasRegisteredUsername(String ipOrHost) {
-    final host = sanitizeHost(ipOrHost);
+    final (host, port) = _parseHostAndPort(ipOrHost);
     if (host.isEmpty) return false;
-    final parts = host.split(':');
-    final port = parts.length > 1 ? int.tryParse(parts.last) ?? 80 : 80;
-    return _usernameByHost.containsKey(_hostKey(parts.first, port));
+    return _usernameByHost.containsKey(_hostKey(host, port));
   }
 
   static String _hostKey(String host, int port) =>
@@ -187,8 +204,8 @@ class ApiClient {
     }
     if (username != null && username.trim().isNotEmpty) {
       extra['smarthome_auth_username'] = username.trim();
-    } else if (password != null && password.isNotEmpty) {
-      extra['smarthome_auth_username'] = defaultUsername;
+    } else if (defaultUsername != null && defaultUsername!.trim().isNotEmpty) {
+      extra['smarthome_auth_username'] = defaultUsername!.trim();
     }
     if (skipUnauthorizedCallback) {
       extra['smarthome_skip_unauthorized'] = true;
@@ -202,12 +219,17 @@ class ApiClient {
   }
 
   /// Fast discovery probe (unauthenticated)
-  Future<SmartDevice?> probeDiscovery(String ip) async {
+  Future<SmartDevice?> probeDiscovery(
+    String ip, {
+    CancelToken? cancelToken,
+  }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/discovery'),
+        cancelToken: cancelToken,
         options: Options(
-          receiveTimeout: const Duration(milliseconds: 3000),
+          connectTimeout: const Duration(milliseconds: 1800),
+          receiveTimeout: const Duration(milliseconds: 2500),
           persistentConnection: false,
           headers: const {'Accept': 'application/json', 'Connection': 'close'},
           extra: {'smarthome_skip_connection_reset': true},
@@ -216,16 +238,23 @@ class ApiClient {
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
         if (data is String) data = jsonDecode(data);
-        if (data is Map<String, dynamic>) {
-          return SmartDevice.fromDiscovery(data, sanitizeHost(ip));
+        if (data is Map) {
+          final map = Map<String, dynamic>.from(data);
+          final isSmartHomePayload =
+              map['service'] == 'smarthome' ||
+              map.containsKey('device_id') ||
+              (map.containsKey('mac') && map.containsKey('num_relays'));
+          if (isSmartHomePayload) {
+            return SmartDevice.fromDiscovery(map, sanitizeHost(ip));
+          }
         }
       }
     } catch (_) {}
     return null;
   }
 
-  /// Full status fetch
-  Future<Map<String, dynamic>?> fetchStatus(
+  /// Full status fetch with explicit 401 unauthorized reporting
+  Future<({Map<String, dynamic>? data, bool unauthorized})> fetchStatusDetailed(
     String ip, {
     String? password,
     String? username,
@@ -244,11 +273,29 @@ class ApiClient {
         dynamic data = res.data;
         if (data is String) data = jsonDecode(data);
         if (data is Map) {
-          return Map<String, dynamic>.from(data);
+          return (data: Map<String, dynamic>.from(data), unauthorized: false);
         }
       }
+    } on DioException catch (e) {
+      return (data: null, unauthorized: e.response?.statusCode == 401);
     } catch (_) {}
-    return null;
+    return (data: null, unauthorized: false);
+  }
+
+  /// Full status fetch
+  Future<Map<String, dynamic>?> fetchStatus(
+    String ip, {
+    String? password,
+    String? username,
+    bool skipUnauthorizedCallback = false,
+  }) async {
+    final res = await fetchStatusDetailed(
+      ip,
+      password: password,
+      username: username,
+      skipUnauthorizedCallback: skipUnauthorizedCallback,
+    );
+    return res.data;
   }
 
   /// Relay control: action = 'toggle', 'on', 'off'
@@ -257,12 +304,13 @@ class ApiClient {
     int relayIndex,
     String action, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/relay'),
         data: {'id': relayIndex, 'action': action},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -275,12 +323,13 @@ class ApiClient {
     String ip,
     String action, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/relay/all'),
         data: {'action': action},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -295,12 +344,13 @@ class ApiClient {
     String action,
     int durationSec, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/relay/timer'),
         data: {'id': relayIndex, 'action': action, 'duration': durationSec},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -313,12 +363,13 @@ class ApiClient {
     String ip,
     int relayIndex, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/relay/timer'),
         data: {'id': relayIndex, 'action': 'cancel'},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -330,11 +381,12 @@ class ApiClient {
   Future<List<Map<String, dynamic>>?> fetchRules(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/rules'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -352,12 +404,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> ruleData, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/rule'),
         data: ruleData,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -371,12 +424,13 @@ class ApiClient {
     int ruleId,
     bool enabled, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/rule'),
         data: {'id': ruleId, 'en': enabled},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -385,12 +439,17 @@ class ApiClient {
   }
 
   /// Delete Automation Rule
-  Future<bool> deleteRule(String ip, int ruleId, {String? password}) async {
+  Future<bool> deleteRule(
+    String ip,
+    int ruleId, {
+    String? password,
+    String? username,
+  }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/rule'),
         data: {'id': ruleId, 'delete': true},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -398,10 +457,10 @@ class ApiClient {
     }
   }
 
-  /// Upload an application image using the same multipart contract as `/update`.
+  /// Upload an application or filesystem image using the same multipart contract as `/update`.
   ///
   /// A successful result only means the ESP32 validated and committed the
-  /// inactive OTA partition. Call [fetchOtaStatus] after the scheduled reboot
+  /// inactive OTA partition or LittleFS slot. Call [fetchOtaStatus] after the scheduled reboot
   /// before presenting the update as verified.
   Future<FirmwareUploadResult> uploadFirmware(
     String ip,
@@ -409,16 +468,23 @@ class ApiClient {
     String filename, {
     void Function(int sent, int total)? onProgress,
     String? password,
+    String? username,
+    bool isFilesystem = false,
   }) async {
     try {
       final formData = FormData.fromMap({
         'file': MultipartFile.fromBytes(fileBytes, filename: filename),
       });
 
-      final opts = _authOptions(password, timeout: const Duration(minutes: 2));
+      final opts = _authOptions(
+        password,
+        username: username,
+        timeout: const Duration(minutes: 2),
+      );
       opts.sendTimeout = const Duration(minutes: 2);
+      final typeParam = isFilesystem ? 'fs' : 'firmware';
       final res = await _dio.post(
-        _url(ip, '/api/ota/upload?type=firmware'),
+        _url(ip, '/api/ota/upload?type=$typeParam'),
         data: formData,
         options: opts,
         onSendProgress: onProgress,
@@ -451,12 +517,20 @@ class ApiClient {
   /// Reads the controller's post-reboot firmware identity without using a
   /// cached response. A null value means that the controller has not yet
   /// returned (or cannot be reached/authenticated), never a successful update.
-  Future<OtaStatus?> fetchOtaStatus(String ip, {String? password}) async {
+  Future<OtaStatus?> fetchOtaStatus(
+    String ip, {
+    String? password,
+    String? username,
+  }) async {
     try {
       final nonce = DateTime.now().microsecondsSinceEpoch;
       final res = await _dio.get(
         _url(ip, '/api/ota/status?_=$nonce'),
-        options: _authOptions(password, timeout: const Duration(seconds: 4)),
+        options: _authOptions(
+          password,
+          username: username,
+          timeout: const Duration(seconds: 4),
+        ),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -486,11 +560,11 @@ class ApiClient {
   }
 
   /// Reboot device
-  Future<bool> reboot(String ip, {String? password}) async {
+  Future<bool> reboot(String ip, {String? password, String? username}) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/reboot'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -502,11 +576,12 @@ class ApiClient {
   Future<List<Map<String, dynamic>>?> fetchAlarms(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/alarms'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -524,12 +599,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> alarmData, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/alarm'),
         data: alarmData,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -543,12 +619,13 @@ class ApiClient {
     int alarmId,
     bool enabled, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/alarm'),
         data: {'id': alarmId, 'en': enabled},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -557,12 +634,17 @@ class ApiClient {
   }
 
   /// Delete alarm schedule
-  Future<bool> deleteAlarm(String ip, int alarmId, {String? password}) async {
+  Future<bool> deleteAlarm(
+    String ip,
+    int alarmId, {
+    String? password,
+    String? username,
+  }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/alarm'),
         data: {'id': alarmId, 'delete': true},
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -574,11 +656,12 @@ class ApiClient {
   Future<List<Map<String, dynamic>>?> fetchLogs(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/logs'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -596,11 +679,15 @@ class ApiClient {
   }
 
   /// Clear System Event Logs
-  Future<bool> clearLogs(String ip, {String? password}) async {
+  Future<bool> clearLogs(
+    String ip, {
+    String? password,
+    String? username,
+  }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/logs/clear'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -612,11 +699,12 @@ class ApiClient {
   Future<Map<String, dynamic>?> fetchDiagnostics(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/diagnostics'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -656,11 +744,12 @@ class ApiClient {
   Future<Map<String, dynamic>?> fetchConfig(
     String ip, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.get(
         _url(ip, '/api/config'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       if (res.statusCode == 200 && res.data != null) {
         dynamic data = res.data;
@@ -699,6 +788,7 @@ class ApiClient {
     String ssid,
     String password, {
     String? authPassword,
+    String? authUsername,
     String? deviceName,
     bool? webAuth,
     String? webUser,
@@ -719,7 +809,7 @@ class ApiClient {
       final res = await _dio.post(
         _url(ip, '/api/config/wifi'),
         data: payload,
-        options: _authOptions(authPassword),
+        options: _authOptions(authPassword, username: authUsername),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -733,6 +823,7 @@ class ApiClient {
     String ip, {
     bool forceRefresh = false,
     String? authPassword,
+    String? authUsername,
   }) async {
     for (int attempt = 0; attempt < 6; attempt++) {
       try {
@@ -741,6 +832,7 @@ class ApiClient {
           _url(ip, '/api/wifi/scan$query'),
           options: _authOptions(
             authPassword,
+            username: authUsername,
             timeout: const Duration(seconds: 5),
           ),
         );
@@ -750,7 +842,9 @@ class ApiClient {
           if (data is Map) {
             final scanning = data['scanning'] == true;
             if (scanning) {
-              await Future.delayed(const Duration(milliseconds: 1400));
+              if (attempt < 5) {
+                await Future.delayed(const Duration(milliseconds: 1400));
+              }
               continue;
             }
             final rawNets = data['networks'];
@@ -780,12 +874,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> config, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/config/mqtt'),
         data: config,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -798,12 +893,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> relayConfig, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/relay/config'),
         data: relayConfig,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -816,12 +912,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> sensorData, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/config/sensor'),
         data: sensorData,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -834,12 +931,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> buzzerData, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/buzzer'),
         data: buzzerData,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -852,12 +950,13 @@ class ApiClient {
     String ip,
     Map<String, dynamic> lcdData, {
     String? password,
+    String? username,
   }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/config/lcd'),
         data: lcdData,
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {
@@ -866,11 +965,15 @@ class ApiClient {
   }
 
   /// Factory reset ESP32 controller
-  Future<bool> factoryReset(String ip, {String? password}) async {
+  Future<bool> factoryReset(
+    String ip, {
+    String? password,
+    String? username,
+  }) async {
     try {
       final res = await _dio.post(
         _url(ip, '/api/factory-reset'),
-        options: _authOptions(password),
+        options: _authOptions(password, username: username),
       );
       return res.statusCode == 200;
     } catch (_) {

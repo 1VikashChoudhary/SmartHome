@@ -53,6 +53,7 @@ public:
     AsyncWebServer& getServer();
 
     // Authentication helpers (Multi-User Privilege Tiers: Admin vs. Family / Guest)
+    bool isAuthConfigured() const;
     bool isAuthEnabled() const;
     bool isGuestAuthEnabled() const { return _guestAuthEnabled; }
     const String& getGuestUsername() const { return _guestUsername; }
@@ -66,9 +67,20 @@ public:
 
     // Safe reboot interface
     bool isRebootRequested() const { return _rebootRequested; }
+    bool consumeRollbackRequested() {
+        bool was = _rollbackRequested;
+        _rollbackRequested = false;
+        return was;
+    }
     unsigned long getRebootRequestTime() const { return _rebootRequestTime; }
     unsigned long getRebootDelay() const { return _rebootDelay; }
     void requestReboot(unsigned long delayMs = 1000);
+    void requestRollbackReboot(unsigned long delayMs = 1000);
+
+    // Rate limiting interface (shared across HTTP and WebSocket auth)
+    bool isRateLimited(const IPAddress& ip);
+    void recordFailedAttempt(const IPAddress& ip);
+    void resetRateLimit(const IPAddress& ip);
 
 private:
     AsyncWebServer _server;
@@ -92,6 +104,7 @@ private:
 
     // Reboot state
     volatile bool _rebootRequested;
+    volatile bool _rollbackRequested;
     unsigned long _rebootRequestTime;
     unsigned long _rebootDelay;
 
@@ -110,8 +123,14 @@ private:
     String _guestPasswordHash;
 
     String _wsToken;
+    String _wsGuestToken;
     void regenerateWsToken();
     AuthRole authenticateRequest(AsyncWebServerRequest* req);
+    AuthRole authenticateBasicCredentials(AsyncWebServerRequest* req) const;
+    bool applyWifiOnboardingSettings(AsyncWebServerRequest* req, const String& deviceName,
+                                     bool hasAuthFields, bool webAuth, const String& webUser,
+                                     const String& webPass, bool updateWebAuthFlag,
+                                     const String& apPass = "", bool apPassClear = false);
 
     // Rate Limiting & Security Hardening
     struct RateLimitEntry {
@@ -123,12 +142,12 @@ private:
     static const int RATE_LIMIT_CACHE_SIZE = 8;
     RateLimitEntry _rateLimits[RATE_LIMIT_CACHE_SIZE];
 
-    bool isRateLimited(const IPAddress& ip);
-    void recordFailedAttempt(const IPAddress& ip);
-    void resetRateLimit(const IPAddress& ip);
     static bool constantTimeCompare(const String& a, const String& b);
     static String sha256Hex(const String& input);
+    static String hashPasswordSalted(const String& pass);
+    static bool verifyPasswordHash(const String& pass, const String& storedHash);
     static String md5Hex(const String& input);
+    static String escapeHtml(const String& input);
 
     // Route setup
     void setupPageRoutes();
@@ -142,7 +161,10 @@ private:
 
     // Request body helpers
     bool collectJsonBody(AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total, JsonDocument& doc);
+    bool authorizeAndCollectJson(AsyncWebServerRequest* req, AuthRole requiredRole,
+                                 uint8_t* data, size_t len, size_t index, size_t total, JsonDocument& doc);
     void cleanTempObject(AsyncWebServerRequest* req);
+    void finishEmptyOrTempBody(AsyncWebServerRequest* req, AuthRole requiredRole = AUTH_ROLE_GUEST);
 };
 
 #endif // WEB_SERVER_MANAGER_H

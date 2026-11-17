@@ -122,7 +122,12 @@ private:
     OneShotTimer _timers[MAX_RELAYS];
 
     // EMI lockout — blanking period after any relay switches
+    bool _hasSwitched;
     unsigned long _lastRelaySwitchTime;
+
+#if defined(ESP32)
+    mutable portMUX_TYPE _mux;
+#endif
 
     // Non-blocking anti-brownout staggered energization (120ms spacing between coils)
     static const unsigned long RELAY_STAGGER_MS = 120;

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../core/models/smart_device.dart';
+import '../core/network/network_utils.dart';
 import 'native_controls_service.dart';
 
 class DeviceStorageService {
@@ -39,12 +40,19 @@ class DeviceStorageService {
 
       // Restore passwords and usernames from secure storage (supports passwordless guest logins)
       for (int i = 0; i < devices.length; i++) {
-        final securePass = await _secureStorage.read(
-          key: _keyPassPrefix + devices[i].id,
-        );
-        final secureUser = await _secureStorage.read(
-          key: _keyUserPrefix + devices[i].id,
-        );
+        String? securePass;
+        String? secureUser;
+        try {
+          securePass = await _secureStorage.read(
+            key: _keyPassPrefix + devices[i].id,
+          );
+          secureUser = await _secureStorage.read(
+            key: _keyUserPrefix + devices[i].id,
+          );
+        } catch (_) {
+          // Preserve device entry if Android Keystore experiences a transient read error
+          continue;
+        }
         final effectiveUser = (secureUser != null && secureUser.isNotEmpty)
             ? secureUser
             : devices[i].authUsername;
@@ -60,12 +68,14 @@ class DeviceStorageService {
           }
           if (devices[i].authPassword != null &&
               devices[i].authPassword!.isNotEmpty) {
-            // Legacy migration: password existed in SharedPreferences JSON, migrate to secure storage
-            await _secureStorage.write(
-              key: _keyPassPrefix + devices[i].id,
-              value: devices[i].authPassword!,
-            );
-            needsMigrationResave = true;
+            try {
+              // Legacy migration: password existed in SharedPreferences JSON, migrate to secure storage
+              await _secureStorage.write(
+                key: _keyPassPrefix + devices[i].id,
+                value: devices[i].authPassword!,
+              );
+              needsMigrationResave = true;
+            } catch (_) {}
           }
         }
       }
@@ -154,16 +164,18 @@ class DeviceStorageService {
   }
 
   /// Remove a device's secure credentials when unregistered
-  Future<void> deleteDeviceCredentials(String deviceId) async {
-    await _secureStorage.delete(key: _keyPassPrefix + deviceId);
-    await _secureStorage.delete(key: _keyUserPrefix + deviceId);
+  Future<void> deleteDeviceCredentials(String deviceId) {
+    return _enqueueWrite(() async {
+      await _secureStorage.delete(key: _keyPassPrefix + deviceId);
+      await _secureStorage.delete(key: _keyUserPrefix + deviceId);
+    });
   }
 
   /// Export the entire Multi-Controller Hub configuration (paired controllers,
   /// room assignments, custom icons, custom rooms, and preferences) to a single JSON string.
   Future<String> exportHubBackupJson(
     List<SmartDevice> currentDevices, {
-    bool includeCredentials = true,
+    bool includeCredentials = false,
   }) async {
     final rooms = await loadRooms();
     final monitoringDevice = await loadMonitoringDeviceId();
@@ -208,9 +220,28 @@ class DeviceStorageService {
       final restoredDevices = <SmartDevice>[];
       for (final item in rawDevices) {
         if (item is Map) {
-          restoredDevices.add(
-            SmartDevice.fromStorageJson(Map<String, dynamic>.from(item)),
-          );
+          final devMap = Map<String, dynamic>.from(item);
+          final rawIp = devMap['ip']?.toString() ?? '';
+          final cleanIp = sanitizeHost(rawIp);
+          if (cleanIp.isEmpty ||
+              RegExp(r'[\s\x00-\x1F\x7F@#?\\]').hasMatch(cleanIp)) {
+            continue;
+          }
+          devMap['ip'] = cleanIp;
+
+          final rawHostname = devMap['hostname']?.toString() ?? '';
+          final cleanHostname = sanitizeHost(rawHostname);
+          devMap['hostname'] = cleanHostname.isNotEmpty
+              ? cleanHostname
+              : 'smarthome';
+
+          final dev = SmartDevice.fromStorageJson(devMap);
+          if (dev.id.trim().isEmpty ||
+              dev.numRelays < 0 ||
+              dev.numRelays > 16) {
+            continue;
+          }
+          restoredDevices.add(dev);
         }
       }
 

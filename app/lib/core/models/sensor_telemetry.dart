@@ -12,6 +12,17 @@ int _parseInt(dynamic v, int fallback) {
   return fallback;
 }
 
+bool _parseBool(dynamic v, bool fallback) {
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) {
+    final s = v.trim().toLowerCase();
+    if (s == 'true' || s == '1' || s == 'yes' || s == 'on') return true;
+    if (s == 'false' || s == '0' || s == 'no' || s == 'off') return false;
+  }
+  return fallback;
+}
+
 /// Returns true when [label] contains a user-defined name rather than a
 /// firmware-generated placeholder such as `"Climate 1"` or `"Tank #2"`.
 bool isCustomSensorLabel(String label, String defaultPrefix) {
@@ -65,17 +76,17 @@ class ClimateReading {
     final parsedType = _parseInt(json['type'], 0);
     return ClimateReading(
       index: _parseInt(json['index'], 0),
-      enabled: json['enabled'] as bool? ?? false,
+      enabled: _parseBool(json['enabled'], false),
       type: parsedType,
       typeName: json['type_name']?.toString() ?? '',
       label: json['label']?.toString() ?? '',
       temperature: _parseDouble(json['temperature'], 0.0),
       humidity: _parseDouble(json['humidity'], 0.0),
       pressure: _parseDouble(json['pressure'], 0.0),
-      barometer: json['barometer'] as bool? ?? false,
-      humidityEnabled: json['humidity_enabled'] as bool? ?? (parsedType != 7),
-      fault: json['fault'] as bool? ?? false,
-      tempAlarm: json['temp_alarm'] as bool? ?? false,
+      barometer: _parseBool(json['barometer'], false),
+      humidityEnabled: _parseBool(json['humidity_enabled'], parsedType != 7),
+      fault: _parseBool(json['fault'], false),
+      tempAlarm: _parseBool(json['temp_alarm'], false),
       tempOffset: _parseDouble(json['temp_offset'], 0.0),
       humOffset: _parseDouble(json['hum_offset'], 0.0),
     );
@@ -121,7 +132,7 @@ class LightReading {
 
   factory LightReading.fromJson(Map<String, dynamic> json) => LightReading(
     index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
+    enabled: _parseBool(json['enabled'], false),
     i2cAddr: _parseInt(json['i2c_addr'], 0x23),
     label: json['label']?.toString() ?? '',
     lux: _parseDouble(json['lux'], 0.0),
@@ -160,10 +171,10 @@ class MotionReading {
 
   factory MotionReading.fromJson(Map<String, dynamic> json) => MotionReading(
     index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
+    enabled: _parseBool(json['enabled'], false),
     type: _parseInt(json['type'], 0),
     label: json['label']?.toString() ?? '',
-    detected: json['detected'] as bool? ?? false,
+    detected: _parseBool(json['detected'], false),
     ageSeconds: _parseInt(json['age_s'], 99999),
   );
 
@@ -199,10 +210,10 @@ class ProbeReading {
 
   factory ProbeReading.fromJson(Map<String, dynamic> json) => ProbeReading(
     index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
+    enabled: _parseBool(json['enabled'], false),
     label: json['label']?.toString() ?? '',
     temperature: _parseDouble(json['temperature'], -127.0),
-    fault: json['fault'] as bool? ?? false,
+    fault: _parseBool(json['fault'], false),
   );
 
   Map<String, dynamic> toJson() => {
@@ -238,7 +249,7 @@ class TankReading {
 
   factory TankReading.fromJson(Map<String, dynamic> json) => TankReading(
     index: _parseInt(json['index'], 0),
-    enabled: json['enabled'] as bool? ?? false,
+    enabled: _parseBool(json['enabled'], false),
     type: _parseInt(json['type'], 0),
     label: json['label']?.toString() ?? '',
     distanceCm: _parseDouble(json['distance_cm'], 0.0),
@@ -311,8 +322,8 @@ class Mq2Reading {
       typeName: json['type_name']?.toString() ??
           (parsedType == 1 ? 'SGP40' : 'MQ-2'),
       i2cAddr: _parseInt(json['i2c_addr'], parsedType == 1 ? 0x59 : 0),
-      enabled: json['enabled'] as bool? ?? false,
-      hwAllowed: json['hw_allowed'] as bool? ?? false,
+      enabled: _parseBool(json['enabled'], false),
+      hwAllowed: _parseBool(json['hw_allowed'], false),
       label: json['label']?.toString() ?? '',
       unit: parsedUnit,
       gasMax: parsedGasMax,
@@ -320,9 +331,9 @@ class Mq2Reading {
       percent: _parseInt(json['percent'], 0),
       threshold: _parseInt(json['threshold'], parsedType == 1 ? 250 : 400),
       baseline: _parseInt(json['baseline'], 0),
-      alarm: json['alarm'] as bool? ?? false,
-      digital: json['digital'] as bool? ?? false,
-      warming: json['warming'] as bool? ?? false,
+      alarm: _parseBool(json['alarm'], false),
+      digital: _parseBool(json['digital'], false),
+      warming: _parseBool(json['warming'], false),
     );
   }
 
@@ -469,43 +480,55 @@ class SensorTelemetry {
 
     final climatesList = parseList(json['climates'], ClimateReading.fromJson);
     final mq2sList = parseList(json['mq2s'], Mq2Reading.fromJson);
-    final parsedHumidityEnabled = json['humidity_enabled'] as bool? ??
-        (climatesList.isNotEmpty ? climatesList.first.humidityEnabled : true);
+    final parsedDhtEnabled = _parseBool(
+      json['dht_enabled'],
+      climatesList.isNotEmpty
+          ? climatesList.any((c) => c.enabled)
+          : (json.containsKey('temperature') || json.containsKey('humidity')),
+    );
+    final parsedHumidityEnabled = _parseBool(
+      json['humidity_enabled'],
+      climatesList.isNotEmpty ? climatesList.first.humidityEnabled : true,
+    );
     final parsedGasUnit = json['gas_unit']?.toString() ??
         (mq2sList.isNotEmpty ? mq2sList.first.unit : 'ADC');
-    final parsedGasEnabled = json['gas_enabled'] as bool? ??
-        (mq2sList.isNotEmpty
-            ? mq2sList.any((m) => m.enabled)
-            : (_parseInt(json['gas_raw'], 0) > 0));
-    final parsedGasHwAllowed = json['gas_hw_allowed'] as bool? ??
-        (mq2sList.isNotEmpty
-            ? mq2sList.any((m) => m.hwAllowed)
-            : parsedGasEnabled);
+    final parsedGasEnabled = _parseBool(
+      json['gas_enabled'],
+      mq2sList.isNotEmpty
+          ? mq2sList.any((m) => m.enabled)
+          : (_parseInt(json['gas_raw'], 0) > 0),
+    );
+    final parsedGasHwAllowed = _parseBool(
+      json['gas_hw_allowed'],
+      mq2sList.isNotEmpty
+          ? mq2sList.any((m) => m.hwAllowed)
+          : parsedGasEnabled,
+    );
 
     return SensorTelemetry(
       temperature: _parseDouble(json['temperature'], 0.0),
       humidity: _parseDouble(json['humidity'], 0.0),
-      dhtFault: json['dht_fault'] as bool? ?? false,
-      dhtEnabled: json['dht_enabled'] as bool? ?? true,
+      dhtFault: _parseBool(json['dht_fault'], false),
+      dhtEnabled: parsedDhtEnabled,
       humidityEnabled: parsedHumidityEnabled,
       tempThreshold: _parseDouble(json['temp_threshold'], 45.0),
       pressure: _parseDouble(json['pressure'], 0.0),
-      pressureEnabled: json['pressure_enabled'] as bool? ?? false,
+      pressureEnabled: _parseBool(json['pressure_enabled'], false),
       lux: _parseDouble(json['lux'], 0.0),
-      luxEnabled: json['lux_enabled'] as bool? ?? false,
-      motionDetected: json['motion'] as bool? ?? false,
+      luxEnabled: _parseBool(json['lux_enabled'], false),
+      motionDetected: _parseBool(json['motion'], false),
       motionAgeSeconds: _parseInt(json['motion_age_s'], 99999),
-      motionEnabled: json['motion_enabled'] as bool? ?? false,
+      motionEnabled: _parseBool(json['motion_enabled'], false),
       probeTemp: _parseDouble(json['probe_temp'], -127.0),
-      probeFault: json['probe_fault'] as bool? ?? false,
-      probeEnabled: json['probe_enabled'] as bool? ?? false,
+      probeFault: _parseBool(json['probe_fault'], false),
+      probeEnabled: _parseBool(json['probe_enabled'], false),
       distanceCm: _parseDouble(json['distance_cm'], 0.0),
       tankLevelPct: _parseInt(json['tank_level_pct'], 0),
-      tankEnabled: json['tank_enabled'] as bool? ?? false,
+      tankEnabled: _parseBool(json['tank_enabled'], false),
       gasRaw: _parseInt(json['gas_raw'], 0),
       gasPercent: _parseInt(json['gas_percent'], 0),
-      gasAlarm: json['gas_alarm'] as bool? ?? false,
-      gasWarming: json['gas_warming'] as bool? ?? false,
+      gasAlarm: _parseBool(json['gas_alarm'], false),
+      gasWarming: _parseBool(json['gas_warming'], false),
       gasThreshold: _parseInt(json['gas_threshold'], 600),
       gasMax: _parseInt(json['gas_max'], parsedGasUnit == 'VOC' ? 500 : 4095),
       gasUnit: parsedGasUnit,

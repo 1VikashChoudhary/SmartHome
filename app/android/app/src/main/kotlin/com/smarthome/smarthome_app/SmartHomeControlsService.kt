@@ -16,6 +16,7 @@ import androidx.annotation.RequiresApi
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Flow
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.function.Consumer
 
 @RequiresApi(Build.VERSION_CODES.R)
@@ -26,6 +27,17 @@ class SmartHomeControlsService : ControlsProviderService() {
         val subscriber: Flow.Subscriber<in Control>
     ) {
         val cancelled = AtomicBoolean(false)
+        private val emitLock = Any()
+
+        fun emitNext(control: Control) {
+            synchronized(emitLock) {
+                if (cancelled.get()) return
+                try {
+                    subscriber.onNext(control)
+                } catch (_: Exception) {
+                }
+            }
+        }
     }
 
     companion object {
@@ -71,10 +83,7 @@ class SmartHomeControlsService : ControlsProviderService() {
                     val parsed = parseControlId(cid) ?: continue
                     if (parsed.first == deviceId) {
                         val control = buildStatefulControl(context, cid, dev, parsed.second, online = dev.isOnline)
-                        try {
-                            session.subscriber.onNext(control)
-                        } catch (_: Exception) {
-                        }
+                        session.emitNext(control)
                     }
                 }
             }
@@ -196,7 +205,7 @@ class SmartHomeControlsService : ControlsProviderService() {
                 )
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                builder.setAuthRequired(false)
+                builder.setAuthRequired(!NativeControlStore.getAllowLockscreenControls(context))
             }
             return builder.build()
         }
@@ -244,18 +253,22 @@ class SmartHomeControlsService : ControlsProviderService() {
 
             val cancelled = AtomicBoolean(false)
             val completed = AtomicBoolean(false)
+            val subLock = Any()
             var cursor = 0
             subscriber.onSubscribe(object : Flow.Subscription {
                 override fun request(n: Long) {
-                    if (n <= 0 || cancelled.get() || completed.get()) return
-                    var remaining = n
-                    while (remaining > 0 && cursor < items.size && !cancelled.get()) {
-                        subscriber.onNext(items[cursor])
-                        cursor++
-                        remaining--
-                    }
-                    if (cursor >= items.size && !cancelled.get() && completed.compareAndSet(false, true)) {
-                        subscriber.onComplete()
+                    if (n <= 0) return
+                    synchronized(subLock) {
+                        if (cancelled.get() || completed.get()) return
+                        var remaining = n
+                        while (remaining > 0 && cursor < items.size && !cancelled.get()) {
+                            subscriber.onNext(items[cursor])
+                            cursor++
+                            remaining--
+                        }
+                        if (cursor >= items.size && !cancelled.get() && completed.compareAndSet(false, true)) {
+                            subscriber.onComplete()
+                        }
                     }
                 }
 
@@ -287,37 +300,49 @@ class SmartHomeControlsService : ControlsProviderService() {
                         if (parsed != null) {
                             uniqueDeviceIds.add(parsed.first)
                             val dev = cachedDevices[parsed.first]
-                            subscriber.onNext(buildStatefulControl(this@SmartHomeControlsService, cid, dev, parsed.second))
+                            session.emitNext(buildStatefulControl(this@SmartHomeControlsService, cid, dev, parsed.second))
                         } else {
-                            subscriber.onNext(buildStatefulControl(this@SmartHomeControlsService, cid, null, 0))
+                            session.emitNext(buildStatefulControl(this@SmartHomeControlsService, cid, null, 0))
                         }
                     }
 
                     // Poll each unique controller over LAN in parallel and push authoritative status
+                    val pendingCount = AtomicInteger(uniqueDeviceIds.size)
                     for (devId in uniqueDeviceIds) {
-                        val dev = cachedDevices[devId] ?: continue
+                        val dev = cachedDevices[devId]
+                        if (dev == null) {
+                            if (pendingCount.decrementAndGet() == 0) {
+                                SmartHomeTileRefreshHelper.requestAllTilesUpdate(this@SmartHomeControlsService)
+                            }
+                            continue
+                        }
                         NativeEspClient.executor.execute {
-                            if (session.cancelled.get()) return@execute
-                            val res = NativeEspClient.fetchStatus(this@SmartHomeControlsService, dev)
-                            if (session.cancelled.get()) return@execute
-                            val latest = NativeControlStore.getDeviceById(this@SmartHomeControlsService, devId) ?: dev
-                            for (cid in idsCopy) {
+                            try {
                                 if (session.cancelled.get()) return@execute
-                                val parsed = parseControlId(cid) ?: continue
-                                if (parsed.first == devId) {
-                                    subscriber.onNext(
-                                        buildStatefulControl(
-                                            this@SmartHomeControlsService,
-                                            cid,
-                                            latest,
-                                            parsed.second,
-                                            online = res.ok,
-                                            unauthorized = res.unauthorized
+                                val res = NativeEspClient.fetchStatus(this@SmartHomeControlsService, dev)
+                                if (session.cancelled.get()) return@execute
+                                val latest = NativeControlStore.getDeviceById(this@SmartHomeControlsService, devId) ?: dev
+                                for (cid in idsCopy) {
+                                    if (session.cancelled.get()) return@execute
+                                    val parsed = parseControlId(cid) ?: continue
+                                    if (parsed.first == devId) {
+                                        session.emitNext(
+                                            buildStatefulControl(
+                                                this@SmartHomeControlsService,
+                                                cid,
+                                                latest,
+                                                parsed.second,
+                                                online = res.ok,
+                                                unauthorized = res.unauthorized
+                                            )
                                         )
-                                    )
+                                    }
+                                }
+                            } finally {
+                                if (pendingCount.decrementAndGet() == 0) {
+                                    SmartHomeTileRefreshHelper.requestAllTilesUpdate(this@SmartHomeControlsService)
                                 }
                             }
-                            SmartHomeTileRefreshHelper.requestAllTilesUpdate(this@SmartHomeControlsService)
                         }
                     }
                 }
@@ -375,12 +400,9 @@ class SmartHomeControlsService : ControlsProviderService() {
                     for (cid in session.controlIds) {
                         val p = parseControlId(cid) ?: continue
                         if (p.first == deviceId) {
-                            try {
-                                session.subscriber.onNext(
-                                    buildStatefulControl(this, cid, device, p.second, online = false, unauthorized = true)
-                                )
-                            } catch (_: Exception) {
-                            }
+                            session.emitNext(
+                                buildStatefulControl(this, cid, device, p.second, online = false, unauthorized = true)
+                            )
                         }
                     }
                 }

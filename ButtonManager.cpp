@@ -16,12 +16,20 @@ ButtonManager::ButtonManager()
         _switches[i].stableState = HIGH;
         _switches[i].lastChangeTime = 0;
     }
+    memset(&_btnMulti, 0, sizeof(_btnMulti));
+    _btnMulti.pin = PIN_UNUSED;
     _btnMulti.enabled = false;
 }
 
 void ButtonManager::begin() {
-    initButton(_btnMulti, PIN_BTN_MULTI);
-    Serial.println(F("[Button] Multi-button initialized (legacy pin)"));
+    if (PIN_BTN_MULTI != PIN_UNUSED) {
+        initButton(_btnMulti, PIN_BTN_MULTI);
+        Serial.println(F("[Button] Multi-button initialized (legacy pin)"));
+    } else {
+        _btnMulti.enabled = false;
+        _btnMulti.pin = PIN_UNUSED;
+        Serial.println(F("[Button] Multi-button disabled (legacy PIN_UNUSED)"));
+    }
 }
 
 void ButtonManager::begin(HardwareManager& hw) {
@@ -52,6 +60,9 @@ void ButtonManager::initWallSwitchPins() {
         if (_switches[i].pin != PIN_UNUSED) {
 #if defined(ESP8266)
             if (_switches[i].pin == 16) pinMode(_switches[i].pin, INPUT);
+            else pinMode(_switches[i].pin, INPUT_PULLUP);
+#elif defined(ESP32)
+            if (_switches[i].pin >= 34 && _switches[i].pin <= 39) pinMode(_switches[i].pin, INPUT);
             else pinMode(_switches[i].pin, INPUT_PULLUP);
 #else
             pinMode(_switches[i].pin, INPUT_PULLUP);
@@ -187,6 +198,11 @@ void ButtonManager::processSwitches() {
 }
 
 void ButtonManager::initButton(ButtonState& btn, uint8_t pin) {
+    if (pin == PIN_UNUSED) {
+        btn.pin = PIN_UNUSED;
+        btn.enabled = false;
+        return;
+    }
     btn.pin = pin;
     btn.enabled = true;
 #if defined(ESP8266)
@@ -216,7 +232,7 @@ void ButtonManager::initButton(ButtonState& btn, uint8_t pin) {
 }
 
 void ButtonManager::processButton(ButtonState& btn, void (*callback)(uint8_t)) {
-    if (!btn.enabled) return;
+    if (!btn.enabled || btn.pin == PIN_UNUSED) return;
     unsigned long now = millis();
     bool rawReading = digitalRead(btn.pin);
 

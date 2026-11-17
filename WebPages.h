@@ -501,8 +501,21 @@ Family and Guests can toggle switches, view sensors, and set quick timers withou
 <div class="form-group" style="margin-bottom:0;"><label>Guest Username</label><input type="text" id="cfgGuestUser" maxlength="20" placeholder="guest"></div>
 <div class="form-group" style="margin-bottom:0;"><label>Guest Password</label><input type="password" id="cfgGuestPass" maxlength="20" placeholder="Leave empty for open guest"></div>
 </div>
+<label id="cfgGuestClearRow" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:0.75rem;color:var(--text2);text-transform:none;cursor:pointer;">
+<input type="checkbox" id="cfgGuestClearPass" onchange="const gp=document.getElementById('cfgGuestPass');gp.disabled=this.checked;if(this.checked)gp.value='';" style="width:auto;margin:0;">
+Clear stored guest password
+</label>
 </div>
 </div>
+</div>
+<div class="form-group" style="margin-top:12px;">
+<label>SoftAP Hotspot Password (Optional Custom WPA2)</label>
+<input type="password" id="cfgApPass" maxlength="63" placeholder="New AP password (8-63 chars)">
+<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Overrides the factory SmartHome-XXXX default password when setup hotspot starts. Leave blank to keep current.</div>
+<label id="cfgApClearRow" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:0.75rem;color:var(--text2);text-transform:none;cursor:pointer;">
+<input type="checkbox" id="cfgApClearPass" onchange="const ap=document.getElementById('cfgApPass');ap.disabled=this.checked;if(this.checked)ap.value='';" style="width:auto;margin:0;">
+Clear custom SoftAP password (revert to default)
+</label>
 </div>
 <div class="form-group" style="margin-top:12px;">
 <label>ArduinoOTA (Legacy Port 3232 Flashing)</label>
@@ -719,26 +732,26 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Alarm Buzzer</div>
-<div class="form-group"><label>Buzzer</label><select id="hwBuzEn" onchange="onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
-<div class="form-group"><label>LEDC PWM GPIO Pin</label><select id="hwBuzPin" onchange="checkHwConflicts()"></select></div>
+<div class="form-group"><label>Buzzer</label><select id="hwBuzEn" onchange="setHwMode('custom');onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
+<div class="form-group"><label>LEDC PWM GPIO Pin</label><select id="hwBuzPin" onchange="setHwMode('custom');checkHwConflicts()"></select></div>
 </div>
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">I2C Shared Bus &amp; LCD Display (1602/2004)</div>
-<div class="form-group"><label>LCD Status</label><select id="hwLcdEn" onchange="onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
+<div class="form-group"><label>LCD Status</label><select id="hwLcdEn" onchange="setHwMode('custom');onPeripheralToggle();checkHwConflicts()"><option value="1" selected>Enabled</option><option value="0">Disabled</option></select></div>
 <div class="form-row">
-<div class="form-group"><label>I2C Address</label><select id="hwLcdAddr" onchange="checkHwConflicts()"><option value="39">0x27 (Standard)</option><option value="63">0x3F</option></select></div>
-<div class="form-group"><label>Size</label><select id="hwLcdSize"><option value="16x2" selected>16 &times; 2</option><option value="20x4">20 &times; 4</option></select></div>
+<div class="form-group"><label>I2C Address</label><select id="hwLcdAddr" onchange="setHwMode('custom');checkHwConflicts()"><option value="39">0x27 (Standard)</option><option value="63">0x3F</option></select></div>
+<div class="form-group"><label>Size</label><select id="hwLcdSize" onchange="setHwMode('custom')"><option value="16x2" selected>16 &times; 2</option><option value="20x4">20 &times; 4</option></select></div>
 </div>
 <div class="form-row">
-<div class="form-group"><label>SDA Pin</label><select id="hwLcdSda" onchange="onSharedI2cBusPinChange(this.value, null)"></select></div>
-<div class="form-group"><label>SCL Pin</label><select id="hwLcdScl" onchange="onSharedI2cBusPinChange(null, this.value)"></select></div>
+<div class="form-group"><label>SDA Pin</label><select id="hwLcdSda" onchange="setHwMode('custom');onSharedI2cBusPinChange(this.value, null)"></select></div>
+<div class="form-group"><label>SCL Pin</label><select id="hwLcdScl" onchange="setHwMode('custom');onSharedI2cBusPinChange(null, this.value)"></select></div>
 </div>
 </div>
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="font-weight:600;margin-bottom:6px;color:var(--accent2)">Multi-Function Status Button</div>
-<div class="form-group"><label>Button GPIO Pin (INPUT_PULLUP)</label><select id="hwBtnMultiPin" onchange="checkHwConflicts()"></select></div>
+<div class="form-group"><label>Button GPIO Pin (INPUT_PULLUP)</label><select id="hwBtnMultiPin" onchange="setHwMode('custom');checkHwConflicts()"></select></div>
 </div>
 </div>
 
@@ -1055,6 +1068,17 @@ View Project on GitHub
 <input type="hidden" id="relayConfigId" value="0">
 <div class="form-group"><label>Relay Name</label>
 <input type="text" id="relayConfigName" maxlength="19"></div>
+<div class="form-group"><label>Appliance Icon</label>
+<select id="relayConfigIcon">
+<option value="light">Light</option>
+<option value="fan">Ceiling Fan</option>
+<option value="ac">Air Conditioner</option>
+<option value="geyser">Geyser / Heater</option>
+<option value="tv">Television</option>
+<option value="socket">Socket / Plug</option>
+<option value="pump">Water Pump</option>
+<option value="router">Router</option>
+</select></div>
 <div class="form-row">
 <div class="form-group"><label>Trigger Mode</label>
 <select id="relayConfigTrigger">
@@ -1167,7 +1191,7 @@ View Project on GitHub
 
 <script>
 function escapeHtml(s){if(s===null||s===undefined)return '';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
-let ws,wsData={},alarmCache=[],theme=localStorage.getItem('theme')||'dark',webPassSet=false,wsToken='',gAuthRole='admin';
+let ws,wsData={},alarmCache=[],theme=localStorage.getItem('theme')||'dark',webPassSet=false,guestPassSet=false,apPassSet=false,wsToken='',gAuthRole='admin';
 if(theme==='light')document.body.classList.add('light');
 
 // Theme
@@ -1200,7 +1224,7 @@ const el=document.getElementById('tab-'+id);
 if(el)el.classList.add('active');
 if(id==='logs')refreshLogs();
 if(id==='system')loadDiag();
-if(id==='settings'||id==='sensors')loadSettings();
+if(id==='settings'||id==='sensors')loadSettings().catch(e=>toast((e&&e.message)||'Failed to load settings','err'));
 if(id==='hardware')loadHardware();
 if(id==='alarms')loadAlarms();
 if(id==='rules')loadRules();
@@ -1220,7 +1244,12 @@ function copyAboutText(text,label,btnId){
 navigator.clipboard.writeText(text).then(()=>{
 toast(label+' copied to clipboard!','ok');
 const btn=document.getElementById(btnId);
-if(btn){const orig=btn.innerHTML;btn.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg> Copied';setTimeout(()=>{btn.innerHTML=orig;},3000);}
+if(btn){
+if(!btn.dataset.origHtml)btn.dataset.origHtml=btn.innerHTML;
+if(btn._copyTimer)clearTimeout(btn._copyTimer);
+btn.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg> Copied';
+btn._copyTimer=setTimeout(()=>{btn.innerHTML=btn.dataset.origHtml;btn._copyTimer=null;},3000);
+}
 }).catch(()=>{toast('Copy failed','err');});
 }
 
@@ -1270,6 +1299,12 @@ const lo=document.getElementById('linkOtaUpdate');if(lo)lo.style.display=isGuest
 const ts=document.getElementById('tabNavSettings');if(ts)ts.style.display=isGuest?'none':'inline-flex';
 const th=document.getElementById('tabNavHardware');if(th)th.style.display=isGuest?'none':'inline-flex';
 const ty=document.getElementById('tabNavSystem');if(ty)ty.style.display=isGuest?'none':'inline-flex';
+if(isGuest){
+const activeTab=document.querySelector('.tab-content.active');
+if(activeTab&&(activeTab.id==='tab-settings'||activeTab.id==='tab-hardware'||activeTab.id==='tab-system')){
+showTab('dashboard');
+}
+}
 }
 
 // Update dashboard from WS data
@@ -1329,7 +1364,7 @@ if(ds){ds.className='badge badge-info';setText('dhtStatus','Disabled');}
 const primaryCliFault=activeClimates.length>0?!!activeClimates[0].fault:!!d.dht_fault;
 const pTemp=activeClimates.length>0?parseFloat(activeClimates[0].temperature):parseFloat(d.temperature);
 const pHum=activeClimates.length>0?parseFloat(activeClimates[0].humidity):parseFloat(d.humidity);
-const hasCliRead=(!isNaN(pTemp)&&pTemp!==0)||(hasPrimaryHum&&!isNaN(pHum)&&pHum>0);
+const hasCliRead=(!isNaN(pTemp)&&pTemp>-100)||(hasPrimaryHum&&!isNaN(pHum)&&pHum>0);
 if(primaryCliFault){
 setText('temp','ERR');setText('temp2','ERR');
 setText('hum','ERR');setText('hum2','ERR');
@@ -1554,6 +1589,18 @@ const nsTab=document.getElementById('noSensorsTabState');
 if(nsTab)nsTab.style.display=(!cliEn&&!hasMq2&&cards.length===0)?'block':'none';
 }
 
+function relayIconGlyph(ic){
+switch((ic||'light').toLowerCase()){
+case 'fan':return '🌀';
+case 'ac':return '❄️';
+case 'geyser':case 'heater':return '🔥';
+case 'tv':return '📺';
+case 'socket':case 'plug':return '🔌';
+case 'pump':return '💧';
+case 'router':return '📡';
+default:return '💡';
+}
+}
 // Render relay grid
 function renderRelays(relays){
 const isGuest=(gAuthRole==='guest');
@@ -1561,10 +1608,11 @@ let html='',detailHtml='';
 relays.forEach((r,i)=>{
 const isEn=(r.enabled!==false);
 const on=isEn&&r.state;
+const iconG=relayIconGlyph(r.icon);
 const hasTimer=isEn&&r.timer_active&&(r.timer_remaining>0);
 if(isEn){
 html+=`<div class="relay-card ${on?'on':'off'}" onclick="toggleRelay(${i})">
-<div class="r-name">${escapeHtml(r.name)}</div>
+<div class="r-name">${iconG} ${escapeHtml(r.name)}</div>
 <div class="r-state">${on?'ON':'OFF'}</div>
 ${hasTimer?`<div style="font-size:.68rem;padding:2px 6px;border-radius:6px;background:rgba(99,102,241,0.25);color:#818cf8;margin-top:4px;display:inline-block">⏱️ ${r.timer_target?'ON':'OFF'} in ${formatSeconds(r.timer_remaining)}</div>`:''}
 <div class="toggle ${on?'on':''}"></div></div>`;
@@ -1573,7 +1621,7 @@ ${hasTimer?`<div style="font-size:.68rem;padding:2px 6px;border-radius:6px;backg
 if(isEn){
 detailHtml+=`<div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg);border-radius:12px;margin-bottom:8px;border:1px solid ${on?'var(--green)':'var(--card-border)'}">
 <div style="flex:1">
-<div style="font-weight:600;margin-bottom:4px">${escapeHtml(r.name)} <span class="badge ${on?'badge-ok':'badge-err'}">${on?'ON':'OFF'}</span></div>
+<div style="font-weight:600;margin-bottom:4px">${iconG} ${escapeHtml(r.name)} <span class="badge ${on?'badge-ok':'badge-err'}">${on?'ON':'OFF'}</span></div>
 <div style="font-size:.72rem;color:var(--text2)">Trigger: ${r.trigger==0?'Active LOW':'Active HIGH'} | Boot: ${['Restore','Always ON','Always OFF'][r.boot]||'Restore'} | Wall Switch: ${r.switch_enabled===false?'Disabled':'Enabled'}</div>
 ${hasTimer?`<div style="margin-top:6px;display:flex;align-items:center;gap:6px">
 <span class="badge" style="background:rgba(99,102,241,0.25);color:#818cf8;border:1px solid rgba(99,102,241,0.4)">⏱️ Auto ${r.timer_target?'ON':'OFF'} in ${formatSeconds(r.timer_remaining)}</span>
@@ -1631,6 +1679,7 @@ const r=wsData.relays?wsData.relays[i]:null;
 if(!r)return;
 document.getElementById('relayConfigId').value = i;
 document.getElementById('relayConfigName').value = r.name || '';
+document.getElementById('relayConfigIcon').value = (r.icon || 'light').toLowerCase();
 document.getElementById('relayConfigTrigger').value = String(r.trigger || 0);
 document.getElementById('relayConfigBoot').value = String(r.boot || 0);
 document.getElementById('relayConfigAutoOff').value = String(r.auto_off !== undefined ? r.auto_off : (r.autoOff || 0));
@@ -1645,6 +1694,7 @@ function saveRelayConfig(){
 const id = parseInt(document.getElementById('relayConfigId').value);
 const name = document.getElementById('relayConfigName').value.trim();
 if(!name) { toast('Name cannot be empty', 'err'); return; }
+const icon = document.getElementById('relayConfigIcon').value || 'light';
 const trigger = parseInt(document.getElementById('relayConfigTrigger').value);
 const boot = parseInt(document.getElementById('relayConfigBoot').value);
 const autoOff = parseInt(document.getElementById('relayConfigAutoOff').value || 0);
@@ -1658,6 +1708,7 @@ const failsafe = document.getElementById('relayConfigFailsafe').value === '1';
 api('POST','/api/relay/config',{
 id,
 name,
+icon,
 trigger,
 boot,
 autoOff,
@@ -1668,6 +1719,7 @@ toast('Relay config saved','ok');
 closeRelayConfigModal();
 if (wsData.relays && wsData.relays[id]) {
 wsData.relays[id].name = name;
+wsData.relays[id].icon = icon;
 wsData.relays[id].trigger = trigger;
 wsData.relays[id].boot = boot;
 wsData.relays[id].autoOff = autoOff;
@@ -1723,11 +1775,16 @@ function saveSensorCal(){
 const idx=getSelectedCalIdx('climateCalIdx');
 const to=parseFloat(document.getElementById('tempOffset').value);
 const ho=parseFloat(document.getElementById('humOffset').value);
+const ta=parseFloat(document.getElementById('tempAlarmTh').value);
+if(isNaN(to)||isNaN(ho)||isNaN(ta)){
+toast('Enter valid numeric calibration values','err');
+return;
+}
 api('POST','/api/config/sensor',{
 sensor_index:idx,
 temp_offset:to,
 hum_offset:ho,
-temp_alarm:parseFloat(document.getElementById('tempAlarmTh').value)
+temp_alarm:ta
 }).then(()=>{
 if(gSensorCalData&&Array.isArray(gSensorCalData.climates)){
 const c=gSensorCalData.climates.find(x=>x.index===idx)||gSensorCalData.climates[idx];
@@ -1775,10 +1832,15 @@ api('POST','/api/config/wifi',{ssid:document.getElementById('wifiSSID').value,pa
 .then(()=>toast('WiFi saved, reconnecting...','info'));
 }
 function saveMQTT(){
+const enabled=document.getElementById('mqttEn').value==='1';
+const broker=document.getElementById('mqttBroker').value.trim();
+const port=parseInt(document.getElementById('mqttPort').value,10);
+if(enabled&&!broker){toast('Enter an MQTT broker host','err');return;}
+if((enabled&&isNaN(port))||(!isNaN(port)&&(port<1||port>65535))){toast('Enter a valid MQTT port (1-65535)','err');return;}
 api('POST','/api/config/mqtt',{
-enabled:document.getElementById('mqttEn').value==='1',
-broker:document.getElementById('mqttBroker').value,
-port:parseInt(document.getElementById('mqttPort').value),
+enabled,
+broker,
+port:isNaN(port)?1883:port,
 prefix:document.getElementById('mqttPrefix').value,
 client_id:document.getElementById('mqttClientId').value,
 user:document.getElementById('mqttUser').value,
@@ -1804,11 +1866,23 @@ const webPass = document.getElementById('cfgWebPass').value;
 const guestAuth = document.getElementById('cfgGuestAuth').checked;
 const guestUser = document.getElementById('cfgGuestUser').value.trim();
 const guestPass = document.getElementById('cfgGuestPass').value;
+const guestPassClear = document.getElementById('cfgGuestClearPass')?.checked === true;
+const apPass = document.getElementById('cfgApPass').value;
+const apPassClear = document.getElementById('cfgApClearPass')?.checked === true;
 const arduinoOta = document.getElementById('cfgArduinoOta').value === '1';
+
+if (!apPassClear && apPass.length > 0 && (apPass.length < 8 || apPass.length > 63)) {
+    toast('SoftAP password must be 8-63 characters', 'err');
+    return;
+}
 
 if (webAuth) {
     if (!webUser) { toast('Username cannot be empty', 'err'); return; }
     if (!webPass && !webPassSet) { toast('Password cannot be empty', 'err'); return; }
+}
+if (guestAuth && !guestUser) {
+    toast('Guest username cannot be empty', 'err');
+    return;
 }
 
 api('POST','/api/config',{
@@ -1821,7 +1895,10 @@ web_user:webUser,
 web_pass:webPass,
 guest_auth:guestAuth,
 guest_user:guestUser,
-guest_pass:guestPass,
+guest_pass:guestPassClear?'':guestPass,
+guest_pass_clear:guestPassClear,
+ap_pass:apPassClear?'':apPass,
+ap_pass_clear:apPassClear,
 arduino_ota:arduinoOta
 }).then(res=>{
 if(res&&res.ws_token){wsToken=res.ws_token;}
@@ -1830,6 +1907,32 @@ if (webAuth && webPass) {
     webPassSet = true;
     document.getElementById('cfgWebPass').value = '';
 }
+if (guestPassClear) {
+    guestPassSet = false;
+    const clrGp = document.getElementById('cfgGuestClearPass');
+    if (clrGp) clrGp.checked = false;
+    document.getElementById('cfgGuestPass').disabled = false;
+    const clrRow = document.getElementById('cfgGuestClearRow');
+    if (clrRow) clrRow.style.display = 'none';
+} else if (guestAuth && guestPass) {
+    guestPassSet = true;
+    document.getElementById('cfgGuestPass').value = '';
+    const clrRow = document.getElementById('cfgGuestClearRow');
+    if (clrRow) clrRow.style.display = 'flex';
+}
+if (apPassClear) {
+    apPassSet = false;
+    const clrAp = document.getElementById('cfgApClearPass');
+    if (clrAp) clrAp.checked = false;
+    document.getElementById('cfgApPass').disabled = false;
+    const apRow = document.getElementById('cfgApClearRow');
+    if (apRow) apRow.style.display = 'none';
+} else if (apPass) {
+    apPassSet = true;
+    document.getElementById('cfgApPass').value = '';
+    const apRow = document.getElementById('cfgApClearRow');
+    if (apRow) apRow.style.display = 'flex';
+}
 });
 }
 function toggleLcdDimFields(){
@@ -1837,20 +1940,29 @@ const dimEn = document.getElementById('lcdAutoDim').value === '1';
 document.getElementById('lcdDimFields').style.display = dimEn ? 'block' : 'none';
 }
 function saveLCD(){
+const rotation=parseInt(document.getElementById('lcdRot').value,10);
+const brightness=parseInt(document.getElementById('lcdBright').value,10);
+const dim_brightness=parseInt(document.getElementById('lcdDimBright').value,10);
+if(isNaN(rotation)||rotation<3||rotation>30){toast('LCD rotation must be 3-30 seconds','err');return;}
+if(isNaN(brightness)||brightness<0||brightness>100||isNaN(dim_brightness)||dim_brightness<0||dim_brightness>100){
+toast('LCD brightness must be 0-100%','err');return;
+}
 api('POST','/api/config/lcd',{
 enabled:document.getElementById('lcdEn').value==='1',
 backlight:document.getElementById('lcdBl').value==='1',
 display_mode:document.getElementById('lcdMode').value,
-rotation:parseInt(document.getElementById('lcdRot').value),
-brightness:parseInt(document.getElementById('lcdBright').value),
+rotation,
+brightness,
 auto_dim:document.getElementById('lcdAutoDim').value==='1',
 dim_start:document.getElementById('lcdDimStart').value,
 dim_end:document.getElementById('lcdDimEnd').value,
-dim_brightness:parseInt(document.getElementById('lcdDimBright').value)
+dim_brightness
 }).then(()=>toast('LCD saved','ok'));
 }
 function saveBuzzer(){
-api('POST','/api/buzzer',{enabled:document.getElementById('buzEn').value==='1',volume:parseInt(document.getElementById('buzVol').value)})
+const vol=parseInt(document.getElementById('buzVol').value,10);
+if(isNaN(vol)||vol<0||vol>255){toast('Buzzer volume must be 0-255','err');return;}
+api('POST','/api/buzzer',{enabled:document.getElementById('buzEn').value==='1',volume:vol})
 .then(()=>toast('Buzzer settings saved','ok'));
 }
 function testBuzzer(){api('POST','/api/buzzer',{action:'test'}).then(()=>toast('Buzzer test','info'));}
@@ -1873,7 +1985,9 @@ return r.text();
 const blob=new Blob([data],{type:'application/json'});
 const url=URL.createObjectURL(blob);
 const a=document.createElement('a');a.href=url;
-a.download='smarthome_backup.json';a.click();toast('Config downloaded','ok');
+a.download='smarthome_backup.json';a.click();
+setTimeout(()=>URL.revokeObjectURL(url),1000);
+toast('Config downloaded','ok');
 }).catch(e=>toast(e.message||'Backup failed','err'));
 }
 function restoreConfig(){
@@ -1885,13 +1999,13 @@ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed)){toast('Backup root 
 if(parsed.type==='smarthome_pro_hub_backup'){toast('App Hub backups must be restored in the mobile app Settings','err');return;}
 api('POST','/api/restore',parsed).then(()=>{
 toast('Config restored, restarting...','ok');
-setTimeout(()=>location.reload(),3500);
+waitForRebootAndReload();
 }).catch(()=>{});
 }
 
 // Logs
 function refreshLogs(){
-fetch('/api/logs').then(r=>r.json()).then(data=>{
+fetch('/api/logs').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(data=>{
 const list=document.getElementById('logList');
 if(!data.length){list.innerHTML='<div style="color:var(--text2);padding:20px;text-align:center;">No logs</div>';return;}
 let html='';
@@ -1901,31 +2015,31 @@ const colors={INFO:'var(--blue)',WARN:'var(--orange)',ERROR:'var(--red)',CRIT:'v
 html+=`<div class="log-entry"><span class="log-time">${date}</span><span class="log-lvl" style="color:${colors[e.lvl_s]||'var(--text)'}">${escapeHtml(e.lvl_s)}</span><span class="log-src">${escapeHtml(e.src)}</span><span>${escapeHtml(e.msg)}</span></div>`;
 });
 list.innerHTML=html;
-});
+}).catch(e=>toast(e.message||'Failed to load logs','err'));
 }
 function downloadLogs(){
-fetch('/api/logs?format=csv').then(r=>r.text()).then(data=>{
+fetch('/api/logs?format=csv').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text();}).then(data=>{
 const a=document.createElement('a');a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(data);
 a.download='smarthome_logs.csv';a.click();
-});
+}).catch(e=>toast(e.message||'Failed to download logs','err'));
 }
 function clearLogs(){if(confirm('Clear all logs?'))api('POST','/api/logs/clear').then(()=>{toast('Logs cleared','ok');refreshLogs();});}
 
 // Diagnostics
 function loadDiag(){
-fetch('/api/diagnostics').then(r=>r.json()).then(d=>{
+fetch('/api/diagnostics').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(d=>{
 setText('dFw',d.fw_version);setText('dBuild',d.fw_build);
 setText('dChip',d.chip_model+' rev'+d.chip_rev);setText('dChipId',d.chip_id);
 setText('dCpu',d.cpu_freq);setText('dFlash',(d.flash_size/1048576).toFixed(1));
 setText('dHeap',d.free_heap);setText('dMinHeap',d.min_heap);setText('dFrag',d.heap_frag);
 setText('dSdk',d.sdk_version);setText('dReset',d.reset_reason);setText('dUptime',d.uptime);
 setText('dOta',d.ota_status||'Idle');
-});
+}).catch(e=>toast(e.message||'Failed to load diagnostics','err'));
 }
 
 // Settings
 function loadSettings(){
-return fetch('/api/config').then(r=>r.json()).then(d=>{
+return fetch('/api/config').then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(d=>{
 if(d.auth_role){gAuthRole=d.auth_role;applyRoleUI();}
 if(d.ws_token){wsToken=d.ws_token;sendWsSubscribe();}
 if(d.device_name)document.getElementById('cfgDevName').value=d.device_name;
@@ -1946,6 +2060,16 @@ document.getElementById('cfgGuestAuth').checked=d.guest_auth||false;
 document.getElementById('cfgGuestUser').value=d.guest_user||'guest';
 document.getElementById('cfgGuestPass').value='';
 guestPassSet=d.guest_pass_set||false;
+const clrGp=document.getElementById('cfgGuestClearPass');
+if(clrGp){clrGp.checked=false;document.getElementById('cfgGuestPass').disabled=false;}
+const clrRow=document.getElementById('cfgGuestClearRow');
+if(clrRow)clrRow.style.display=guestPassSet?'flex':'none';
+document.getElementById('cfgApPass').value='';
+apPassSet=d.ap_pass_set||false;
+const clrAp=document.getElementById('cfgApClearPass');
+if(clrAp){clrAp.checked=false;document.getElementById('cfgApPass').disabled=false;}
+const apRow=document.getElementById('cfgApClearRow');
+if(apRow)apRow.style.display=apPassSet?'flex':'none';
 toggleWebAuthFields();
 toggleGuestFields();
 if(d.mqtt){
@@ -2196,20 +2320,26 @@ updateAlarmActionFields();
 document.getElementById('dowGroup').style.display=document.getElementById('alarmType').value==='2'?'block':'none';
 }
 function saveAlarm(){
-const mode=parseInt(document.getElementById('alarmMode').value);
-const id=parseInt(document.getElementById('alarmEditId').value||'0');
+const mode=parseInt(document.getElementById('alarmMode').value,10);
+const id=parseInt(document.getElementById('alarmEditId').value||'0',10)||0;
 const existing=id?alarmCache.find(x=>x.id===id):null;
 const clock=getClockPickerValue();
+const delayHours=parseInt(document.getElementById('alarmDelayHours').value||'0',10);
+const delayMins=parseInt(document.getElementById('alarmDelayMinutes').value||'0',10);
+if(mode===1&&(isNaN(delayHours)||delayHours<0||delayHours>168||isNaN(delayMins)||delayMins<0||delayMins>59)){
+toast('Delay must be 0-168 hours and 0-59 minutes','err');return;
+}
+const delay=(delayHours*60)+delayMins;
 const alarm={
 id:id||undefined,
 mode,
 hour:clock.hour,
 min:clock.minute,
-type:parseInt(document.getElementById('alarmType').value),
-dow:parseInt(document.getElementById('alarmDow').value),
-delay:(parseInt(document.getElementById('alarmDelayHours').value||'0')*60)+parseInt(document.getElementById('alarmDelayMinutes').value||'0'),
-action:parseInt(document.getElementById('alarmAction').value),
-relay:parseInt(document.getElementById('alarmRelay').value),
+type:parseInt(document.getElementById('alarmType').value,10),
+dow:parseInt(document.getElementById('alarmDow').value,10),
+delay:isNaN(delay)?0:delay,
+action:parseInt(document.getElementById('alarmAction').value,10),
+relay:parseInt(document.getElementById('alarmRelay').value,10),
 en:existing?existing.en!==false:true
 };
 if(mode===1&&alarm.delay<=0){toast('Set a delay first','warn');return;}
@@ -2480,11 +2610,13 @@ const sensor=parseInt(document.getElementById('ruleSensor').value);
 const s_idx=parseInt((document.getElementById('ruleSensorIdx')||{}).value||'0')||0;
 const cond=parseInt(document.getElementById('ruleCondition').value);
 const th=parseFloat(document.getElementById('ruleThreshold').value);
-const hyst=parseFloat(document.getElementById('ruleHysteresis').value);
-const relay=parseInt(document.getElementById('ruleTargetRelay').value);
-const act=parseInt(document.getElementById('ruleAction').value);
-if(isNaN(th)){toast('Please enter a valid threshold','warn');return;}
-const payload={id,en:true,name,sensor,s_idx,cond,th,hyst:isNaN(hyst)?0:hyst,relay,act};
+const rawHyst=document.getElementById('ruleHysteresis').value.trim();
+const hyst=rawHyst===''?0:parseFloat(rawHyst);
+const relay=parseInt(document.getElementById('ruleTargetRelay').value,10);
+const act=parseInt(document.getElementById('ruleAction').value,10);
+if(!isFinite(th)){toast('Please enter a valid threshold','warn');return;}
+if(!isFinite(hyst)||hyst<0){toast('Hysteresis must be a non-negative number','warn');return;}
+const payload={id,en:true,name,sensor,s_idx,cond,th,hyst,relay,act};
 api('POST','/api/rule',payload).then(()=>{
 toast(id>0?'Rule updated':'Rule added','ok');
 closeRuleModal();
@@ -3303,7 +3435,8 @@ function renderHwChannelsFromUI() {
     checkHwConflicts();
 }
 
-function onHwChannelToggle(i) {
+function onHwChannelToggle(i, fromUser = false) {
+    if (fromUser) setHwMode('custom');
     const enEl = document.getElementById(`hw_en_${i}`);
     const swEnEl = document.getElementById(`hw_swen_${i}`);
     const badgeEl = document.getElementById(`hw_badge_${i}`);
@@ -3563,14 +3696,14 @@ function renderHwChannels(num, existingChannels) {
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                     <div style="display:flex;align-items:center;gap:6px;">
                         <label style="font-size:0.72rem;margin:0;color:var(--text2);">Channel:</label>
-                        <select id="hw_en_${i}" onchange="onHwChannelToggle(${i})" style="width:auto;padding:4px 8px;font-size:0.75rem;">
+                        <select id="hw_en_${i}" onchange="onHwChannelToggle(${i}, true)" style="width:auto;padding:4px 8px;font-size:0.75rem;">
                             <option value="1" ${isChEn ? 'selected' : ''}>Enabled (Active)</option>
                             <option value="0" ${!isChEn ? 'selected' : ''}>Disabled (Unused)</option>
                         </select>
                     </div>
                     <div style="display:flex;align-items:center;gap:6px;">
                         <label style="font-size:0.72rem;margin:0;color:var(--text2);">Wall Switch:</label>
-                        <select id="hw_swen_${i}" onchange="onHwChannelToggle(${i})" style="width:auto;padding:4px 8px;font-size:0.75rem;" ${!isChEn ? 'disabled' : ''}>
+                        <select id="hw_swen_${i}" onchange="onHwChannelToggle(${i}, true)" style="width:auto;padding:4px 8px;font-size:0.75rem;" ${!isChEn ? 'disabled' : ''}>
                             <option value="1" ${isSwEn ? 'selected' : ''}>Switch Enabled</option>
                             <option value="0" ${!isSwEn ? 'selected' : ''}>Switch Disabled</option>
                         </select>
@@ -3581,11 +3714,11 @@ function renderHwChannels(num, existingChannels) {
                 <div id="hw_relay_row_${i}" style="display:contents;opacity:${isChEn ? '1' : '0.4'};pointer-events:${isChEn ? 'auto' : 'none'}">
                     <div class="form-group" style="margin-bottom:6px">
                         <label style="font-size:0.75rem">Relay Output Pin</label>
-                        <select id="hw_rpin_${i}" onchange="checkHwConflicts()"></select>
+                        <select id="hw_rpin_${i}" onchange="setHwMode('custom');checkHwConflicts()"></select>
                     </div>
                     <div class="form-group" style="margin-bottom:6px">
                         <label style="font-size:0.75rem">Trigger Logic</label>
-                        <select id="hw_trig_${i}">
+                        <select id="hw_trig_${i}" onchange="setHwMode('custom')">
                             <option value="0" ${ch.trigger === 0 ? 'selected' : ''}>Active LOW (0V = ON)</option>
                             <option value="1" ${ch.trigger === 1 ? 'selected' : ''}>Active HIGH (3.3V = ON)</option>
                         </select>
@@ -3594,11 +3727,11 @@ function renderHwChannels(num, existingChannels) {
                 <div id="hw_sw_row_${i}" style="display:contents;opacity:${(isChEn && isSwEn) ? '1' : '0.4'};pointer-events:${(isChEn && isSwEn) ? 'auto' : 'none'}">
                     <div class="form-group" style="margin-bottom:6px">
                         <label style="font-size:0.75rem">Wall Switch Pin</label>
-                        <select id="hw_spin_${i}" onchange="checkHwConflicts()"></select>
+                        <select id="hw_spin_${i}" onchange="setHwMode('custom');checkHwConflicts()"></select>
                     </div>
                     <div class="form-group" style="margin-bottom:6px">
                         <label style="font-size:0.75rem">Switch Mode</label>
-                        <select id="hw_smode_${i}">
+                        <select id="hw_smode_${i}" onchange="setHwMode('custom')">
                             <option value="0" ${ch.switch_mode === 0 ? 'selected' : ''}>Toggle Rocker (Any Edge)</option>
                             <option value="1" ${ch.switch_mode === 1 ? 'selected' : ''}>Follow (Closed = ON)</option>
                             <option value="2" ${ch.switch_mode === 2 ? 'selected' : ''}>Follow Inverted</option>
@@ -3897,14 +4030,30 @@ function onPresetSelected() {
     }
 }
 
+function waitForRebootAndReload() {
+    let attempts = 0;
+    const poll = () => {
+        attempts++;
+        fetch('/api/discovery', { cache: 'no-store' })
+            .then(r => {
+                if (r.ok) location.reload();
+                else if (attempts < 40) setTimeout(poll, 1000);
+            })
+            .catch(() => {
+                if (attempts < 40) setTimeout(poll, 1000);
+            });
+    };
+    setTimeout(poll, 2200);
+}
+
 function applyHwPresetBtn() {
     const val = document.getElementById('hwPresetSelect').value;
     if (!val) { toast('Please choose a preset from the dropdown first', 'warn'); return; }
     if (!confirm(`Apply hardware preset "${val}" and reboot controller?`)) return;
 
     api('POST', '/api/hardware/template', { template: val }).then(res => {
-        toast('Preset applied. Controller is rebooting...', 'ok');
-        setTimeout(() => location.reload(), 3000);
+        toast('Preset applied. Waiting for controller reboot...', 'ok');
+        waitForRebootAndReload();
     }).catch(err => toast(err.message || 'Failed to apply preset', 'err'));
 }
 
@@ -3912,8 +4061,8 @@ function resetHwDefaultBtn() {
     const label = gIsEsp8266 ? 'standard 2-CH default' : 'standard 5-CH default';
     if (!confirm(`Reset hardware configuration back to ${label} and reboot?`)) return;
     api('POST', '/api/hardware/reset', {}).then(res => {
-        toast('Hardware reset to default. Rebooting...', 'ok');
-        setTimeout(() => location.reload(), 3000);
+        toast('Hardware reset to default. Waiting for controller reboot...', 'ok');
+        waitForRebootAndReload();
     }).catch(err => toast(err.message || 'Failed to reset hardware', 'err'));
 }
 
@@ -4010,8 +4159,8 @@ function saveHardware() {
     if (!confirm('Save hardware profile and reboot controller?')) return;
 
     api('POST', '/api/hardware', payload).then(res => {
-        toast('Hardware profile saved! Controller rebooting...', 'ok');
-        setTimeout(() => location.reload(), 3000);
+        toast('Hardware profile saved! Waiting for controller reboot...', 'ok');
+        waitForRebootAndReload();
     }).catch(err => {
         toast('Save failed: ' + (err.message || 'Unknown error'), 'err');
     });
@@ -4074,9 +4223,20 @@ h2{font-size:1.4rem;font-weight:700;text-align:center;letter-spacing:-0.02em;mar
 </label>
 <div id="netList"><div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">Scanning nearby Wi-Fi networks...</div></div>
 </div>
-<form method="POST" action="/api/config/wifi">
+<form id="capForm" method="POST" action="/api/config/wifi" onsubmit="return saveCapWifi(event);">
 <div class="form-group"><label>Wi-Fi Network (SSID)</label><input type="text" id="ssidIn" name="ssid" required placeholder="Select above or type SSID"></div>
 <div class="form-group"><label>Wi-Fi Password</label><input type="password" id="passIn" name="pass" placeholder="Enter Wi-Fi password"></div>
+<div class="form-group"><label>Device Name (Optional)</label><input type="text" id="capDevName" name="device_name" maxlength="20" placeholder="e.g. Living Room Switch"></div>
+<div class="form-group">
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;">
+<input type="checkbox" id="capAuthCb" name="web_auth" value="1" onchange="const b=this.checked;document.getElementById('capAuthBox').style.display=b?'block':'none';document.getElementById('capWebUser').disabled=!b;const p=document.getElementById('capWebPass');p.disabled=!b;p.required=b;" style="width:auto;">
+Protect Web Dashboard with Admin Password (Optional)
+</label>
+</div>
+<div id="capAuthBox" style="display:none;padding:12px;border-radius:10px;background:rgba(11,15,25,0.55);border:1px solid rgba(255,255,255,0.08);margin-bottom:16px;">
+<div class="form-group"><label>Admin Username</label><input type="text" id="capWebUser" name="web_user" maxlength="20" value="admin" placeholder="admin" disabled></div>
+<div class="form-group" style="margin-bottom:0;"><label>Admin Password</label><input type="password" id="capWebPass" name="web_pass" maxlength="20" placeholder="Choose a strong password" disabled></div>
+</div>
 <button class="btn" type="submit">Save &amp; Connect Controller</button>
 </form>
 <div class="msg">After connecting, launch the <b>SmartHome Pro</b> mobile app or visit <b>smarthome.local</b> in your browser.</div>
@@ -4102,6 +4262,25 @@ h+='<div class="net-item" data-ssid="'+esc(n.ssid)+'" onclick="pickNet(this,this
 });
 box.innerHTML=h;
 }).catch(()=>{box.innerHTML='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">Scan unavailable &mdash; enter SSID manually</div>';});
+}
+function saveCapWifi(e){
+e.preventDefault();
+const ssid=document.getElementById('ssidIn').value.trim();
+if(!ssid)return false;
+const payload={ssid:ssid,pass:document.getElementById('passIn').value};
+const dn=document.getElementById('capDevName').value.trim();
+if(dn)payload.device_name=dn;
+if(document.getElementById('capAuthCb').checked){
+payload.web_auth=true;
+payload.web_user=document.getElementById('capWebUser').value.trim()||'admin';
+payload.web_pass=document.getElementById('capWebPass').value;
+}
+const msg=document.querySelector('.msg');
+msg.textContent='Connecting controller to '+ssid+'...';
+fetch('/api/config/wifi',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'SmartHome'},body:JSON.stringify(payload)})
+.then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('HTTP '+r.status));document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h2>Connecting to '+esc(ssid)+'...<br><span style="font-size:.95rem;color:#94a3b8;font-weight:400;">You may now switch back to your home Wi-Fi.</span></h2></div>';})
+.catch(err=>{msg.innerHTML='<span style="color:#f43f5e;">'+esc(err.message||'Failed to save Wi-Fi')+'</span>';});
+return false;
 }
 scanWifi(false);
 </script>
@@ -4291,8 +4470,14 @@ function onFileSelected(input) {
   document.getElementById('uploadBtn').disabled = false;
   document.getElementById('resultBox').style.display = 'none';
   setStatus('', '');
-  if (f.name.toLowerCase().indexOf('spiffs') >= 0 ||
-      f.name.toLowerCase().indexOf('littlefs') >= 0) setType('fs');
+  var lowerName = f.name.toLowerCase();
+  if (lowerName.indexOf('spiffs') >= 0 ||
+      lowerName.indexOf('littlefs') >= 0 ||
+      lowerName.indexOf('fs.bin') >= 0) {
+    setType('fs');
+  } else {
+    setType('firmware');
+  }
 }
 
 // Drag & drop
@@ -4302,7 +4487,7 @@ dz.addEventListener('dragleave', function(){ dz.classList.remove('over'); });
 dz.addEventListener('drop', function(e){
   e.preventDefault(); dz.classList.remove('over');
   var f = e.dataTransfer.files[0];
-  if (f && f.name.endsWith('.bin')) {
+  if (f && f.name.toLowerCase().endsWith('.bin')) {
     // Trigger through input for consistency
     var dt = new DataTransfer();
     dt.items.add(f);

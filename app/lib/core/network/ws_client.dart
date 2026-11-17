@@ -71,15 +71,7 @@ class DeviceWebSocketClient {
       final hasPasswordlessUser =
           !hasAuth && user.toLowerCase() != 'admin';
       final includeAuth = hasAuth || hasPasswordlessUser;
-      final endpoint = Uri.parse('ws://$cleanHost');
-      // Uri encodes reserved characters in user/password safely. Constructing
-      // a ws URL with string interpolation breaks credentials such as `@`.
-      final uri = endpoint.replace(
-        userInfo: hasAuth
-            ? '$user:${authPassword!}'
-            : (hasPasswordlessUser ? '$user:' : ''),
-        path: '/ws',
-      );
+      final uri = Uri.parse('ws://$cleanHost').replace(path: '/ws');
       if (HttpOverrides.current?.runtimeType.toString() ==
           '_MockHttpOverrides') {
         _handleDisconnect();
@@ -116,6 +108,8 @@ class DeviceWebSocketClient {
       // for it. Send once after handshake completion to avoid duplicate frames.
       channel.ready.then((_) {
         if (!_isDisposed && !_authFailed && identical(_channel, channel)) {
+          _isConnecting = false;
+          _connectStartedAt = null;
           _connectTimeoutTimer?.cancel();
           _connectTimeoutTimer = null;
           try {
@@ -207,9 +201,13 @@ class DeviceWebSocketClient {
   }
 
   void _disconnectInternal() {
+    final wasConnected = _isConnected;
     _isConnected = false;
     _isConnecting = false;
     _connectStartedAt = null;
+    if (wasConnected && !_isDisposed) {
+      onConnectionChange(false);
+    }
     _connectTimeoutTimer?.cancel();
     _connectTimeoutTimer = null;
     _watchdogTimer?.cancel();
@@ -226,7 +224,7 @@ class DeviceWebSocketClient {
     } catch (_) {}
     _channel = null;
     try {
-      _httpClient?.close(force: true);
+      _httpClient?.close(force: false);
     } catch (_) {}
     _httpClient = null;
   }

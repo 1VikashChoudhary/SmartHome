@@ -146,14 +146,15 @@ class RelayTile extends StatelessWidget {
               trailing: relay.timerActive
                   ? TextButton(
                       onPressed: () {
-                        Navigator.pop(context);
+                        Navigator.pop(sheetCtx);
                         onCancelTimer();
                       },
                       child: const Text('Cancel Timer', style: TextStyle(color: AppColors.danger, fontWeight: FontWeight.bold)),
                     )
                   : const Icon(Icons.chevron_right, color: Colors.grey),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetCtx);
+                if (!context.mounted) return;
                 showModalBottomSheet(
                   context: context,
                   isScrollControlled: true,
@@ -173,7 +174,7 @@ class RelayTile extends StatelessWidget {
                 subtitle: Text('Control this relay from your phone notification shade', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                 trailing: const Icon(Icons.chevron_right, color: Colors.grey),
                 onTap: () {
-                  Navigator.pop(context);
+                  Navigator.pop(sheetCtx);
                   onPinToQuickTile!();
                 },
               ),

@@ -28,6 +28,8 @@ class SystemLogEntry {
         return 'WARN';
       case 2:
         return 'ERROR';
+      case 3:
+        return 'CRIT';
       default:
         return 'LOG';
     }

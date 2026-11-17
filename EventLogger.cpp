@@ -6,14 +6,46 @@
 
 #include "EventLogger.h"
 
+#if defined(ESP32)
+namespace {
+class LogMutexGuard {
+public:
+    explicit LogMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~LogMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void EventLogger::ensureMutex() const {
+    if (!_logMutex) {
+        _logMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define LOG_LOCK() ensureMutex(); LogMutexGuard _logLockGuard(_logMutex)
+#else
+#define LOG_LOCK() ((void)0)
+#endif
+
 EventLogger::EventLogger()
     : _storage(nullptr), _head(0), _count(0), _dirty(false),
-      _lastPersist(0), _lastAutoClean(0) {
+      _lastPersist(0), _lastAutoClean(0)
+#if defined(ESP32)
+    , _logMutex(nullptr)
+#endif
+{
     memset(_entries, 0, sizeof(_entries));
 }
 
 void EventLogger::begin(StorageManager& storage) {
     _storage = &storage;
+#if defined(ESP32)
+    ensureMutex();
+#endif
     loadFromStorage();
     _lastPersist = millis();
     _lastAutoClean = millis();
@@ -36,6 +68,7 @@ void EventLogger::loop() {
 }
 
 void EventLogger::log(uint8_t level, const char* source, const String& message) {
+    LOG_LOCK();
     LogEntry& entry = _entries[_head];
     entry.timestamp = getTimestamp();
     entry.level = level;
@@ -57,9 +90,13 @@ void EventLogger::logWarning(const char* source, const String& message)  { log(L
 void EventLogger::logError(const char* source, const String& message)    { log(LOG_ERROR, source, message); }
 void EventLogger::logCritical(const char* source, const String& message) { log(LOG_CRITICAL, source, message); }
 
-uint16_t EventLogger::getCount() { return _count; }
+uint16_t EventLogger::getCount() {
+    LOG_LOCK();
+    return _count;
+}
 
 void EventLogger::clear() {
+    LOG_LOCK();
     _head = 0;
     _count = 0;
     _dirty = false;
@@ -78,17 +115,11 @@ String EventLogger::toJson(int limit) {
 }
 
 void EventLogger::toJsonArray(JsonArray& arr, int limit) {
-    if (_count == 0) return;
+    LOG_LOCK();
+    if (_count == 0 || limit <= 0) return;
 
-    int start;
     int total = min((int)_count, limit);
-
-    // Calculate starting index (oldest entry within limit)
-    if (_count >= MAX_LOG_ENTRIES) {
-        start = (_head - total + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
-    } else {
-        start = max(0, (int)_head - total);
-    }
+    int start = ((int)_head - total + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
 
     for (int i = 0; i < total; i++) {
         int idx = (start + i) % MAX_LOG_ENTRIES;
@@ -104,16 +135,12 @@ void EventLogger::toJsonArray(JsonArray& arr, int limit) {
 }
 
 String EventLogger::toCSV() {
+    LOG_LOCK();
     String csv = F("Timestamp,Level,Source,Message\n");
 
     if (_count == 0) return csv;
 
-    int start;
-    if (_count >= MAX_LOG_ENTRIES) {
-        start = _head; // Oldest entry
-    } else {
-        start = 0;
-    }
+    int start = ((int)_head - (int)_count + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
 
     for (uint16_t i = 0; i < _count; i++) {
         int idx = (start + i) % MAX_LOG_ENTRIES;
@@ -137,6 +164,7 @@ String EventLogger::toCSV() {
 }
 
 void EventLogger::persistNow() {
+    LOG_LOCK();
     if (!_storage || _count == 0) return;
 
     JsonDocument doc;
@@ -144,7 +172,7 @@ void EventLogger::persistNow() {
 
     // Save last 100 entries max to keep file size manageable
     int saveCount = min((int)_count, 100);
-    int saveStart = (_head - saveCount + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
+    int saveStart = ((int)_head - saveCount + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
 
     for (int i = 0; i < saveCount; i++) {
         int idx = (saveStart + i) % MAX_LOG_ENTRIES;
@@ -174,6 +202,7 @@ uint32_t EventLogger::getTimestamp() {
 }
 
 void EventLogger::autoClean() {
+    LOG_LOCK();
     if (_count == 0) return;
 
     uint32_t now = getTimestamp();
@@ -182,24 +211,25 @@ void EventLogger::autoClean() {
     uint32_t cutoff = now - (LOG_AUTO_CLEAR_DAYS * 86400UL);
     int cleaned = 0;
 
-    // Remove entries older than cutoff from the tail
-    while (_count > 0) {
-        int oldest;
-        if (_count >= MAX_LOG_ENTRIES) {
-            oldest = _head;
-        } else {
-            oldest = (_head - _count + MAX_LOG_ENTRIES) % MAX_LOG_ENTRIES;
-        }
-
-        if (_entries[oldest].timestamp < cutoff && _entries[oldest].timestamp > 1600000000) {
-            _count--;
+    // Compact expired epoch-timestamped entries in-place without stalling on pre-NTP uptime records
+    uint16_t start = ((uint16_t)_head + MAX_LOG_ENTRIES - _count) % MAX_LOG_ENTRIES;
+    uint16_t writeOffset = 0;
+    for (uint16_t i = 0; i < _count; i++) {
+        uint16_t readIdx = (start + i) % MAX_LOG_ENTRIES;
+        if (_entries[readIdx].timestamp > 1600000000 && _entries[readIdx].timestamp < cutoff) {
             cleaned++;
         } else {
-            break;
+            if (writeOffset != i) {
+                uint16_t writeIdx = (start + writeOffset) % MAX_LOG_ENTRIES;
+                _entries[writeIdx] = _entries[readIdx];
+            }
+            writeOffset++;
         }
     }
 
     if (cleaned > 0) {
+        _count = writeOffset;
+        _head = (start + writeOffset) % MAX_LOG_ENTRIES;
         _dirty = true;
         SERIAL_PRINTF("[Logger] Auto-cleaned %d old entries\n", cleaned);
     }

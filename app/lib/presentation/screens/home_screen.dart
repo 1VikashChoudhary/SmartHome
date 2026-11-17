@@ -76,10 +76,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       final hasPrimaryHum = activeClimates.isNotEmpty
           ? activeClimates.first.humidityEnabled
           : dev.telemetry.humidityEnabled;
+      final hasPrimaryClimate = activeClimates.isNotEmpty
+          ? (activeClimates.first.enabled && !activeClimates.first.fault)
+          : (dev.telemetry.dhtEnabled && !dev.telemetry.dhtError);
       if (dev.isOnline &&
-          dev.telemetry.dhtEnabled &&
-          !dev.telemetry.dhtError &&
-          (dev.telemetry.temperature != 0 ||
+          hasPrimaryClimate &&
+          (dev.telemetry.temperature > -100 ||
               (hasPrimaryHum && dev.telemetry.humidity > 0))) {
         tempSum += dev.telemetry.temperature;
         tempCount++;
@@ -1093,10 +1095,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             if (dev.relays.isEmpty) {
               if (dev.numRelays == 0) {
                 return GestureDetector(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: dev.id)),
-                  ),
+                  onTap: () {
+                    if (dev.needsAuth) {
+                      ControllerLoginDialog.show(context, ref, dev);
+                      return;
+                    }
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => DeviceScreen(deviceId: dev.id)),
+                    );
+                  },
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(14),

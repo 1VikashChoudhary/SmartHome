@@ -1,5 +1,6 @@
 package com.smarthome.smarthome_app
 
+import android.app.KeyguardManager
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
@@ -71,6 +72,17 @@ abstract class BaseSmartHomeTileService(private val slotNumber: Int) : TileServi
 
     override fun onClick() {
         super.onClick()
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        val needsUnlock = (km?.isDeviceLocked == true || km?.isKeyguardLocked == true) &&
+            !NativeControlStore.getAllowLockscreenControls(this)
+        if (needsUnlock) {
+            unlockAndRun { performTileClick() }
+            return
+        }
+        performTileClick()
+    }
+
+    private fun performTileClick() {
         val assignment = NativeControlStore.getTileSlot(this, slotNumber)
         if (assignment == null) {
             openTileConfiguration()

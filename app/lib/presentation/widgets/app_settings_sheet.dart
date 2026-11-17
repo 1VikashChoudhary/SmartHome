@@ -32,11 +32,53 @@ class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet> {
   bool _isImportingHub = false;
 
   Future<void> _exportHubConfig() async {
+    bool includeCredentials = false;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (dialogCtx, setDialogState) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Export Hub Backup'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Exports paired controllers, rooms, and layout preferences to a JSON file.',
+              ),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: includeCredentials,
+                title: const Text('Include controller passwords (plaintext)'),
+                subtitle: const Text(
+                  'Leave unchecked unless restoring directly to a trusted personal device.',
+                ),
+                onChanged: (v) =>
+                    setDialogState(() => includeCredentials = v ?? false),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogCtx, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogCtx, true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
     setState(() => _isExportingHub = true);
     try {
       final manager = ref.read(deviceManagerProvider.notifier);
       final jsonStr = await manager.exportHubBackupJson(
-        includeCredentials: true,
+        includeCredentials: includeCredentials,
       );
       final bytes = Uint8List.fromList(utf8.encode(jsonStr));
       final timestamp = DateTime.now()
@@ -62,12 +104,10 @@ class _AppSettingsSheetState extends ConsumerState<AppSettingsSheet> {
           ),
         );
       } else {
-        await Clipboard.setData(ClipboardData(text: jsonStr));
-        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: const Text('Hub backup JSON copied to clipboard!'),
-            backgroundColor: AppColors.accent,
+            content: const Text('Export cancelled. Nothing written to clipboard.'),
+            backgroundColor: AppColors.textSecondary,
           ),
         );
       }

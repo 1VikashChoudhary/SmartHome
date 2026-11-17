@@ -51,11 +51,34 @@ object NativeControlStore {
     private const val PREF_CREDS = "smarthome_native_creds_enc"
     private const val KEY_DEVICES = "devices_json"
     private const val KEY_SLOTS = "tile_slots_json"
+    private const val KEY_ALLOW_LOCKSCREEN = "allow_lockscreen_controls"
     private const val KEY_CRED_PREFIX = "cred_"
     private const val KEYSTORE_ALIAS = "smarthome_native_cred_key"
     private const val KEYSTORE_PROVIDER = "AndroidKeyStore"
 
     private val lock = Any()
+
+    @JvmStatic
+    fun getAllowLockscreenControls(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_ALLOW_LOCKSCREEN, false)
+    }
+
+    @JvmStatic
+    fun setAllowLockscreenControls(context: Context, allow: Boolean) {
+        synchronized(lock) {
+            val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
+            prefs.edit().putBoolean(KEY_ALLOW_LOCKSCREEN, allow).apply()
+        }
+    }
+
+    @JvmStatic
+    fun isValidDeviceId(raw: String?): Boolean {
+        if (raw == null) return false
+        val s = raw.trim()
+        if (s.isEmpty() || s.length > 64) return false
+        return s.all { ch -> !ch.isWhitespace() && !ch.isISOControl() }
+    }
 
     @JvmStatic
     fun sanitizeHost(raw: String?): String {
@@ -70,7 +93,41 @@ object NativeControlStore {
         if (slashIdx >= 0) {
             s = s.substring(0, slashIdx)
         }
-        return s.trim()
+        s = s.trim()
+        if (s.isEmpty()) return ""
+        if (s.any { it.isWhitespace() || it.isISOControl() || it == '@' || it == '?' || it == '#' || it == '\\' }) {
+            return ""
+        }
+        if (s.startsWith("[")) {
+            val closeIdx = s.indexOf(']')
+            if (closeIdx <= 1) return ""
+            val addrPart = s.substring(1, closeIdx)
+            if (!addrPart.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == ':' }) {
+                return ""
+            }
+            val remainder = s.substring(closeIdx + 1)
+            if (remainder.isNotEmpty()) {
+                if (!remainder.startsWith(":")) return ""
+                val port = remainder.substring(1).toIntOrNull() ?: return ""
+                if (port !in 1..65535) return ""
+            }
+            return s
+        }
+        val colonIdx = s.lastIndexOf(':')
+        val hostPart = if (colonIdx > 0 && s.indexOf(':') == colonIdx) {
+            val port = s.substring(colonIdx + 1).toIntOrNull() ?: return ""
+            if (port !in 1..65535) return ""
+            s.substring(0, colonIdx)
+        } else if (s.contains(':')) {
+            return ""
+        } else {
+            s
+        }
+        if (hostPart.isEmpty() || hostPart.length > 253) return ""
+        val isValidHost = hostPart.all {
+            it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '-'
+        }
+        return if (isValidHost) s else ""
     }
 
     fun iconDrawableFor(iconType: String?, relayId: Int = 0): Int {
@@ -201,6 +258,7 @@ object NativeControlStore {
 
                     var user: String? = null
                     var pass: String? = null
+                    var credCorrupted = false
                     val encCred = credsPrefs.getString(KEY_CRED_PREFIX + id, null)
                     if (!encCred.isNullOrEmpty()) {
                         val dec = decryptString(encCred)
@@ -210,7 +268,10 @@ object NativeControlStore {
                                 user = co.optString("u", "")
                                 pass = co.optString("p", "")
                             } catch (_: Exception) {
+                                credCorrupted = true
                             }
+                        } else {
+                            credCorrupted = true
                         }
                     }
 
@@ -221,7 +282,7 @@ object NativeControlStore {
                             room = obj.optString("room", "Home"),
                             ip = ip,
                             authRequired = obj.optBoolean("authRequired", false),
-                            authLocked = obj.optBoolean("authLocked", false),
+                            authLocked = obj.optBoolean("authLocked", false) || credCorrupted,
                             isOnline = obj.optBoolean("isOnline", false),
                             numRelays = obj.optInt("numRelays", relays.size),
                             relays = relays,
@@ -433,26 +494,26 @@ object NativeControlStore {
     }
 
     fun autoAssignSlots(context: Context): Int {
-        val devices = getDevices(context)
-        var slot = 1
-        val newSlots = JSONObject()
-        for (dev in devices) {
-            val enabledRelays = dev.relays.filter { it.enabled }
-            for (r in enabledRelays) {
-                if (slot > MAX_TILE_SLOTS) break
-                val so = JSONObject()
-                so.put("deviceId", dev.id)
-                so.put("relayId", r.id)
-                newSlots.put(slot.toString(), so)
-                slot++
-            }
-            if (slot > MAX_TILE_SLOTS) break
-        }
         synchronized(lock) {
+            val devices = getDevices(context)
+            var slot = 1
+            val newSlots = JSONObject()
+            for (dev in devices) {
+                val enabledRelays = dev.relays.filter { it.enabled }
+                for (r in enabledRelays) {
+                    if (slot > MAX_TILE_SLOTS) break
+                    val so = JSONObject()
+                    so.put("deviceId", dev.id)
+                    so.put("relayId", r.id)
+                    newSlots.put(slot.toString(), so)
+                    slot++
+                }
+                if (slot > MAX_TILE_SLOTS) break
+            }
             val prefs = context.getSharedPreferences(PREF_STORE, Context.MODE_PRIVATE)
             prefs.edit().putString(KEY_SLOTS, newSlots.toString()).apply()
+            return slot - 1
         }
-        return slot - 1
     }
 
     private fun getOrCreateAesKey(): SecretKey? {

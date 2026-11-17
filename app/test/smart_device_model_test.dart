@@ -5,6 +5,7 @@ import 'package:smarthome_app/core/models/sensor_telemetry.dart';
 import 'package:smarthome_app/core/models/scheduled_alarm.dart';
 import 'package:smarthome_app/core/models/automation_rule.dart';
 import 'package:smarthome_app/core/models/device_diagnostics.dart';
+import 'package:smarthome_app/core/models/system_log_entry.dart';
 
 void main() {
   group('SmartDevice Model Tests', () {
@@ -448,6 +449,39 @@ void main() {
       expect(diag.cpuFreq, 240);
       expect(diag.freeHeap, 214580);
       expect(diag.resetReason, 'Power-on Reset');
+    });
+
+    test('SystemLogEntry maps level 3 to CRIT and SensorTelemetry handles empty JSON and numeric bools', () {
+      final critLog = SystemLogEntry.fromJson({
+        'ts': 1700000000,
+        'lvl': 3,
+        'src': 'Safety',
+        'msg': 'Failsafe triggered',
+      });
+      expect(critLog.levelLabel, 'CRIT');
+
+      final emptyTelemetry = SensorTelemetry.fromJson({});
+      expect(emptyTelemetry.dhtEnabled, isFalse);
+
+      final numericTelemetry = SensorTelemetry.fromJson({
+        'dht_enabled': 1,
+        'dht_fault': 'true',
+        'motion': '1',
+        'motion_enabled': 1,
+      });
+      expect(numericTelemetry.dhtEnabled, isTrue);
+      expect(numericTelemetry.dhtFault, isTrue);
+      expect(numericTelemetry.motionDetected, isTrue);
+      expect(numericTelemetry.motionEnabled, isTrue);
+
+      final lockedDiscovered = SmartDevice.fromDiscovery({
+        'device_id': 'disc_1',
+        'mac': 'AA:BB:CC:DD:EE:02',
+        'device_name': 'Auth Device',
+        'hostname': 'smarthome',
+        'auth_required': true,
+      }, '192.168.1.55');
+      expect(lockedDiscovered.authRole, 'guest');
     });
   });
 }

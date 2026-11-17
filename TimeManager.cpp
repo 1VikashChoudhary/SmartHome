@@ -123,13 +123,12 @@ String TimeManager::getDayOfWeek() {
 }
 
 int TimeManager::getDayOfWeekNum() {
-    updateTimeInfo();
-    return _timeInfo.tm_wday; // 0=Sun
+    return updateTimeInfo() ? _timeInfo.tm_wday : 0; // 0=Sun
 }
 
-int TimeManager::getHour()   { updateTimeInfo(); return _timeInfo.tm_hour; }
-int TimeManager::getMinute() { updateTimeInfo(); return _timeInfo.tm_min; }
-int TimeManager::getSecond() { updateTimeInfo(); return _timeInfo.tm_sec; }
+int TimeManager::getHour()   { return updateTimeInfo() ? _timeInfo.tm_hour : 0; }
+int TimeManager::getMinute() { return updateTimeInfo() ? _timeInfo.tm_min : 0; }
+int TimeManager::getSecond() { return updateTimeInfo() ? _timeInfo.tm_sec : 0; }
 
 time_t TimeManager::getEpoch() {
     time_t now;
@@ -189,6 +188,7 @@ void TimeManager::syncRTCFromNTP() {
 
     time_t now = getEpoch();
     struct tm* t = localtime(&now);
+    if (!t) return;
     _rtc.adjust(DateTime(t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
                           t->tm_hour, t->tm_min, t->tm_sec));
     Serial.println(F("[Time] RTC synced from NTP"));
@@ -199,13 +199,14 @@ void TimeManager::loadTimeFromRTC() {
 
     DateTime rtcTime = _rtc.now();
     struct timeval tv;
-    struct tm t;
+    struct tm t = {};
     t.tm_year = rtcTime.year() - 1900;
     t.tm_mon = rtcTime.month() - 1;
     t.tm_mday = rtcTime.day();
     t.tm_hour = rtcTime.hour();
     t.tm_min = rtcTime.minute();
     t.tm_sec = rtcTime.second();
+    t.tm_isdst = -1;
     tv.tv_sec = mktime(&t);
     tv.tv_usec = 0;
     settimeofday(&tv, nullptr);

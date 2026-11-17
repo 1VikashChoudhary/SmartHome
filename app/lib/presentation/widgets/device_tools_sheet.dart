@@ -88,11 +88,19 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   final _timezone = TextEditingController();
   final _webUser = TextEditingController();
   final _webPassword = TextEditingController();
+  final _guestUser = TextEditingController();
+  final _guestPassword = TextEditingController();
+  final _apPassword = TextEditingController();
   final _dimStart = TextEditingController();
   final _dimEnd = TextEditingController();
   bool _mqttEnabled = false;
   bool _webAuth = false;
   bool _webPasswordSet = false;
+  bool _guestAuth = false;
+  bool _guestPasswordSet = false;
+  bool _guestPasswordClear = false;
+  bool _apPasswordSet = false;
+  bool _apPasswordClear = false;
   bool _use24h = false;
   bool _mq2Enabled = true;
   bool _autoDim = false;
@@ -111,6 +119,8 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   bool _isSavingCalibration = false;
   bool _isCalibratingCleanAir = false;
   bool _isExportingBackup = false;
+  bool _isLoadingConfig = true;
+  bool _configLoadFailed = false;
 
   @override
   void initState() {
@@ -152,6 +162,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       _timezone,
       _webUser,
       _webPassword,
+      _guestUser,
+      _guestPassword,
+      _apPassword,
       _dimStart,
       _dimEnd,
     ]) {
@@ -242,9 +255,24 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   }
 
   Future<void> _loadDeviceConfig() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingConfig = true;
+        _configLoadFailed = false;
+      });
+    }
     final cfg = await widget.manager.fetchDeviceConfig(widget.device.id);
-    if (!mounted || cfg == null) return;
+    if (!mounted) return;
+    if (cfg == null) {
+      setState(() {
+        _isLoadingConfig = false;
+        _configLoadFailed = true;
+      });
+      return;
+    }
     setState(() {
+      _isLoadingConfig = false;
+      _configLoadFailed = false;
       if (cfg['sensor'] is Map) {
         final s = cfg['sensor'] as Map;
         final cfgGasMax = (s['gas_max'] as num?)?.toInt();
@@ -331,6 +359,10 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       _webAuth = cfg['web_auth'] as bool? ?? _webAuth;
       _webPasswordSet = cfg['web_pass_set'] as bool? ?? _webPasswordSet;
       _webUser.text = cfg['web_user']?.toString() ?? '';
+      _guestAuth = cfg['guest_auth'] as bool? ?? _guestAuth;
+      _guestPasswordSet = cfg['guest_pass_set'] as bool? ?? _guestPasswordSet;
+      _guestUser.text = cfg['guest_user']?.toString() ?? '';
+      _apPasswordSet = cfg['ap_pass_set'] as bool? ?? _apPasswordSet;
       _use24h = cfg['use_24h'] as bool? ?? _use24h;
       if (cfg['arduino_ota'] != null) {
         _arduinoOta = cfg['arduino_ota'] as bool? ?? false;
@@ -839,12 +871,42 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     );
   }
 
+  Widget _buildConfigErrorBanner() {
+    if (!_configLoadFailed) return const SizedBox.shrink();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.danger.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: AppColors.danger, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Could not load live settings from ${widget.device.name}. Showing cached/default values.',
+              style: const TextStyle(color: AppColors.danger, fontSize: 11.5),
+            ),
+          ),
+          TextButton(
+            onPressed: _isLoadingConfig ? null : _loadDeviceConfig,
+            child: const Text('Retry'),
+          ),
+        ],
+      ),
+    );
+  }
+
   // --- 2. Hardware Tuning Tab ---
   Widget _buildHardwareTuningTab() {
     final isGuest = widget.device.isGuest;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        _buildConfigErrorBanner(),
         if (isGuest)
           _buildGuestRestrictedBanner('Hardware Tuning & GPIO profile editing is restricted to Administrators. Guest accounts have read-only monitoring access (buzzer mute remains available).'),
         // Hardware & GPIO Template Engine Card
@@ -1463,6 +1525,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        _buildConfigErrorBanner(),
         if (isGuest)
           _buildGuestRestrictedBanner('Controller Settings (Wi-Fi, MQTT, Security) are restricted to Administrators. Guest accounts cannot modify network credentials.'),
         _settingsCard('Wi-Fi connection', Icons.wifi_outlined, [
@@ -1612,8 +1675,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                       setState(() => _isSavingMqtt = true);
                       final ok = await widget.manager.saveDeviceMqtt(widget.device.id, {
                         'enabled': _mqttEnabled,
-                        if (_mqttBroker.text.trim().isNotEmpty)
-                          'broker': _mqttBroker.text.trim(),
+                        'broker': _mqttBroker.text.trim(),
                         'port': port ?? 1883,
                         'prefix': _mqttPrefix.text.trim(),
                         'client_id': _mqttClientId.text.trim(),
@@ -1687,7 +1749,80 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 helper: 'Leave blank to keep the current password',
               ),
             ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Guest read-only access'),
+              subtitle: const Text(
+                'Allow a restricted monitoring account',
+                style: TextStyle(fontSize: 11.5),
+              ),
+              value: _guestAuth,
+              onChanged: isGuest
+                  ? null
+                  : (value) => setState(() => _guestAuth = value),
+            ),
+            if (_guestAuth) ...[
+              TextField(
+                controller: _guestUser,
+                enabled: !isGuest,
+                maxLength: 20,
+                decoration: _field('Guest username', helper: 'Default: guest'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _guestPassword,
+                enabled: !isGuest && !_guestPasswordClear,
+                obscureText: true,
+                maxLength: 20,
+                decoration: _field(
+                  'New guest password',
+                  helper: _guestPasswordSet
+                      ? 'Leave blank to keep current password'
+                      : 'Optional (blank = passwordless guest username)',
+                ),
+              ),
+              if (_guestPasswordSet)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('Clear stored guest password'),
+                  value: _guestPasswordClear,
+                  onChanged: isGuest
+                      ? null
+                      : (v) => setState(() {
+                            _guestPasswordClear = v ?? false;
+                            if (_guestPasswordClear) _guestPassword.clear();
+                          }),
+                ),
+            ],
           ],
+          const SizedBox(height: 10),
+          TextField(
+            controller: _apPassword,
+            enabled: !isGuest && !_apPasswordClear,
+            obscureText: true,
+            maxLength: 63,
+            decoration: _field(
+              'Custom SoftAP hotspot password',
+              helper: _apPasswordSet
+                  ? 'Custom AP password saved (8-63 chars; blank keeps current)'
+                  : 'Optional WPA2 setup AP password (8-63 chars; blank uses device default)',
+            ),
+          ),
+          if (_apPasswordSet)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+              title: const Text('Clear custom SoftAP password (revert to default)'),
+              value: _apPasswordClear,
+              onChanged: isGuest
+                  ? null
+                  : (v) => setState(() {
+                        _apPasswordClear = v ?? false;
+                        if (_apPasswordClear) _apPassword.clear();
+                      }),
+            ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -1719,6 +1854,27 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                         );
                         return;
                       }
+                      if (_webAuth &&
+                          _guestAuth &&
+                          _guestUser.text.trim().isEmpty) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Enter a guest username before enabling guest access.',
+                        );
+                        return;
+                      }
+                      if (!_apPasswordClear &&
+                          _apPassword.text.isNotEmpty &&
+                          (_apPassword.text.length < 8 ||
+                              _apPassword.text.length > 63)) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'SoftAP password must be 8-63 characters.',
+                        );
+                        return;
+                      }
                       setState(() => _isSavingDevice = true);
                       final ok = await widget.manager
                           .saveDeviceConfig(widget.device.id, {
@@ -1730,12 +1886,44 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                             if (_webAuth) 'web_user': _webUser.text.trim(),
                             if (_webPassword.text.isNotEmpty)
                               'web_pass': _webPassword.text,
+                            if (_webAuth) 'guest_auth': _guestAuth,
+                            if (_webAuth && _guestAuth)
+                              'guest_user': _guestUser.text.trim(),
+                            if (_webAuth &&
+                                _guestAuth &&
+                                _guestPassword.text.isNotEmpty)
+                              'guest_pass': _guestPassword.text,
+                            if (_webAuth && _guestPasswordClear)
+                              'guest_pass_clear': true,
+                            if (!_apPasswordClear &&
+                                _apPassword.text.isNotEmpty)
+                              'ap_pass': _apPassword.text,
+                            if (_apPasswordClear) 'ap_pass_clear': true,
                           });
                       if (mounted) {
                         setState(() {
                           _isSavingDevice = false;
                           if (ok && _webPassword.text.isNotEmpty) {
                             _webPasswordSet = true;
+                            _webPassword.clear();
+                          }
+                          if (ok && _guestPassword.text.isNotEmpty) {
+                            _guestPasswordSet = true;
+                            _guestPassword.clear();
+                          }
+                          if (ok && _guestPasswordClear) {
+                            _guestPasswordSet = false;
+                            _guestPasswordClear = false;
+                          }
+                          if (ok &&
+                              !_apPasswordClear &&
+                              _apPassword.text.isNotEmpty) {
+                            _apPasswordSet = true;
+                            _apPassword.clear();
+                          }
+                          if (ok && _apPasswordClear) {
+                            _apPasswordSet = false;
+                            _apPasswordClear = false;
                           }
                         });
                         _showSaveResult(
@@ -2820,6 +3008,7 @@ class _RestoreConfigDialog extends StatefulWidget {
 class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
   String? _selectedFileName;
   int _selectedFileSize = 0;
+  String? _selectedFileContent;
   String _jsonText = '';
   Map<String, dynamic>? _parsedData;
   String? _validationError;
@@ -2847,8 +3036,8 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
         setState(() {
           _selectedFileName = file.name;
           _selectedFileSize = bytes.length;
+          _selectedFileContent = content;
           _isManualPaste = false;
-          _pasteController.text = content;
         });
         _validateJson(content);
       }
@@ -3133,10 +3322,11 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                               onPressed: () {
                                 if (_isManualPaste) {
                                   setState(() => _isManualPaste = false);
-                                  if (_selectedFileName == null) {
+                                  if (_selectedFileName == null ||
+                                      _selectedFileContent == null) {
                                     _pickFile();
                                   } else {
-                                    _validateJson(_pasteController.text);
+                                    _validateJson(_selectedFileContent!);
                                   }
                                 } else {
                                   _pickFile();
@@ -3158,6 +3348,9 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                               label: const Text('Paste JSON'),
                               onPressed: () {
                                 setState(() => _isManualPaste = true);
+                                if (_pasteController.text.trim().isNotEmpty) {
+                                  _validateJson(_pasteController.text);
+                                }
                               },
                             ),
                           ),
@@ -3292,8 +3485,6 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                                 if (!mounted) return;
                                 if (data?.text != null) {
                                   _pasteController.text = data!.text!;
-                                  _selectedFileName = 'Pasted from Clipboard';
-                                  _selectedFileSize = utf8.encode(data.text!).length;
                                   _validateJson(data.text!);
                                 }
                               },
@@ -3320,8 +3511,6 @@ class _RestoreConfigDialogState extends State<_RestoreConfigDialog> {
                             ),
                           ),
                           onChanged: (val) {
-                            _selectedFileName = 'Manual Input';
-                            _selectedFileSize = utf8.encode(val).length;
                             _validateJson(val);
                           },
                         ),

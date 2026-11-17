@@ -87,7 +87,7 @@ private:
     uint8_t _alarmCount;
 
     unsigned long _lastCheck;
-    int32_t _lastFiredMinuteKey;  // Unique minute key (epoch/60 or yearDay*1440 + hour*60 + min)
+    int32_t _lastFiredMinuteKey[MAX_ALARMS];  // Per-slot minute key to prevent double-fire without blocking sibling alarms
     unsigned long _delayArmedMillis[MAX_ALARMS];
 
     void (*_actionCallback)(AlarmAction, uint8_t);

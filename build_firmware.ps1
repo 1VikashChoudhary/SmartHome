@@ -54,6 +54,21 @@ function Clear-BuildTimestampCache([string]$TargetBuildDir) {
     }
 }
 
+function Invoke-ArduinoCompile([string]$Fqbn, [string]$TargetBuildDir) {
+    # Native compiler warnings written to stderr must not throw NativeCommandError
+    # under $ErrorActionPreference = "Stop"; check $LASTEXITCODE explicitly instead.
+    $prevErrAction = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $ArduinoCli compile `
+            -b $Fqbn `
+            --build-path $TargetBuildDir `
+            "$ScriptDir"
+    } finally {
+        $ErrorActionPreference = $prevErrAction
+    }
+}
+
 # ==============================================================================
 # ESP8266 Build
 # ==============================================================================
@@ -62,10 +77,7 @@ if ($Target -eq "all" -or $Target -eq "esp8266") {
     $sw8266 = [System.Diagnostics.Stopwatch]::StartNew()
     Clear-BuildTimestampCache "$BuildDir\esp8266"
     
-    & $ArduinoCli compile `
-        -b esp8266:esp8266:nodemcuv2 `
-        --build-path "$BuildDir\esp8266" `
-        "$ScriptDir"
+    Invoke-ArduinoCompile "esp8266:esp8266:nodemcuv2" "$BuildDir\esp8266"
     
     if ($LASTEXITCODE -eq 0) {
         $srcBin = "$BuildDir\esp8266\SmartHome.ino.bin"
@@ -90,10 +102,7 @@ if ($Target -eq "all" -or $Target -eq "esp32") {
     $sw32 = [System.Diagnostics.Stopwatch]::StartNew()
     Clear-BuildTimestampCache "$BuildDir\esp32"
     
-    & $ArduinoCli compile `
-        -b espressif:esp32:esp32:PartitionScheme=min_spiffs `
-        --build-path "$BuildDir\esp32" `
-        "$ScriptDir"
+    Invoke-ArduinoCompile "espressif:esp32:esp32:PartitionScheme=min_spiffs" "$BuildDir\esp32"
     
     if ($LASTEXITCODE -eq 0) {
         Copy-Item "$BuildDir\esp32\SmartHome.ino.bin" "$BinDir\esp32\SmartHome_ESP32.bin" -Force

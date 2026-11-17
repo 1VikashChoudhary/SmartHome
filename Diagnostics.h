@@ -29,7 +29,7 @@ public:
     unsigned long getUptimeSeconds();
     String getResetReason();
     String getChipModel();
-    uint8_t getChipRevision();
+    uint16_t getChipRevision();
     uint32_t getChipId();
     uint32_t getCpuFreqMHz();
     uint32_t getFlashSize();
@@ -49,6 +49,7 @@ private:
     String _resetReason;
 
 #if defined(ESP32)
+    mutable portMUX_TYPE _uptimeMux;
     String decodeResetReason(esp_reset_reason_t reason);
 #endif
 };

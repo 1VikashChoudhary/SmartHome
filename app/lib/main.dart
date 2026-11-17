@@ -82,6 +82,8 @@ class _MainShellState extends ConsumerState<MainShell>
     WidgetsBinding.instance.addObserver(this);
     NativeControlsService.instance.setLaunchActionListener(_handleLaunchAction);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _deviceManager.ensureInitialized();
+      if (!mounted) return;
       final pending = await NativeControlsService.instance.consumeLaunchAction();
       if (pending != null && mounted) {
         _handleLaunchAction(pending);

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,12 +17,16 @@ import 'package:smarthome_app/core/models/scheduled_alarm.dart';
 import 'package:smarthome_app/core/network/api_client.dart';
 import 'package:smarthome_app/core/network/ws_client.dart';
 import 'package:smarthome_app/core/theme/app_theme.dart';
+import 'package:smarthome_app/presentation/screens/analytics_screen.dart';
+import 'package:smarthome_app/presentation/screens/batch_ota_screen.dart';
 import 'package:smarthome_app/presentation/screens/device_screen.dart';
+import 'package:smarthome_app/presentation/widgets/controller_login_dialog.dart';
 import 'package:smarthome_app/presentation/screens/home_screen.dart';
 import 'package:smarthome_app/presentation/widgets/emergency_alarm_dialog.dart';
 import 'package:smarthome_app/presentation/widgets/hardware_config_sheet.dart';
 import 'package:smarthome_app/services/device_manager.dart';
 import 'package:smarthome_app/services/device_storage_service.dart';
+import 'package:smarthome_app/services/discovery_service.dart';
 
 class _AlarmDialogTestDeviceManager extends DeviceManager {
   final List<SmartDevice> _devices;
@@ -1402,7 +1407,17 @@ void main() {
           ],
         );
 
-        final exported = await storage.exportHubBackupJson([device]);
+        final defaultExport = await storage.exportHubBackupJson([device]);
+        final defaultDecoded =
+            jsonDecode(defaultExport) as Map<String, dynamic>;
+        final defaultDevices =
+            (defaultDecoded['devices'] as List).cast<Map<String, dynamic>>();
+        expect(defaultDevices.first.containsKey('auth_password'), isFalse);
+
+        final exported = await storage.exportHubBackupJson(
+          [device],
+          includeCredentials: true,
+        );
         final decoded = jsonDecode(exported) as Map<String, dynamic>;
         expect(decoded['type'], 'smarthome_pro_hub_backup');
 
@@ -1570,6 +1585,754 @@ void main() {
         expect(sgpRule.sensorLabelFor(telemetry), 'SGP40 VOC #2');
       },
     );
+
+    test(
+      'Discovery rediscovery without auth_role preserves paired Admin role and exportHubBackupJson omits passwords by default',
+      () async {
+        final adminDevice = SmartDevice(
+          id: 'dev_admin_rediscover',
+          mac: 'AA:BB:CC:DD:EE:77',
+          ip: '127.0.0.1:1',
+          hostname: 'smarthome',
+          name: 'Living Room',
+          authRequired: true,
+          authRole: 'admin',
+          authUsername: 'admin',
+          authPassword: 'secretPassword',
+          relays: [RelayChannel(index: 0, name: 'Light', state: false)],
+        );
+
+        SharedPreferences.setMockInitialValues({
+          'smarthome_registered_devices': jsonEncode([adminDevice.toStorageJson()]),
+        });
+        FlutterSecureStorage.setMockInitialValues({
+          'smarthome_device_pass_dev_admin_rediscover': 'secretPassword',
+          'smarthome_device_user_dev_admin_rediscover': 'admin',
+        });
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+
+        final notifier = container.read(deviceManagerProvider.notifier);
+        await notifier.ensureInitialized();
+
+        // Simulate fallback probeDiscovery response (omits auth_role)
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((req) async {
+          if (req.uri.path == '/api/status') {
+            req.response.statusCode = 503;
+            await req.response.close();
+          } else {
+            req.response
+              ..statusCode = 200
+              ..headers.contentType = ContentType.json
+              ..write(
+                jsonEncode({
+                  'device_id': 'dev_admin_rediscover',
+                  'mac': 'AA:BB:CC:DD:EE:77',
+                  'device_name': 'Living Room',
+                  'hostname': 'smarthome',
+                  'auth_required': true,
+                  'num_relays': 1,
+                }),
+              );
+            await req.response.close();
+          }
+        });
+
+        await notifier.addDeviceByIp(
+          '127.0.0.1:${server.port}',
+          username: 'admin',
+          password: 'secretPassword',
+        );
+
+        final updated = container
+            .read(deviceManagerProvider)
+            .firstWhere((d) => d.id == 'dev_admin_rediscover');
+        expect(updated.authRole, 'admin');
+
+        final defaultExport = await notifier.exportHubBackupJson();
+        final decoded = jsonDecode(defaultExport) as Map<String, dynamic>;
+        final devs = (decoded['devices'] as List).cast<Map<String, dynamic>>();
+        expect(devs.first.containsKey('auth_password'), isFalse);
+      },
+    );
+
+    test(
+      'updateDeviceCredentials keeps device unlocked on timeout/offline and locks only on explicit 401',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        var return401 = false;
+        server.listen((req) async {
+          req.response.statusCode = return401 ? 401 : 503;
+          await req.response.close();
+        });
+
+        final device = SmartDevice(
+          id: 'dev_cred_check',
+          mac: 'AA:BB:CC:DD:EE:88',
+          ip: '127.0.0.1:${server.port}',
+          hostname: 'smarthome',
+          name: 'Bedroom',
+          authRequired: true,
+          authLocked: false,
+          authRole: 'admin',
+          authUsername: 'admin',
+          authPassword: 'savedPassword',
+        );
+        SharedPreferences.setMockInitialValues({
+          'smarthome_registered_devices': jsonEncode([device.toStorageJson()]),
+        });
+        FlutterSecureStorage.setMockInitialValues({
+          'smarthome_device_pass_dev_cred_check': 'savedPassword',
+        });
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(deviceManagerProvider.notifier);
+        await notifier.ensureInitialized();
+
+        // Non-401 unreachable response must NOT flip authLocked = true
+        final ok503 = await notifier.updateDeviceCredentials(
+          'dev_cred_check',
+          username: 'admin',
+          password: 'wrongPassword',
+        );
+        expect(ok503, isFalse);
+        expect(
+          container
+              .read(deviceManagerProvider)
+              .firstWhere((d) => d.id == 'dev_cred_check')
+              .authLocked,
+          isFalse,
+        );
+
+        // Explicit 401 response MUST lock authLocked = true
+        return401 = true;
+        final ok401 = await notifier.updateDeviceCredentials(
+          'dev_cred_check',
+          username: 'admin',
+          password: 'wrongPassword',
+        );
+        expect(ok401, isFalse);
+        expect(
+          container
+              .read(deviceManagerProvider)
+              .firstWhere((d) => d.id == 'dev_cred_check')
+              .authLocked,
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'importHubBackupJson unregisters removed hosts and registers restored hosts',
+      () async {
+        final oldDevice = SmartDevice(
+          id: 'dev_old',
+          mac: 'AA:BB:CC:DD:EE:01',
+          ip: '127.0.0.1:41111',
+          hostname: 'smarthome-old',
+          name: 'Old Room',
+          authUsername: 'old_admin',
+        );
+        final restoredDevice = SmartDevice(
+          id: 'dev_new',
+          mac: 'AA:BB:CC:DD:EE:02',
+          ip: '127.0.0.1:42222',
+          hostname: 'smarthome-new',
+          name: 'New Room',
+          authUsername: 'new_admin',
+        );
+        SharedPreferences.setMockInitialValues({
+          'smarthome_registered_devices': jsonEncode([oldDevice.toStorageJson()]),
+        });
+        FlutterSecureStorage.setMockInitialValues({});
+        addTearDown(() {
+          ApiClient.unregisterDevice('127.0.0.1:41111');
+          ApiClient.unregisterDevice('127.0.0.1:42222');
+        });
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(deviceManagerProvider.notifier);
+        await notifier.ensureInitialized();
+
+        expect(ApiClient.hasRegisteredUsername('127.0.0.1:41111'), isTrue);
+
+        final backupPayload = jsonEncode({
+          'backup_version': 1,
+          'app': 'SmartHome',
+          'devices': [restoredDevice.toStorageJson()],
+        });
+        final ok = await notifier.importHubBackupJson(backupPayload);
+        expect(ok, isTrue);
+        expect(ApiClient.hasRegisteredUsername('127.0.0.1:41111'), isFalse);
+        expect(ApiClient.hasRegisteredUsername('127.0.0.1:42222'), isTrue);
+      },
+    );
+
+    test(
+      'toggleRelay revert restores active countdown and restarts ticker',
+      () async {
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+        server.listen((req) async {
+          req.response.statusCode = 500;
+          await req.response.close();
+        });
+
+        final dev = SmartDevice(
+          id: 'dev_toggle_revert',
+          mac: 'AA:BB:CC:DD:EE:03',
+          ip: '127.0.0.1:${server.port}',
+          hostname: 'smarthome-rev',
+          name: 'Living Room',
+          isOnline: true,
+          relays: [
+            RelayChannel(
+              index: 0,
+              name: 'Light',
+              state: true,
+              enabled: true,
+              timerActive: true,
+              timerTarget: false,
+              timerRemaining: 5,
+            ),
+          ],
+        );
+        SharedPreferences.setMockInitialValues({
+          'smarthome_registered_devices': jsonEncode([dev.toStorageJson()]),
+        });
+        FlutterSecureStorage.setMockInitialValues({});
+
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+        final notifier = container.read(deviceManagerProvider.notifier);
+        await notifier.ensureInitialized();
+
+        await notifier.toggleRelay('dev_toggle_revert', 0);
+
+        final reverted = container
+            .read(deviceManagerProvider)
+            .firstWhere((d) => d.id == 'dev_toggle_revert')
+            .relays
+            .first;
+        expect(reverted.state, isTrue);
+        expect(reverted.timerActive, isTrue);
+        expect(reverted.timerRemaining, 5);
+
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        final ticked = container
+            .read(deviceManagerProvider)
+            .firstWhere((d) => d.id == 'dev_toggle_revert')
+            .relays
+            .first;
+        expect(ticked.timerRemaining, lessThan(5));
+      },
+    );
+
+    test(
+      'DiscoveryService.dispose aborts safely and skips requests when disposed',
+      () async {
+        final service = DiscoveryService();
+        service.dispose();
+        final devices = await service.discoverAll();
+        expect(devices, isEmpty);
+      },
+    );
+
+    test(
+      'DiscoveryService.resolveLanSubnets discovers Ethernet/Wi-Fi LANs and filters virtual/link-local adapters',
+      () {
+        final resolved = DiscoveryService.resolveLanSubnets(
+          wifiIp: null,
+          interfaces: const [
+            (name: 'Ethernet', addresses: ['192.168.29.249']),
+            (name: 'WiFi', addresses: ['192.168.29.67', '169.254.10.5']),
+            (name: 'vEthernet (WSL (Hyper-V firewall))', addresses: ['192.168.80.1']),
+            (name: 'Tailscale', addresses: ['100.80.1.2']),
+            (name: 'Loopback', addresses: ['127.0.0.1']),
+          ],
+        );
+
+        expect(resolved.subnets, equals(['192.168.29']));
+        expect(resolved.localIps, containsAll(['192.168.29.249', '192.168.29.67']));
+        expect(resolved.localIps, isNot(contains('169.254.10.5')));
+        expect(resolved.localIps, isNot(contains('127.0.0.1')));
+      },
+    );
+
+    test(
+      'DiscoveryService scans high octets (.103, .240) when getWifiIP returns null (Windows Ethernet)',
+      () async {
+        final probedHttpIps = <String>[];
+        final service = DiscoveryService(
+          wifiIpProvider: () async => null,
+          interfacesProvider: () async => const [
+            (name: 'Ethernet', addresses: ['192.168.29.249']),
+          ],
+          portOpenProbe: (ip, _) async =>
+              ip == '192.168.29.103' || ip == '192.168.29.240',
+          deviceProbe: (ip, {cancelToken}) async {
+            probedHttpIps.add(ip);
+            if (ip == '192.168.29.103') {
+              return SmartDevice.fromDiscovery({
+                'service': 'smarthome',
+                'device_id': 'esp32_103',
+                'mac': 'AA:BB:CC:DD:EE:10',
+                'device_name': 'Bedroom',
+                'num_relays': 2,
+              }, ip);
+            }
+            if (ip == '192.168.29.240') {
+              return SmartDevice.fromDiscovery({
+                'service': 'smarthome',
+                'device_id': 'esp32_240',
+                'mac': 'AA:BB:CC:DD:EE:24',
+                'device_name': 'Kitchen',
+                'num_relays': 4,
+              }, ip);
+            }
+            return null;
+          },
+        );
+        addTearDown(service.dispose);
+
+        final found = await service.discoverAll();
+        expect(found.map((d) => d.ip).toSet(), equals({'192.168.29.103', '192.168.29.240'}));
+        expect(probedHttpIps.toSet(), equals({'192.168.29.103', '192.168.29.240'}));
+      },
+    );
+
+    test(
+      'ApiClient.probeDiscovery ignores non-SmartHome JSON and accepts valid controller discovery',
+      () async {
+        final fakeRouter = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => fakeRouter.close(force: true));
+        fakeRouter.listen((req) async {
+          req.response.statusCode = 200;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({'status': 'ok', 'vendor': 'router'}));
+          await req.response.close();
+        });
+
+        final realController = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => realController.close(force: true));
+        realController.listen((req) async {
+          req.response.statusCode = 200;
+          req.response.headers.contentType = ContentType.json;
+          req.response.write(jsonEncode({
+            'service': 'smarthome',
+            'device_id': 'sh_valid',
+            'mac': 'AA:BB:CC:DD:EE:FF',
+            'device_name': 'Studio',
+            'num_relays': 4,
+          }));
+          await req.response.close();
+        });
+
+        final client = ApiClient();
+        addTearDown(client.dispose);
+
+        expect(await client.probeDiscovery('127.0.0.1:${fakeRouter.port}'), isNull);
+        final dev = await client.probeDiscovery('127.0.0.1:${realController.port}');
+        expect(dev, isNotNull);
+        expect(dev!.name, 'Studio');
+      },
+    );
+
+    testWidgets(
+      'AnalyticsScreen renders disabled Air safety notice when gas sensor is disabled',
+      (WidgetTester tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final dev = SmartDevice(
+          id: 'dev_no_gas',
+          mac: 'AA:BB:CC:DD:EE:77',
+          ip: '192.168.1.99',
+          hostname: 'smarthome-nogas',
+          name: 'Hallway',
+          isOnline: true,
+          telemetry: SensorTelemetry(
+            dhtEnabled: true,
+            temperature: 25.4,
+            humidity: 52.0,
+            gasEnabled: false,
+            gasHwAllowed: false,
+          ),
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _TelemetryCardTestDeviceManager(dev),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const AnalyticsScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Air safety sensor disabled'), findsOneWidget);
+        expect(find.text('Current level'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'EmergencyAlarmDialog keeps alert open on failed shutoff and reports error',
+      (WidgetTester tester) async {
+        final dev = SmartDevice(
+          id: 'dev_alarm_fail',
+          mac: 'AA:BB:CC:11:22:44',
+          ip: '192.168.1.44',
+          hostname: 'smarthome-alarm',
+          name: 'Kitchen Hub',
+          isOnline: true,
+          telemetry: SensorTelemetry(
+            gasEnabled: true,
+            gasHwAllowed: true,
+            gasAlarm: true,
+            gasRaw: 750,
+            gasThreshold: 400,
+          ),
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _FailingAlarmDeviceManager(dev),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const Scaffold(
+                body: EmergencyAlarmDialog(
+                  deviceId: 'dev_alarm_fail',
+                  alarmType: 'gas',
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Emergency Shutoff All Relays + Mute'));
+        await tester.pumpAndSettle();
+
+        // Dialog must remain visible and display the failure feedback
+        expect(find.text('Emergency Shutoff All Relays + Mute'), findsOneWidget);
+        expect(
+          find.text('Emergency shutoff failed! Check connection or admin permissions.'),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'EmergencyAlarmDialog does not push duplicate DeviceScreen when already viewing it',
+      (WidgetTester tester) async {
+        final dev = SmartDevice(
+          id: 'dev_dup_check',
+          mac: 'AA:BB:CC:11:22:55',
+          ip: '192.168.1.45',
+          hostname: 'smarthome-dup',
+          name: 'Office Hub',
+          isOnline: true,
+          telemetry: SensorTelemetry(
+            dhtEnabled: true,
+            temperature: 50.0,
+            tempThreshold: 45.0,
+          ),
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _TelemetryCardTestDeviceManager(dev),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: Builder(
+                builder: (ctx) => DeviceScreen(deviceId: 'dev_dup_check'),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(DeviceScreen.isViewing('dev_dup_check'), isTrue);
+
+        final ctx = tester.element(find.byType(DeviceScreen));
+        unawaited(
+          EmergencyAlarmDialog.show(
+            ctx,
+            tester.element(find.byType(DeviceScreen)) as WidgetRef,
+            deviceId: 'dev_dup_check',
+            alarmType: 'temperature',
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Mute Buzzer & Inspect Controller'));
+        await tester.pumpAndSettle();
+
+        // Only the original DeviceScreen instance exists (no duplicate pushed)
+        expect(find.byType(DeviceScreen), findsOneWidget);
+      },
+    );
+
+    test(
+      'HardwareProfile.safeOutputPins aligns with firmware strapping/output lists for GPIO 12',
+      () {
+        expect(HardwareProfile.safeOutputPins, contains(12));
+        expect(HardwareProfile.strappingPinsESP32, contains(12));
+        expect(HardwareProfile.safeOutputPinsESP8266, contains(12));
+      },
+    );
+
+    test(
+      'DeviceStorageService.importHubBackupJson sanitizes hosts and rejects invalid entries',
+      () async {
+        SharedPreferences.setMockInitialValues({});
+        FlutterSecureStorage.setMockInitialValues({});
+        final storage = DeviceStorageService();
+        final backup = jsonEncode({
+          'type': 'smarthome_pro_hub_backup',
+          'devices': [
+            {
+              'id': 'valid_1',
+              'mac': 'AA:BB:CC:DD:EE:01',
+              'ip': 'http://192.168.1.50/api/status?x=1',
+              'hostname': 'https://smarthome-50.local/',
+              'name': 'Valid Hub',
+              'num_relays': 2,
+            },
+            {
+              'id': 'bad_host',
+              'mac': 'AA:BB:CC:DD:EE:02',
+              'ip': '192.168.1.51@evil.com',
+              'hostname': 'evil',
+              'name': 'Injected Hub',
+              'num_relays': 2,
+            },
+          ],
+        });
+
+        final restored = await storage.importHubBackupJson(backup);
+        expect(restored, isNotNull);
+        expect(restored!.length, 1);
+        expect(restored.first.ip, '192.168.1.50');
+        expect(restored.first.hostname, 'smarthome-50.local');
+      },
+    );
+
+    testWidgets(
+      'AnalyticsScreen overview renders Gas disabled chip when gas sensing is off',
+      (WidgetTester tester) async {
+        SharedPreferences.setMockInitialValues({});
+        final devA = SmartDevice(
+          id: 'dev_ov_a',
+          mac: 'AA:BB:CC:DD:EE:11',
+          ip: '192.168.1.61',
+          hostname: 'sh-a',
+          name: 'Node A',
+          isOnline: true,
+          telemetry: SensorTelemetry(dhtEnabled: true, temperature: 24.0, gasEnabled: false),
+        );
+        final devB = SmartDevice(
+          id: 'dev_ov_b',
+          mac: 'AA:BB:CC:DD:EE:12',
+          ip: '192.168.1.62',
+          hostname: 'sh-b',
+          name: 'Node B',
+          isOnline: true,
+          telemetry: SensorTelemetry(dhtEnabled: true, temperature: 26.0, gasEnabled: false),
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _MultiDeviceAnalyticsManager([devA, devB]),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const AnalyticsScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.text('Gas disabled'), findsNWidgets(2));
+        expect(find.text('0 ADC'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'HomeScreen locked 0-relay Sensor Node prompts login instead of bypassing auth',
+      (WidgetTester tester) async {
+        final lockedSensorNode = SmartDevice(
+          id: 'dev_locked_sensor',
+          mac: 'AA:BB:CC:DD:EE:33',
+          ip: '192.168.1.77',
+          hostname: 'sh-sensor',
+          name: 'Garden Sensor',
+          isOnline: true,
+          numRelays: 0,
+          relays: const [],
+          authRequired: true,
+          authLocked: true,
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              deviceManagerProvider.overrideWith(
+                () => _TelemetryCardTestDeviceManager(lockedSensorNode),
+              ),
+            ],
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: const HomeScreen(),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.textContaining('Sensor Node active'));
+        await tester.pumpAndSettle();
+
+        expect(find.byType(DeviceScreen), findsNothing);
+        expect(find.byType(ControllerLoginDialog), findsOneWidget);
+      },
+    );
+
+    test(
+      'BatchOtaScreen.validateFirmwareBytes checks binary chip header even for renamed firmware.bin',
+      () {
+        final esp8266Device = SmartDevice(
+          id: 'd8266',
+          mac: 'AA:BB:CC:00:00:01',
+          ip: '192.168.1.10',
+          hostname: 'sh-8266',
+          name: 'Hall',
+          platform: 'ESP8266',
+          model: 'ESP8266-SmartHome',
+        );
+        final esp32Device = SmartDevice(
+          id: 'd32',
+          mac: 'AA:BB:CC:00:00:02',
+          ip: '192.168.1.11',
+          hostname: 'sh-32',
+          name: 'Room',
+          platform: 'ESP32',
+          model: 'ESP32-SmartHome',
+        );
+
+        final fake8266Bytes = Uint8List(70000);
+        fake8266Bytes[0] = 0xE9;
+        fake8266Bytes[1] = 0x02;
+
+        final fakeEsp32Bytes = Uint8List(70000);
+        fakeEsp32Bytes[0] = 0xE9;
+        fakeEsp32Bytes[1] = 0x06;
+        fakeEsp32Bytes[32] = 0x32;
+        fakeEsp32Bytes[33] = 0x54;
+        fakeEsp32Bytes[34] = 0xCD;
+        fakeEsp32Bytes[35] = 0xAB;
+
+        // Renamed ESP32 binary rejected for ESP8266 target
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'firmware.bin',
+            bytes: fakeEsp32Bytes,
+            isFilesystemOta: false,
+            targetDevice: esp8266Device,
+          ),
+          contains('ESP32'),
+        );
+        // Renamed ESP8266 binary rejected for ESP32 target
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'firmware.bin',
+            bytes: fake8266Bytes,
+            isFilesystemOta: false,
+            targetDevice: esp32Device,
+          ),
+          contains('ESP32 application header'),
+        );
+        // Matching binaries accepted cleanly
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'firmware.bin',
+            bytes: fake8266Bytes,
+            isFilesystemOta: false,
+            targetDevice: esp8266Device,
+          ),
+          isNull,
+        );
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'firmware.bin',
+            bytes: fakeEsp32Bytes,
+            isFilesystemOta: false,
+            targetDevice: esp32Device,
+          ),
+          isNull,
+        );
+        // Flash ALL mode rejects mismatched filename vs binary header upfront
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'esp32_fw.bin',
+            bytes: fake8266Bytes,
+            isFilesystemOta: false,
+            targetDevice: null,
+          ),
+          contains('does not contain an ESP32 application header'),
+        );
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'esp8266_fw.bin',
+            bytes: fakeEsp32Bytes,
+            isFilesystemOta: false,
+            targetDevice: null,
+          ),
+          contains('contains an ESP32 application header'),
+        );
+
+        // Flash ALL target selection routes renamed firmware.bin strictly by binary header
+        final esp32Targets = BatchOtaScreen.selectTargetDevicesForFlash(
+          devices: [
+            esp8266Device.copyWith(isOnline: true),
+            esp32Device.copyWith(isOnline: true),
+          ],
+          bytes: fakeEsp32Bytes,
+          isFilesystemOta: false,
+          selectedDeviceId: null,
+        );
+        expect(esp32Targets.map((d) => d.id), ['d32']);
+
+        final esp8266Targets = BatchOtaScreen.selectTargetDevicesForFlash(
+          devices: [
+            esp8266Device.copyWith(isOnline: true),
+            esp32Device.copyWith(isOnline: true),
+          ],
+          bytes: fake8266Bytes,
+          isFilesystemOta: false,
+          selectedDeviceId: null,
+        );
+        expect(esp8266Targets.map((d) => d.id), ['d8266']);
+      },
+    );
   });
 }
 
@@ -1633,4 +2396,58 @@ class _TelemetryCardTestDeviceManager extends DeviceManager {
   @override
   Future<Map<String, dynamic>?> fetchDeviceConfig(String deviceId) async =>
       null;
+
+  @override
+  Future<void> refreshAllDevices({
+    bool skipHealthyWs = false,
+    int staleSeconds = 15,
+  }) async {}
+
+  @override
+  Future<void> refreshDevice(String deviceId) async {}
+
+  @override
+  Future<bool> controlBuzzer(
+    String deviceId, {
+    String? action,
+    bool? enabled,
+    int? volume,
+  }) async =>
+      true;
+
+  @override
+  Future<bool> setAllRelays(String deviceId, String action) async => true;
+}
+
+class _FailingAlarmDeviceManager extends _TelemetryCardTestDeviceManager {
+  _FailingAlarmDeviceManager(super.initialDevice);
+
+  @override
+  Future<bool> controlBuzzer(
+    String deviceId, {
+    String? action,
+    bool? enabled,
+    int? volume,
+  }) async =>
+      false;
+
+  @override
+  Future<bool> setAllRelays(String deviceId, String action) async => false;
+}
+
+class _MultiDeviceAnalyticsManager extends DeviceManager {
+  final List<SmartDevice> _devices;
+  _MultiDeviceAnalyticsManager(this._devices);
+
+  @override
+  List<SmartDevice> build() => _devices;
+
+  @override
+  Future<void> refreshAllDevices({
+    bool skipHealthyWs = false,
+    int staleSeconds = 15,
+  }) async {}
+
+  @override
+  Future<void> refreshDevice(String deviceId) async {}
 }

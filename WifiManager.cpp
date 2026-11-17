@@ -45,6 +45,11 @@ WifiManager::WifiManager()
       _disconnectDetectedAt(0), _lastApStaRetry(0),
       _failCount(0), _usingPinnedBssid(false), _skipPinnedBssid(false), _dnsStarted(false),
       _connectCallback(nullptr), _wasConnected(false) {
+    for (uint8_t i = 0; i < WIFI_MAX_SAVED_NETWORKS; i++) {
+        memset(_networks[i].bssid, 0, sizeof(_networks[i].bssid));
+        _networks[i].channel = 0;
+        _networks[i].hasBssid = false;
+    }
     _instance = this;
 }
 
@@ -430,21 +435,20 @@ void WifiManager::loadCredentials() {
         _networks[_networkCount].pass = net["pass"] | "";
         if (_networks[_networkCount].ssid.length() == 0) continue;
 
+        memset(_networks[_networkCount].bssid, 0, sizeof(_networks[_networkCount].bssid));
+        _networks[_networkCount].hasBssid = false;
+        _networks[_networkCount].channel = 0;
+
         if (net["bssid"].is<const char*>()) {
             String bssidStr = net["bssid"] | "";
-            if (bssidStr.length() == 17) {
+            if (bssidStr.length() == 17 &&
                 sscanf(bssidStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
                        &_networks[_networkCount].bssid[0], &_networks[_networkCount].bssid[1],
                        &_networks[_networkCount].bssid[2], &_networks[_networkCount].bssid[3],
-                       &_networks[_networkCount].bssid[4], &_networks[_networkCount].bssid[5]);
+                       &_networks[_networkCount].bssid[4], &_networks[_networkCount].bssid[5]) == 6) {
                 _networks[_networkCount].hasBssid = true;
-            } else {
-                _networks[_networkCount].hasBssid = false;
+                _networks[_networkCount].channel = net["channel"] | 0;
             }
-            _networks[_networkCount].channel = net["channel"] | 0;
-        } else {
-            _networks[_networkCount].hasBssid = false;
-            _networks[_networkCount].channel = 0;
         }
 
         _networkCount++;
@@ -586,9 +590,18 @@ String WifiManager::generateAPSSID() {
 }
 
 // ============================================================================
-// Generate unique per-device AP password from MAC: SmartHome@<Last4MAC>!
+// Generate unique per-device AP password (supports optional custom config.json "ap_pass")
 // ============================================================================
 String WifiManager::generateAPPassword() {
+    if (_storage) {
+        JsonDocument cfg;
+        if (_storage->loadJson(PATH_CONFIG, cfg) && cfg["ap_pass"].is<const char*>()) {
+            String customPass = cfg["ap_pass"] | "";
+            if (customPass.length() >= 8 && customPass.length() <= 63) {
+                return customPass;
+            }
+        }
+    }
     uint8_t mac[6];
     readFactoryStaMac(mac);
     char suffix[5];

@@ -27,6 +27,13 @@ class ControllerLoginDialog extends ConsumerStatefulWidget {
       return result ?? false;
     } finally {
       _isShowing = false;
+      if (context.mounted) {
+        try {
+          if (ref.read(authPromptProvider)?.deviceId == device.id) {
+            ref.read(authPromptProvider.notifier).clear();
+          }
+        } catch (_) {}
+      }
     }
   }
 
@@ -62,7 +69,7 @@ class _ControllerLoginDialogState extends ConsumerState<ControllerLoginDialog> {
 
   Future<void> _submit() async {
     final user = _userCtrl.text.trim();
-    final pass = _passCtrl.text.trim();
+    final pass = _passCtrl.text;
     if (user.isEmpty) {
       setState(() => _errorText = 'Please enter the controller username.');
       return;
