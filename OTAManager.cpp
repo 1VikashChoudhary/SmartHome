@@ -7,6 +7,7 @@
 #include "OTAManager.h"
 #if defined(ESP8266)
 #include <Updater.h>
+#include <flash_hal.h>
 #else
 #include <Update.h>
 #endif
@@ -489,10 +490,12 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
             }
         }
 
+#if defined(ESP8266)
+        int command = isFirmware ? U_FLASH : U_FS;
+#else
         int command = isFirmware ? U_FLASH : U_SPIFFS;
         // ALWAYS use UPDATE_SIZE_UNKNOWN for HTTP OTA on ESP32.
-        // On ESP8266, runAsync(true) and sketch space calculation are used.
-#if !defined(ESP8266)
+        // On ESP8266, runAsync(true) and target-partition space calculation are used.
         size_t updateSize = UPDATE_SIZE_UNKNOWN;
 #endif
         (void)contentLen; // Intentionally unused — multipart CL is unreliable
@@ -523,8 +526,10 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
 
 #if defined(ESP8266)
         Update.runAsync(true);
-        size_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
-        if (!Update.begin(maxSketchSpace, command)) {
+        size_t maxUpdateSpace = isFirmware
+            ? ((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)
+            : ((size_t)FS_PHYS_SIZE);
+        if (!Update.begin(maxUpdateSpace, command)) {
 #else
         if (!Update.begin(updateSize, command)) {
 #endif

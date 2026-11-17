@@ -333,7 +333,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                                     gasDevice.telemetry.gasUnit.toUpperCase() ==
                                             'VOC'
                                         ? 'SGP40 VOC Reading: ${gasDevice.telemetry.gasRaw} VOC. Tap to inspect controller.'
-                                        : 'MQ-2 Reading: ${gasDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
+                                        : '${gasDevice.telemetry.gasTypeName} Reading: ${gasDevice.telemetry.gasRaw} ADC. Tap to inspect controller.',
                                     style: TextStyle(
                                         color: AppColors.textSecondary,
                                         fontSize: 11),

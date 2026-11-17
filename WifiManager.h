@@ -55,6 +55,8 @@ public:
     void startAP();
     void saveCredentials(const String& ssid, const String& pass);
     void resetWiFi();
+    void requestReset(unsigned long delayMs = 250);
+    bool setHostname(const String& hostname);
 
     // --- Callback ---
     void setConnectCallback(void (*cb)(bool connected));
@@ -83,14 +85,19 @@ private:
     unsigned long _lastConnectTime;
     unsigned long _connectStartTime;
     unsigned long _disconnectDetectedAt;
-    unsigned long _lastApStaRetry;
     uint8_t _failCount;
+    bool _quickRetryPending;
     bool _usingPinnedBssid;
     bool _skipPinnedBssid;
 
-    // Captive portal DNS
+    // Captive portal DNS & AP warmup scan
     DNSServer _dnsServer;
     bool _dnsStarted;
+    bool _apScanPending;
+    unsigned long _apStartedAt;
+    bool _pendingReset;
+    unsigned long _pendingResetAt;
+    unsigned long _pendingResetDelay;
 
     // Callback
     void (*_connectCallback)(bool);

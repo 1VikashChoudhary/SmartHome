@@ -1015,12 +1015,14 @@ class ApiClient {
     String ip, {
     String? password,
     String? username,
+    bool sanitize = true,
   }) async {
     try {
       final opts = _authOptions(password, username: username);
       opts.responseType = ResponseType.plain;
       final res = await _dio.get<String>(
         _url(ip, '/api/backup'),
+        queryParameters: {'sanitize': sanitize ? '1' : '0'},
         options: opts,
       );
       return res.data;

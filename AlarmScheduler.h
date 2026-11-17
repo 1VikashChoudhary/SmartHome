@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <time.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -91,6 +95,10 @@ private:
     unsigned long _delayArmedMillis[MAX_ALARMS];
 
     void (*_actionCallback)(AlarmAction, uint8_t);
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _alarmMutex;
+    void ensureMutex() const;
+#endif
 
     void loadAlarms();
     static bool matchesDayOfWeek(AlarmType type, uint8_t alarmDow, int dow);

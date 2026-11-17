@@ -414,12 +414,21 @@ class UltrasonicSensorSlotConfig {
 }
 
 enum GasSensorType {
-  mq2(0, 'MQ-2 (Analog / DO Smoke & Gas)'),
-  sgp40(1, 'SGP40 (I2C VOC Air Quality 0x59)');
+  mq2(0, 'MQ-2 (Smoke / LPG / Propane)', 'MQ-2'),
+  mq4(3, 'MQ-4 (Methane / Natural Gas / CNG)', 'MQ-4'),
+  mq5(4, 'MQ-5 (Natural Gas / LPG)', 'MQ-5'),
+  mq6(5, 'MQ-6 (LPG / Isobutane / Propane)', 'MQ-6'),
+  mq7(6, 'MQ-7 (Carbon Monoxide / CO)', 'MQ-7'),
+  mq9(8, 'MQ-9 (CO & Combustible Gas)', 'MQ-9'),
+  mq135(9, 'MQ-135 (Air Quality / CO2 / NH3 / Smoke)', 'MQ-135'),
+  mq3(2, 'MQ-3 (Alcohol / Ethanol / Benzene)', 'MQ-3'),
+  mq8(7, 'MQ-8 (Hydrogen / H2)', 'MQ-8'),
+  sgp40(1, 'SGP40 (I2C VOC Air Quality 0x59)', 'SGP40');
 
   final int value;
   final String label;
-  const GasSensorType(this.value, this.label);
+  final String shortName;
+  const GasSensorType(this.value, this.label, this.shortName);
 
   bool get isI2c => this == GasSensorType.sgp40;
 

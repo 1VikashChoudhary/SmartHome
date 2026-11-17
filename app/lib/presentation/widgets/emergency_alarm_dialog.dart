@@ -151,7 +151,7 @@ class _EmergencyAlarmDialogState extends ConsumerState<EmergencyAlarmDialog> {
         : isGas
             ? (isVocGas
                   ? 'SGP40 VOC Sensor: ${dev.telemetry.gasRaw} VOC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} VOC)'
-                  : 'MQ-2 Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)')
+                  : '${dev.telemetry.gasTypeName} Gas Sensor: ${dev.telemetry.gasRaw} ADC (${dev.telemetry.gasPercent}% • Limit: ${dev.telemetry.gasThreshold} ADC)')
             : isFault
                 ? 'Climate sensor failed to respond across consecutive reads. Failsafe relays have been activated.'
                 : 'Temperature: ${dev.telemetry.temperature.toStringAsFixed(1)}°C (Safety Limit: ${dev.telemetry.tempThreshold.toStringAsFixed(1)}°C)';

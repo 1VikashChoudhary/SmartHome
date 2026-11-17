@@ -96,9 +96,19 @@ enum UltrasonicSensorType : uint8_t {
 
 // Gas & Air Quality sensor types
 enum GasSensorType : uint8_t {
-    GAS_MQ2   = 0, // Analog A0 / Digital D0 MQ-2 Smoke & LPG
-    GAS_SGP40 = 1  // I2C (0x59) Sensirion SGP40 Indoor Air Quality / VOC
+    GAS_MQ2   = 0, // Analog/DO Smoke & LPG
+    GAS_SGP40 = 1, // I2C (0x59) Sensirion SGP40 Indoor Air Quality / VOC
+    GAS_MQ3   = 2, // Analog/DO Alcohol / Ethanol
+    GAS_MQ4   = 3, // Analog/DO Methane / Natural Gas (CNG)
+    GAS_MQ5   = 4, // Analog/DO Natural Gas / LPG
+    GAS_MQ6   = 5, // Analog/DO LPG / Isobutane / Propane
+    GAS_MQ7   = 6, // Analog/DO Carbon Monoxide (CO)
+    GAS_MQ8   = 7, // Analog/DO Hydrogen (H2)
+    GAS_MQ9   = 8, // Analog/DO CO & Combustible Gas
+    GAS_MQ135 = 9  // Analog/DO Air Quality / CO2 / NH3 / Smoke
 };
+
+#define GAS_MQ_MAX GAS_MQ135
 
 // Per-channel hardware mapping
 struct ChannelHardware {
@@ -226,6 +236,7 @@ public:
     bool hasAnyI2cSensor() const;
     static uint8_t defaultI2cAddrForClimate(ClimateSensorType t);
     static uint8_t defaultI2cAddrForLight(LightSensorType t);
+    static const char* gasTypeShortName(uint8_t t);
 
     // --- Slot-0 Convenience Compatibility Accessors ---
     ClimateSensorType getDhtType() const;

@@ -15,6 +15,31 @@
 #include <mbedtls/md5.h>
 #endif
 
+#if defined(ESP32)
+namespace {
+class WebMutexGuard {
+public:
+    explicit WebMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~WebMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void WebServerManager::ensureMutex() const {
+    if (!_webMutex) {
+        _webMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define WEB_LOCK() ensureMutex(); WebMutexGuard _webLockGuard(_webMutex)
+#else
+#define WEB_LOCK() ((void)0)
+#endif
+
 namespace {
 
 struct TempBodyState {
@@ -100,7 +125,11 @@ WebServerManager::WebServerManager()
       _rebootRequested(false), _rollbackRequested(false), _rebootRequestTime(0), _rebootDelay(0),
       _deviceName(DEFAULT_DEVICE_NAME),
       _webAuthEnabled(false), _webUsername("admin"), _webPassword(""), _webPasswordHash(""),
-      _guestAuthEnabled(false), _guestUsername("guest"), _guestPassword(""), _guestPasswordHash("") {
+      _guestAuthEnabled(false), _guestUsername("guest"), _guestPassword(""), _guestPasswordHash("")
+#if defined(ESP32)
+      , _webMutex(nullptr)
+#endif
+{
     for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
         _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
         _rateLimits[i].failedCount = 0;
@@ -115,6 +144,9 @@ void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
                               TimeManager& timeMgr, LCDManager& lcd,
                               AlarmScheduler& alarm, RuleManager& rules,
                               EventLogger& logger, Diagnostics& diag, OTAManager& ota) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     _wifi = &wifi;
     _relay = &relay;
@@ -229,14 +261,27 @@ void WebServerManager::requestRollbackReboot(unsigned long delayMs) {
 // ============================================================================
 // Page Routes
 // ============================================================================
+namespace {
+void addNoCacheHeaders(AsyncWebServerResponse* r) {
+    r->addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+    r->addHeader("Pragma", "no-cache");
+    r->addHeader("Expires", "0");
+    r->addHeader("Connection", "close");
+}
+} // namespace
+
 void WebServerManager::setupPageRoutes() {
     // Main dashboard (or Captive Portal in AP setup mode unless ?dashboard=1)
     _server.on("/", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req)) return;
-        const char* html = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE && !req->hasParam("dashboard"))
-            ? PAGE_CAPTIVE : PAGE_INDEX;
+        bool serveCaptive = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE && !req->hasParam("dashboard"));
+        const char* html = serveCaptive ? PAGE_CAPTIVE : PAGE_INDEX;
         AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", html);
-        r->addHeader("Connection", "close");
+        if (serveCaptive) {
+            addNoCacheHeaders(r);
+        } else {
+            r->addHeader("Connection", "close");
+        }
         req->send(r);
     });
 
@@ -257,23 +302,30 @@ void WebServerManager::setupPageRoutes() {
         r->addHeader("Expires", "0");
         req->send(r);
     });
-
-    // Captive portal redirect
-    _server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->redirect("/");
-    });
-    _server.on("/fwlink", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->redirect("/");
-    });
 }
 
 // ============================================================================
 // REST API Routes
 // ============================================================================
 void WebServerManager::setupAPIRoutes() {
-    // --- /api/logout — Explicit credential eviction endpoint for HTTP Basic Auth ---
+    // --- /api/logout — Explicit credential eviction & authorized session rotation ---
     _server.on("/api/logout", HTTP_ANY, [this](AsyncWebServerRequest* req) {
-        regenerateWsToken();
+        if (req->method() == HTTP_POST) {
+            if (!isAuthorized(req, AUTH_ROLE_GUEST)) return;
+            regenerateWsToken();
+            sendOk(req, F("Session rotated"));
+            return;
+        }
+        // Only rotate WebSocket tokens when the caller proves valid Basic Auth or an active WS token;
+        // bogus Basic Auth eviction requests from doLogout() still receive 401 without disrupting other sessions.
+        String hdrToken = req->header("X-WS-Token");
+        String qToken = req->hasParam("token") ? req->getParam("token")->value() : "";
+        if (!isAuthConfigured() ||
+            authenticateBasicCredentials(req) != AUTH_ROLE_NONE ||
+            verifyWsToken(hdrToken) ||
+            verifyWsToken(qToken)) {
+            regenerateWsToken();
+        }
         AsyncWebServerResponse* r = req->beginResponse(
             401, "application/json",
             "{\"status\":\"logged_out\",\"message\":\"Logged out successfully\"}"
@@ -553,6 +605,7 @@ void WebServerManager::setupAPIRoutes() {
             JsonObject mo = mqCalArr.add<JsonObject>();
             mo["index"]      = i;
             mo["type"]       = mType;
+            mo["type_name"]  = HardwareManager::gasTypeShortName(mType);
             mo["gas_max"]    = (mType == GAS_SGP40) ? 500 : MQ2_ADC_MAX;
             mo["enabled"]    = _sensor->isMq2ActiveAt(i);
             mo["hw_allowed"] = _sensor->isMq2HwAllowedAt(i);
@@ -619,7 +672,14 @@ void WebServerManager::setupAPIRoutes() {
         // Flush any pending relay states or sensor calibration before exporting
         if (_relay) _relay->saveStates();
         if (_sensor) _sensor->saveCalibration();
-        bool sanitize = req->hasParam("sanitize") && req->getParam("sanitize")->value() == "1";
+        // Default to sanitized backup (__REDACTED__) unless caller explicitly opts in to secrets
+        bool sanitize = true;
+        if (req->hasParam("sanitize") && req->getParam("sanitize")->value() == "0") {
+            sanitize = false;
+        }
+        if (req->hasParam("include_secrets") && req->getParam("include_secrets")->value() == "1") {
+            sanitize = false;
+        }
         AsyncResponseStream *response = req->beginResponseStream("application/json");
         response->addHeader("Connection", "close");
         response->print(_storage->exportAllConfig(sanitize));
@@ -750,6 +810,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/buzzer ---
     _server.on("/api/buzzer", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_GUEST); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/buzzer")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_GUEST, data, len, index, total, doc)) return;
 
@@ -791,6 +852,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/alarm ---
     _server.on("/api/alarm", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_ADMIN); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/alarm")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
 
@@ -851,6 +913,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/rule ---
     _server.on("/api/rule", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_ADMIN); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/rule")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
         if (!_rules) { sendError(req, 500, F("Rules module not initialized")); return; }
@@ -902,6 +965,7 @@ void WebServerManager::setupAPIRoutes() {
 
     // --- POST /api/config/wifi ---
     _server.on("/api/config/wifi", HTTP_POST, [this](AsyncWebServerRequest* req) {
+        if (!req->url().equals("/api/config/wifi")) return;
         bool bodyHandled = false;
         if (req && req->_tempObject) {
             TempBodyState* state = static_cast<TempBodyState*>(req->_tempObject);
@@ -940,14 +1004,17 @@ void WebServerManager::setupAPIRoutes() {
             sendError(req, 400, F("Empty request body"));
         }
     }, NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/config/wifi")) return;
         // Handle JSON POST from dashboard
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
 
         if (doc["action"] == "reset") {
-            _wifi->resetWiFi();
             _logger->logWarning("WiFi", F("WiFi credentials reset"));
             sendOk(req, F("WiFi reset"));
+            if (_wifi) {
+                _wifi->requestReset(250);
+            }
             return;
         }
 
@@ -985,6 +1052,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/config/mqtt ---
     _server.on("/api/config/mqtt", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_ADMIN); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/config/mqtt")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
 
@@ -1016,6 +1084,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/config/lcd ---
     _server.on("/api/config/lcd", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_ADMIN); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/config/lcd")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
 
@@ -1135,6 +1204,7 @@ void WebServerManager::setupAPIRoutes() {
     // --- POST /api/config/sensor ---
     _server.on("/api/config/sensor", HTTP_POST, [this](AsyncWebServerRequest* req) { finishEmptyOrTempBody(req, AUTH_ROLE_ADMIN); },
         NULL, [this](AsyncWebServerRequest* req, uint8_t* data, size_t len, size_t index, size_t total) {
+        if (!req->url().equals("/api/config/sensor")) return;
         JsonDocument doc;
         if (!authorizeAndCollectJson(req, AUTH_ROLE_ADMIN, data, len, index, total, doc)) return;
 
@@ -1246,10 +1316,41 @@ void WebServerManager::setupAPIRoutes() {
             }
         }
 
+        // Validate hostname & Admin/Guest username distinctness before mutating live config
+        if (doc.containsKey("hostname")) {
+            String h = doc["hostname"] | "";
+            h.trim();
+            if (h.length() > 0 && _wifi && !_wifi->setHostname(h)) {
+                sendError(req, 400, F("Invalid hostname (use 1-24 letters, digits, or hyphens)"));
+                return;
+            }
+        }
+        {
+            WEB_LOCK();
+            String candWebUser = _webUsername;
+            if (doc["web_user"].is<const char*>()) {
+                candWebUser = doc["web_user"] | "";
+                candWebUser.trim();
+                if (candWebUser.length() == 0) candWebUser = "admin";
+            }
+            bool candGuestAuth = doc.containsKey("guest_auth") ? (doc["guest_auth"] | false) : _guestAuthEnabled;
+            String candGuestUser = _guestUsername;
+            if (doc["guest_user"].is<const char*>()) {
+                candGuestUser = doc["guest_user"] | "";
+                candGuestUser.trim();
+                if (candGuestUser.length() == 0) candGuestUser = "guest";
+            }
+            if (candGuestAuth && candGuestUser == candWebUser) {
+                sendError(req, 400, F("Admin and Guest usernames must be different"));
+                return;
+            }
+        }
+
         if (doc.containsKey("device_name")) {
             String dn = doc["device_name"] | DEFAULT_DEVICE_NAME;
             dn.trim();
             if (dn.length() > 0) {
+                WEB_LOCK();
                 _deviceName = dn;
                 cfg["device_name"] = dn;
             }
@@ -1271,56 +1372,59 @@ void WebServerManager::setupAPIRoutes() {
             cfg["use_24h"] = doc["use_24h"];
             _time->setUse24h(doc["use_24h"]);
         }
-        if (doc.containsKey("web_auth")) {
-            cfg["web_auth"] = doc["web_auth"];
-            _webAuthEnabled = doc["web_auth"];
-        }
-        if (doc["web_user"].is<const char*>()) {
-            String u = doc["web_user"] | "";
-            u.trim();
-            if (u.length() == 0) u = "admin";
-            cfg["web_user"] = u;
-            _webUsername = u;
-        }
-        if (doc["web_pass"].is<const char*>()) {
-            String pass = doc["web_pass"] | "";
-            if (pass.length() > 0) {
-                _webPasswordHash = hashPasswordSalted(pass);
-                cfg["web_pass_hash"] = _webPasswordHash;
-                cfg["ota_pass_md5"] = md5Hex(pass);
-                cfg.remove("web_pass"); // Never write plaintext password to flash
-                _webPassword = pass;
+        {
+            WEB_LOCK();
+            if (doc.containsKey("web_auth")) {
+                cfg["web_auth"] = doc["web_auth"];
+                _webAuthEnabled = doc["web_auth"];
             }
-        }
-        if (doc.containsKey("guest_auth")) {
-            _guestAuthEnabled = doc["guest_auth"] | false;
-            cfg["guest_auth"] = _guestAuthEnabled;
-        }
-        if (doc["guest_user"].is<const char*>()) {
-            String gu = doc["guest_user"] | "";
-            gu.trim();
-            if (gu.length() == 0) gu = "guest";
-            cfg["guest_user"] = gu;
-            _guestUsername = gu;
-        }
-        if (doc["guest_pass"].is<const char*>()) {
-            String gpass = doc["guest_pass"] | "";
-            if (gpass.length() > 0) {
-                _guestPasswordHash = hashPasswordSalted(gpass);
-                cfg["guest_pass_hash"] = _guestPasswordHash;
-                cfg.remove("guest_pass");
-                _guestPassword = gpass;
+            if (doc["web_user"].is<const char*>()) {
+                String u = doc["web_user"] | "";
+                u.trim();
+                if (u.length() == 0) u = "admin";
+                cfg["web_user"] = u;
+                _webUsername = u;
+            }
+            if (doc["web_pass"].is<const char*>()) {
+                String pass = doc["web_pass"] | "";
+                if (pass.length() > 0) {
+                    _webPasswordHash = hashPasswordSalted(pass);
+                    cfg["web_pass_hash"] = _webPasswordHash;
+                    cfg["ota_pass_md5"] = md5Hex(pass);
+                    cfg.remove("web_pass"); // Never write plaintext password to flash
+                    _webPassword = pass;
+                }
+            }
+            if (doc.containsKey("guest_auth")) {
+                _guestAuthEnabled = doc["guest_auth"] | false;
+                cfg["guest_auth"] = _guestAuthEnabled;
+            }
+            if (doc["guest_user"].is<const char*>()) {
+                String gu = doc["guest_user"] | "";
+                gu.trim();
+                if (gu.length() == 0) gu = "guest";
+                cfg["guest_user"] = gu;
+                _guestUsername = gu;
+            }
+            if (doc["guest_pass"].is<const char*>()) {
+                String gpass = doc["guest_pass"] | "";
+                if (gpass.length() > 0) {
+                    _guestPasswordHash = hashPasswordSalted(gpass);
+                    cfg["guest_pass_hash"] = _guestPasswordHash;
+                    cfg.remove("guest_pass");
+                    _guestPassword = gpass;
+                } else if (doc["guest_pass_clear"] | false) {
+                    _guestPasswordHash = "";
+                    _guestPassword = "";
+                    cfg.remove("guest_pass_hash");
+                    cfg.remove("guest_pass");
+                }
             } else if (doc["guest_pass_clear"] | false) {
                 _guestPasswordHash = "";
                 _guestPassword = "";
                 cfg.remove("guest_pass_hash");
                 cfg.remove("guest_pass");
             }
-        } else if (doc["guest_pass_clear"] | false) {
-            _guestPasswordHash = "";
-            _guestPassword = "";
-            cfg.remove("guest_pass_hash");
-            cfg.remove("guest_pass");
         }
         if (apPassClear) {
             cfg.remove("ap_pass");
@@ -1352,11 +1456,14 @@ void WebServerManager::setupAPIRoutes() {
             doc.containsKey("guest_auth") || doc.containsKey("guest_user") || doc.containsKey("guest_pass") ||
             (doc["guest_pass_clear"] | false)) {
             // Clear rate limits so newly configured credentials never hit a stale lockout
-            for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
-                _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
-                _rateLimits[i].failedCount = 0;
-                _rateLimits[i].lockoutUntil = 0;
-                _rateLimits[i].lastAttempt = 0;
+            {
+                WEB_LOCK();
+                for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
+                    _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
+                    _rateLimits[i].failedCount = 0;
+                    _rateLimits[i].lockoutUntil = 0;
+                    _rateLimits[i].lastAttempt = 0;
+                }
             }
             // Rotate WebSocket token and immediately drop existing WebSocket sessions
             // so any connected companion app or browser must re-authenticate with the new password!
@@ -1386,7 +1493,7 @@ void WebServerManager::setupAPIRoutes() {
         JsonDocument resDoc;
         resDoc["status"] = "ok";
         resDoc["message"] = "OK";
-        resDoc["ws_token"] = _wsToken;
+        resDoc["ws_token"] = getWsToken();
         sendJson(req, 200, resDoc);
     });
 
@@ -1773,10 +1880,10 @@ void WebServerManager::setupAPIRoutes() {
 
     // --- 404 handler ---
     _server.onNotFound([this](AsyncWebServerRequest* req) {
-        // In AP mode, redirect to captive portal
-        if (_wifi->getState() == WIFI_ST_AP_MODE) {
+        // In AP mode, serve captive setup page with no-cache headers so OS probes never cache
+        if (_wifi && _wifi->getState() == WIFI_ST_AP_MODE) {
             AsyncWebServerResponse* r = req->beginResponse_P(200, "text/html", PAGE_CAPTIVE);
-            r->addHeader("Connection", "close");
+            addNoCacheHeaders(r);
             req->send(r);
         } else {
             sendError(req, 404, F("Not Found"));
@@ -1788,20 +1895,38 @@ void WebServerManager::setupAPIRoutes() {
 // Captive Portal DNS redirect setup
 // ============================================================================
 void WebServerManager::setupCaptivePortal() {
-    // Android captive portal detection
-    _server.on("/generate_204", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->redirect("/");
-    });
+    auto redirectToPortal = [this](AsyncWebServerRequest* req) {
+        if (_wifi && _wifi->getState() == WIFI_ST_AP_MODE) {
+            IPAddress ip = WiFi.softAPIP();
+            String host = (static_cast<uint32_t>(ip) != 0) ? ip.toString() : String("192.168.4.1");
+            AsyncWebServerResponse* r = req->beginResponse(302, "text/plain", "");
+            r->addHeader("Location", "http://" + host + "/");
+            addNoCacheHeaders(r);
+            req->send(r);
+        } else {
+            req->redirect("/");
+        }
+    };
 
-    // Microsoft captive portal detection
-    _server.on("/connecttest.txt", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->redirect("/");
-    });
+    // Android / ChromeOS / vendor captive portal detection
+    _server.on("/generate_204", HTTP_ANY, redirectToPortal);
+    _server.on("/gen_204", HTTP_ANY, redirectToPortal);
+    _server.on("/mobile/status.php", HTTP_ANY, redirectToPortal);
+    _server.on("/check_network_status.txt", HTTP_ANY, redirectToPortal);
 
-    // Apple captive portal detection
-    _server.on("/hotspot-detect.html", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->redirect("/");
-    });
+    // Microsoft / Windows captive portal detection
+    _server.on("/connecttest.txt", HTTP_ANY, redirectToPortal);
+    _server.on("/ncsi.txt", HTTP_ANY, redirectToPortal);
+    _server.on("/redirect", HTTP_ANY, redirectToPortal);
+    _server.on("/fwlink", HTTP_ANY, redirectToPortal);
+
+    // Apple iOS / macOS captive portal detection
+    _server.on("/hotspot-detect.html", HTTP_ANY, redirectToPortal);
+    _server.on("/library/test/success.html", HTTP_ANY, redirectToPortal);
+
+    // Linux / Firefox captive portal detection
+    _server.on("/canonical.html", HTTP_ANY, redirectToPortal);
+    _server.on("/success.txt", HTTP_ANY, redirectToPortal);
 }
 
 // ============================================================================
@@ -1919,6 +2044,7 @@ bool WebServerManager::collectJsonBody(AsyncWebServerRequest* req, uint8_t* data
 }
 
 bool WebServerManager::isRateLimited(const IPAddress& ip) {
+    WEB_LOCK();
     unsigned long now = millis();
     for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
         if (_rateLimits[i].ip == ip && _rateLimits[i].lockoutUntil != 0) {
@@ -1933,6 +2059,7 @@ bool WebServerManager::isRateLimited(const IPAddress& ip) {
 }
 
 void WebServerManager::recordFailedAttempt(const IPAddress& ip) {
+    WEB_LOCK();
     unsigned long now = millis();
     int emptySlot = -1;
     unsigned long maxAge = 0;
@@ -1974,6 +2101,7 @@ void WebServerManager::recordFailedAttempt(const IPAddress& ip) {
 }
 
 void WebServerManager::resetRateLimit(const IPAddress& ip) {
+    WEB_LOCK();
     for (int i = 0; i < RATE_LIMIT_CACHE_SIZE; i++) {
         if (_rateLimits[i].ip == ip) {
             _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
@@ -2069,6 +2197,7 @@ bool WebServerManager::applyWifiOnboardingSettings(AsyncWebServerRequest* req, c
                                                    bool hasAuthFields, bool webAuth, const String& webUser,
                                                    const String& webPass, bool updateWebAuthFlag,
                                                    const String& apPass, bool apPassClear) {
+    WEB_LOCK();
     bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
     bool authAlreadyConfigured = _webAuthEnabled &&
         (_webPasswordHash.length() > 0 || _webPassword.length() > 0);
@@ -2119,6 +2248,7 @@ bool WebServerManager::applyWifiOnboardingSettings(AsyncWebServerRequest* req, c
 }
 
 void WebServerManager::regenerateWsToken() {
+    WEB_LOCK();
 #if defined(ESP8266)
     uint32_t rnd = ESP.random();
     uint32_t rnd2 = ESP.random();
@@ -2133,6 +2263,7 @@ void WebServerManager::regenerateWsToken() {
 }
 
 bool WebServerManager::isAuthConfigured() const {
+    WEB_LOCK();
     return _webAuthEnabled && _webUsername.length() > 0 &&
            (_webPassword.length() > 0 || _webPasswordHash.length() > 0);
 }
@@ -2143,7 +2274,33 @@ bool WebServerManager::isAuthEnabled() const {
     return isAuthConfigured();
 }
 
+bool WebServerManager::isGuestAuthEnabled() const {
+    WEB_LOCK();
+    return _guestAuthEnabled;
+}
+
+String WebServerManager::getGuestUsername() const {
+    WEB_LOCK();
+    return _guestUsername;
+}
+
+bool WebServerManager::hasGuestPassword() const {
+    WEB_LOCK();
+    return (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
+}
+
+String WebServerManager::getWsToken() const {
+    WEB_LOCK();
+    return _wsToken;
+}
+
+String WebServerManager::getDeviceName() const {
+    WEB_LOCK();
+    return _deviceName;
+}
+
 bool WebServerManager::verifyCredentials(const String& user, const String& pass) const {
+    WEB_LOCK();
     if (!isAuthConfigured()) return true;
     if (user.length() == 0) return false;
 
@@ -2176,6 +2333,7 @@ bool WebServerManager::verifyCredentials(const String& user, const String& pass)
 }
 
 bool WebServerManager::verifyWsToken(const String& token) const {
+    WEB_LOCK();
     if (!isAuthConfigured()) return true;
     if (token.length() < 32) return false;
     if (_wsToken.length() >= 32 && constantTimeCompare(token, _wsToken)) return true;
@@ -2221,6 +2379,7 @@ static String decodeBase64(const String& input) {
 }
 
 AuthRole WebServerManager::authenticateBasicCredentials(AsyncWebServerRequest* req) const {
+    WEB_LOCK();
     String authHeader = req->header("Authorization");
     authHeader.trim();
     if (authHeader.length() > 6 && authHeader.substring(0, 6).equalsIgnoreCase("Basic ")) {
@@ -2267,19 +2426,29 @@ AuthRole WebServerManager::authenticateBasicCredentials(AsyncWebServerRequest* r
     return AUTH_ROLE_NONE;
 }
 
-AuthRole WebServerManager::authenticateRequest(AsyncWebServerRequest* req) {
-    bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+bool WebServerManager::isApSetupRoute(AsyncWebServerRequest* req) const {
+    if (!req) return false;
     String url = req->url();
     bool authConfigured = isAuthConfigured();
-    bool isSetupRoute = (url == "/" || url == "/api/discovery" || url == "/api/status" ||
-                         url == "/api/wifi/scan" ||
-                         (!authConfigured && url == "/api/config/wifi") ||
-                         url == "/generate_204" || url == "/connecttest.txt" || url == "/fwlink" ||
-                         url == "/logout" || url == "/api/logout");
+    bool isDashboard = (url == "/" && req->hasParam("dashboard"));
+    return ((url == "/" && !isDashboard) ||
+            url == "/api/discovery" ||
+            (!authConfigured && (url == "/api/status" || url == "/api/wifi/scan" || url == "/api/config/wifi")) ||
+            url == "/generate_204" || url == "/gen_204" ||
+            url == "/mobile/status.php" || url == "/check_network_status.txt" ||
+            url == "/connecttest.txt" || url == "/ncsi.txt" || url == "/redirect" || url == "/fwlink" ||
+            url == "/hotspot-detect.html" || url == "/library/test/success.html" ||
+            url == "/canonical.html" || url == "/success.txt" ||
+            url == "/logout" || url == "/api/logout");
+}
 
-    // Zero-Trust in AP Mode: ONLY allow unauthenticated captive onboarding routes;
-    // once Admin password protection is configured, require Admin Basic Auth for /api/config/wifi too.
-    if (isAP && isSetupRoute) {
+AuthRole WebServerManager::authenticateRequest(AsyncWebServerRequest* req) {
+    bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+    bool authConfigured = isAuthConfigured();
+
+    // Zero-Trust in AP Mode: Always serve captive setup HTML on "/" so phones trigger the setup popup,
+    // while protecting /api/status, /api/wifi/scan, and /api/config/wifi whenever Admin auth is configured.
+    if (isAP && isApSetupRoute(req)) {
         return AUTH_ROLE_ADMIN;
     }
 
@@ -2293,15 +2462,9 @@ AuthRole WebServerManager::authenticateRequest(AsyncWebServerRequest* req) {
 
 bool WebServerManager::isAuthorized(AsyncWebServerRequest* req, AuthRole requiredRole) {
     bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
-    String url = req->url();
     bool authConfigured = isAuthConfigured();
-    bool isSetupRoute = (url == "/" || url == "/api/discovery" || url == "/api/status" ||
-                         url == "/api/wifi/scan" ||
-                         (!authConfigured && url == "/api/config/wifi") ||
-                         url == "/generate_204" || url == "/connecttest.txt" || url == "/fwlink" ||
-                         url == "/logout" || url == "/api/logout");
 
-    if (isAP && isSetupRoute) {
+    if (isAP && isApSetupRoute(req)) {
         return true;
     }
 
@@ -2347,7 +2510,7 @@ bool WebServerManager::isAuthorized(AsyncWebServerRequest* req, AuthRole require
 
     // Authenticated as Guest/Family, but attempting an Admin-only operation
     if (_logger) {
-        _logger->logWarning("Security", "Forbidden: Guest user denied admin access to " + url);
+        _logger->logWarning("Security", "Forbidden: Guest user denied admin access to " + req->url());
     }
     sendError(req, 403, F("Forbidden: Admin privileges required"));
     return false;

@@ -22,6 +22,31 @@
 #include <Wire.h>
 #include <math.h>
 
+#if defined(ESP32)
+namespace {
+class SensorMutexGuard {
+public:
+    explicit SensorMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~SensorMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void SensorManager::ensureMutex() const {
+    if (!_sensorMutex) {
+        _sensorMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define SENSOR_LOCK() ensureMutex(); SensorMutexGuard _sensorLockGuard(_sensorMutex)
+#else
+#define SENSOR_LOCK() ((void)0)
+#endif
+
 static bool isI2cClimateSlotType(uint8_t t) {
     return (t == CLIMATE_BME280 || t == CLIMATE_AHT20 ||
             t == CLIMATE_SHT3X || t == CLIMATE_SHT4X);
@@ -85,7 +110,12 @@ SensorManager::SensorManager()
       _alarmCallback(nullptr),
       _prevTempAlarm(false),
       _prevMQ2Alarm(false),
-      _prevSensorFault(false) {
+      _prevSensorFault(false)
+#if defined(ESP32)
+      , _sensorMutex(nullptr)
+#endif
+{
+    memset(_warmupDone, 0, sizeof(_warmupDone));
     memset(_climates, 0, sizeof(_climates));
     memset(_lights, 0, sizeof(_lights));
     memset(_lastLightRetry, 0, sizeof(_lastLightRetry));
@@ -111,6 +141,8 @@ SensorManager::~SensorManager() {
 }
 
 void SensorManager::cleanup() {
+    SENSOR_LOCK();
+    memset(_warmupDone, 0, sizeof(_warmupDone));
     for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
         if (_climates[i].dht) {
             delete _climates[i].dht;
@@ -214,8 +246,8 @@ void SensorManager::begin(StorageManager& storage) {
     _mq2Count = 1;
     _mq2s[0].analogPin = PIN_MQ2_ANALOG;
     _mq2s[0].digitalPin = PIN_MQ2_DIGITAL;
-    _mq2s[0].hwAllowed = (_mq2s[0].analogPin != PIN_UNUSED || _mq2s[0].digitalPin != PIN_UNUSED);
-    _mq2s[0].enabled = _mq2s[0].hwAllowed;
+    _mq2s[0].hwAllowed = false;
+    _mq2s[0].enabled = false;
     if (_mq2s[0].digitalPin != PIN_UNUSED) pinMode(_mq2s[0].digitalPin, INPUT);
 
     loadCalibration();
@@ -690,10 +722,24 @@ void SensorManager::loop() {
     }
 
     // --- 7. Gas & Air Quality Sensors (MQ-2 / SGP40 I2C) ---
+    // Latch warmup completion once elapsed so 49.7-day millis() rollover never re-arms warmup.
+    {
+        SENSOR_LOCK();
+        for (uint8_t i = 0; i < _mq2Count; i++) {
+            if (_mq2s[i].enabled && !_warmupDone[i]) {
+                unsigned long warmupMs = (_mq2s[i].type == GAS_SGP40) ? 15000UL : MQ2_WARMUP_TIME;
+                if ((unsigned long)(now - _bootTime) >= warmupMs) {
+                    _warmupDone[i] = true;
+                }
+            }
+        }
+    }
+
     // Complete any pending non-blocking SGP40 measurements after 32ms conversion window
     for (uint8_t i = 0; i < _mq2Count; i++) {
         Mq2SlotState& g = _mq2s[i];
         if (g.enabled && g.type == GAS_SGP40 && g.measPending && (now - g.measStartMs >= 32UL)) {
+            SENSOR_LOCK();
             readSGP40(g);
             if (!isMq2WarmingAt(i)) {
                 if (!g.alarmActive && g.raw >= g.threshold) {
@@ -711,6 +757,7 @@ void SensorManager::loop() {
         for (uint8_t i = 0; i < _mq2Count; i++) {
             Mq2SlotState& g = _mq2s[i];
             if (!g.enabled) {
+                SENSOR_LOCK();
                 g.raw = 0;
                 g.digitalState = false;
                 g.alarmActive = false;
@@ -719,14 +766,18 @@ void SensorManager::loop() {
             }
             if (g.type == GAS_SGP40) {
                 if (!g.measPending) {
+                    SENSOR_LOCK();
                     readSGP40(g);
                 }
                 continue;
             }
-            bool warming = isMq2WarmingAt(i);
             if (g.analogPin != PIN_UNUSED) {
-                g.raw = analogRead(g.analogPin);
-                g.digitalState = (g.digitalPin != PIN_UNUSED) ? (!digitalRead(g.digitalPin)) : false;
+                int rawReading = analogRead(g.analogPin);
+                bool digReading = (g.digitalPin != PIN_UNUSED) ? (!digitalRead(g.digitalPin)) : false;
+                SENSOR_LOCK();
+                bool warming = isMq2WarmingAt(i);
+                g.raw = rawReading;
+                g.digitalState = digReading;
                 if (!warming) {
                     if (!g.alarmActive && g.raw >= g.threshold) {
                         g.alarmActive = true;
@@ -735,12 +786,16 @@ void SensorManager::loop() {
                     }
                 }
             } else if (g.digitalPin != PIN_UNUSED) {
-                g.digitalState = !digitalRead(g.digitalPin);
+                bool digReading = !digitalRead(g.digitalPin);
+                SENSOR_LOCK();
+                bool warming = isMq2WarmingAt(i);
+                g.digitalState = digReading;
                 g.raw = g.digitalState ? MQ2_ADC_MAX : 0;
                 if (!warming) {
                     g.alarmActive = g.digitalState;
                 }
             } else {
+                SENSOR_LOCK();
                 g.raw = 0;
                 g.digitalState = false;
                 g.alarmActive = false;
@@ -1559,9 +1614,11 @@ float SensorManager::getHumOffsetAt(uint8_t idx) const {
     return (idx < MAX_CLIMATE_SENSORS) ? _climates[idx].humOffset : 0.0f;
 }
 void SensorManager::setTempOffsetAt(uint8_t idx, float offset) {
+    SENSOR_LOCK();
     if (idx < MAX_CLIMATE_SENSORS) _climates[idx].tempOffset = offset;
 }
 void SensorManager::setHumOffsetAt(uint8_t idx, float offset) {
+    SENSOR_LOCK();
     if (idx < MAX_CLIMATE_SENSORS) _climates[idx].humOffset = offset;
 }
 
@@ -1613,9 +1670,11 @@ bool SensorManager::isMq2HwAllowedAt(uint8_t idx) const {
     return idx < _mq2Count && _mq2s[idx].hwAllowed;
 }
 bool SensorManager::isMq2WarmingAt(uint8_t idx) const {
+    SENSOR_LOCK();
     if (idx >= _mq2Count || !_mq2s[idx].enabled) return false;
+    if (_warmupDone[idx]) return false;
     unsigned long warmupMs = (_mq2s[idx].type == GAS_SGP40) ? 15000UL : MQ2_WARMUP_TIME;
-    return (millis() - _bootTime) < warmupMs;
+    return (unsigned long)(millis() - _bootTime) < warmupMs;
 }
 int SensorManager::getMQ2RawAt(uint8_t idx) const {
     return (idx < _mq2Count) ? _mq2s[idx].raw : 0;
@@ -1644,6 +1703,7 @@ bool SensorManager::isMQ2DigitalTriggerAt(uint8_t idx) const {
     return idx < _mq2Count && _mq2s[idx].digitalState;
 }
 void SensorManager::setMQ2ThresholdAt(int idx, int threshold) {
+    SENSOR_LOCK();
     if (idx < 0) {
         for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
             int maxTh = (_mq2s[i].type == GAS_SGP40) ? 500 : MQ2_ADC_MAX;
@@ -1655,6 +1715,7 @@ void SensorManager::setMQ2ThresholdAt(int idx, int threshold) {
     }
 }
 void SensorManager::setMQ2EnabledAt(int idx, bool enabled) {
+    SENSOR_LOCK();
     if (idx < 0) {
         for (uint8_t i = 0; i < _mq2Count; i++) {
             _mq2s[i].enabled = _mq2s[i].hwAllowed ? enabled : false;
@@ -1664,29 +1725,33 @@ void SensorManager::setMQ2EnabledAt(int idx, bool enabled) {
     }
 }
 void SensorManager::calibrateMQ2At(int idx) {
-    auto applyCal = [&](uint8_t slotIdx) {
-        Mq2SlotState& g = _mq2s[slotIdx];
-        if (!g.enabled) return;
-        if (g.type == GAS_SGP40) {
-            if (g.srawTicks >= 1000) {
-                g.vocBaseline = (float)g.srawTicks;
-                g.baseline = (int)g.srawTicks;
-                g.raw = 100;
-                SERIAL_PRINTF("[Sensor] Gas #%u (SGP40) clean-air baseline calibrated to %u ticks (VOC Index = 100)\n",
-                              (unsigned)(slotIdx + 1), g.srawTicks);
+    {
+        SENSOR_LOCK();
+        auto applyCal = [&](uint8_t slotIdx) {
+            Mq2SlotState& g = _mq2s[slotIdx];
+            if (!g.enabled) return;
+            if (g.type == GAS_SGP40) {
+                if (g.srawTicks >= 1000) {
+                    g.vocBaseline = (float)g.srawTicks;
+                    g.baseline = (int)g.srawTicks;
+                    g.raw = 100;
+                    SERIAL_PRINTF("[Sensor] Gas #%u (SGP40) clean-air baseline calibrated to %u ticks (VOC Index = 100)\n",
+                                  (unsigned)(slotIdx + 1), g.srawTicks);
+                }
+            } else {
+                g.baseline = g.raw;
+                SERIAL_PRINTF("[Sensor] MQ2 #%u baseline calibrated to %d\n", (unsigned)(slotIdx + 1), g.baseline);
             }
+        };
+        if (idx < 0) {
+            for (uint8_t i = 0; i < _mq2Count; i++) applyCal(i);
+        } else if (idx < _mq2Count && _mq2s[idx].enabled) {
+            applyCal((uint8_t)idx);
         } else {
-            g.baseline = g.raw;
-            SERIAL_PRINTF("[Sensor] MQ2 #%u baseline calibrated to %d\n", (unsigned)(slotIdx + 1), g.baseline);
+            return;
         }
-    };
-    if (idx < 0) {
-        for (uint8_t i = 0; i < _mq2Count; i++) applyCal(i);
-        saveCalibration();
-    } else if (idx < _mq2Count && _mq2s[idx].enabled) {
-        applyCal((uint8_t)idx);
-        saveCalibration();
     }
+    saveCalibration();
 }
 
 // --- Legacy / Primary / Aggregate Getters ---
@@ -1712,6 +1777,10 @@ bool SensorManager::hasHumidity() const {
 bool SensorManager::isPrimarySgp40() const {
     return _mq2Count > 0 && _mq2s[primaryMq2Idx()].type == GAS_SGP40;
 }
+const char* SensorManager::getPrimaryGasTypeName() const {
+    uint8_t p = primaryMq2Idx();
+    return (p < _mq2Count) ? HardwareManager::gasTypeShortName(_mq2s[p].type) : "MQ-2";
+}
 bool SensorManager::isDHTFault() {
     for (uint8_t i = 0; i < _climateCount; i++) if (isClimateFaultAt(i)) return true;
     return false;
@@ -1721,9 +1790,10 @@ float SensorManager::getHumOffset()          { return _climates[primaryClimateId
 void  SensorManager::setTempOffset(float o)  { setTempOffsetAt(primaryClimateIdx(), o); }
 void  SensorManager::setHumOffset(float o)   { setHumOffsetAt(primaryClimateIdx(), o); }
 float SensorManager::getTempAlarmThreshold() { return _tempAlarmThreshold; }
-void  SensorManager::setTempAlarmThreshold(float t) { _tempAlarmThreshold = t; }
+void  SensorManager::setTempAlarmThreshold(float t) { SENSOR_LOCK(); _tempAlarmThreshold = t; }
 
 bool SensorManager::isTempAlarm() {
+    SENSOR_LOCK();
     for (uint8_t i = 0; i < _climateCount; i++) {
         if (_climates[i].enabled && !_climates[i].fault && _climates[i].temperature >= _tempAlarmThreshold) {
             return true;
@@ -1828,6 +1898,7 @@ void SensorManager::setAlarmCallback(void (*cb)(uint8_t, bool)) {
 
 void SensorManager::saveCalibration() {
     if (!_storage) return;
+    SENSOR_LOCK();
 
     JsonDocument doc;
     doc["temp_offset"]    = _climates[0].tempOffset;
@@ -1847,11 +1918,13 @@ void SensorManager::saveCalibration() {
     JsonArray gTh = doc["mq2_thresholds"].to<JsonArray>();
     JsonArray gBs = doc["mq2_baselines"].to<JsonArray>();
     JsonArray gEn = doc["mq2_enables"].to<JsonArray>();
+    JsonArray gHw = doc["mq2_hw_allowed"].to<JsonArray>();
     JsonArray gTp = doc["mq2_types"].to<JsonArray>();
     for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
         gTh.add(_mq2s[i].threshold);
         gBs.add(_mq2s[i].baseline);
         gEn.add(_mq2s[i].enabled);
+        gHw.add(_mq2s[i].hwAllowed);
         gTp.add(_mq2s[i].type);
     }
 
@@ -1860,6 +1933,7 @@ void SensorManager::saveCalibration() {
 }
 
 void SensorManager::appendStatusJson(JsonObject& obj) {
+    SENSOR_LOCK();
     bool priSgp40 = isPrimarySgp40();
 
     // Primary / Aggregate Scalar Compatibility Keys
@@ -1891,6 +1965,7 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
     obj["gas_percent"]      = getMQ2Percent();
     obj["gas_max"]          = priSgp40 ? 500 : MQ2_ADC_MAX;
     obj["gas_unit"]         = priSgp40 ? "VOC" : "ADC";
+    obj["gas_type_name"]    = getPrimaryGasTypeName();
     obj["gas_alarm"]        = isMQ2Alarm();
     obj["temp_alarm"]       = isTempAlarm();
     obj["sensor_fault"]     = hasAnySensorFault();
@@ -1976,7 +2051,7 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
         it["enabled"]    = g.enabled;
         it["hw_allowed"] = g.hwAllowed;
         it["type"]       = g.type;
-        it["type_name"]  = isSgp ? "SGP40" : "MQ-2";
+        it["type_name"]  = HardwareManager::gasTypeShortName(g.type);
         it["i2c_addr"]   = isSgp ? g.i2cAddr : 0;
         it["unit"]       = isSgp ? "VOC" : "ADC";
         it["gas_max"]    = isSgp ? 500 : MQ2_ADC_MAX;
@@ -1992,6 +2067,7 @@ void SensorManager::appendStatusJson(JsonObject& obj) {
 }
 
 void SensorManager::toJson(JsonObject& obj) {
+    SENSOR_LOCK();
     appendStatusJson(obj);
     setSafeJsonFloat(obj, "temp_raw", getRawTemperature());
     setSafeJsonFloat(obj, "hum_raw", getRawHumidity());
@@ -2006,6 +2082,7 @@ void SensorManager::toJson(JsonObject& obj) {
 
 void SensorManager::loadCalibration() {
     if (!_storage) return;
+    SENSOR_LOCK();
 
     JsonDocument doc;
     if (_storage->loadJson(PATH_SENSORS, doc)) {
@@ -2026,11 +2103,26 @@ void SensorManager::loadCalibration() {
         JsonArrayConst gTh = doc["mq2_thresholds"].as<JsonArrayConst>();
         JsonArrayConst gBs = doc["mq2_baselines"].as<JsonArrayConst>();
         JsonArrayConst gEn = doc["mq2_enables"].as<JsonArrayConst>();
+        JsonArrayConst gHw = doc["mq2_hw_allowed"].as<JsonArrayConst>();
         JsonArrayConst gTp = doc["mq2_types"].as<JsonArrayConst>();
         for (uint8_t i = 0; i < MAX_MQ2_SENSORS; i++) {
-            _mq2s[i].enabled = (!gEn.isNull() && i < gEn.size()) ? (bool)gEn[i] : defMq2En;
             uint8_t savedType = (!gTp.isNull() && i < gTp.size()) ? (uint8_t)gTp[i] : (uint8_t)GAS_MQ2;
             bool typeMatched = (savedType == _mq2s[i].type);
+            if (_mq2s[i].hwAllowed) {
+                bool wasHwAllowed = (!gHw.isNull() && i < gHw.size())
+                    ? (bool)gHw[i]
+                    : (i == 0 || (!gEn.isNull() && i < gEn.size() && (bool)gEn[i]));
+                if (wasHwAllowed && !gEn.isNull() && i < gEn.size()) {
+                    _mq2s[i].enabled = (bool)gEn[i];
+                } else if (wasHwAllowed && i == 0) {
+                    _mq2s[i].enabled = defMq2En;
+                } else {
+                    // Newly added hardware slot: keep enabled instead of overriding with stale false
+                    _mq2s[i].enabled = true;
+                }
+            } else {
+                _mq2s[i].enabled = false;
+            }
 
             if (_mq2s[i].type == GAS_SGP40) {
                 if (typeMatched) {
@@ -2062,21 +2154,34 @@ void SensorManager::loadCalibration() {
 void SensorManager::checkAlarms() {
     if (!_alarmCallback) return;
 
-    bool gasAlarm = isMQ2Alarm();
-    if (gasAlarm != _prevMQ2Alarm) {
-        _prevMQ2Alarm = gasAlarm;
-        _alarmCallback(ALARM_TYPE_GAS, gasAlarm);
+    bool gasEdge = false, gasState = false;
+    bool tempEdge = false, tempState = false;
+    bool faultEdge = false, faultState = false;
+    {
+        SENSOR_LOCK();
+        bool gasAlarm = isMQ2Alarm();
+        if (gasAlarm != _prevMQ2Alarm) {
+            _prevMQ2Alarm = gasAlarm;
+            gasEdge = true;
+            gasState = gasAlarm;
+        }
+
+        bool tempAlarm = isTempAlarm();
+        if (tempAlarm != _prevTempAlarm) {
+            _prevTempAlarm = tempAlarm;
+            tempEdge = true;
+            tempState = tempAlarm;
+        }
+
+        bool fault = hasAnySensorFault();
+        if (fault != _prevSensorFault) {
+            _prevSensorFault = fault;
+            faultEdge = true;
+            faultState = fault;
+        }
     }
 
-    bool tempAlarm = isTempAlarm();
-    if (tempAlarm != _prevTempAlarm) {
-        _prevTempAlarm = tempAlarm;
-        _alarmCallback(ALARM_TYPE_TEMP, tempAlarm);
-    }
-
-    bool fault = hasAnySensorFault();
-    if (fault != _prevSensorFault) {
-        _prevSensorFault = fault;
-        _alarmCallback(ALARM_TYPE_SENSOR_FAULT, fault);
-    }
+    if (gasEdge)   _alarmCallback(ALARM_TYPE_GAS, gasState);
+    if (tempEdge)  _alarmCallback(ALARM_TYPE_TEMP, tempState);
+    if (faultEdge) _alarmCallback(ALARM_TYPE_SENSOR_FAULT, faultState);
 }

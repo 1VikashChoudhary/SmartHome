@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-110%2B%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-120%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
@@ -52,7 +52,7 @@ IoT smart home automation hub powered by a **single unified codebase** that runs
 * **Cross-Platform Flutter Companion App**: Single app controls both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, batch multi-device OTA updates, backup management, and encrypted credential storage.
 * **About & Sponsorship Screens**: Beautiful modern About page integrated into both the ESP Web Dashboard and the Flutter Companion App with project branding, feature highlights, and direct UPI (India) / PayPal (International) sponsorship support.
 * **Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics.
-* **Defense-in-Depth Security**: Open SoftAP for frictionless first-time headless onboarding transitioning automatically to WPA2-PSK AP fallback once configured (with custom `ap_pass` support), IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, and encrypted mobile storage.
+* **Defense-in-Depth Security**: Open SoftAP only for first-time / reset onboarding (no automatic AP fallback when a configured router is offline — controllers retry every 2 minutes instead), optional custom `ap_pass`, IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, sanitized backup exports by default, and encrypted mobile storage.
 
 ---
 
@@ -84,7 +84,7 @@ graph TB
         subgraph Core_Services["Core & Communication Engines"]
             WS_SRV["AsyncWebServer & WebSockets<br/>(Port 80 /ws)"]
             MQTT_CL["AsyncMqttClient<br/>(Home Assistant Discovery)"]
-            WIFI_MG["WifiManager<br/>(STA Multi-AP + WPA2 Hotspot)"]
+            WIFI_MG["WifiManager<br/>(STA 2-min Retry + Setup AP)"]
             DNS_SRV["Captive Portal & mDNS<br/>(smarthome-XXXX.local)"]
         end
 
@@ -209,7 +209,7 @@ Both Web Dashboard and Companion App include real-time pin capability matrices:
 | **I2C SDA (LCD / Sensors)** | `D2` | GPIO 4 | Shared I2C Bus |
 | **I2C SCL (LCD / Sensors)** | `D1` | GPIO 5 | Shared I2C Bus |
 | **Acoustic Buzzer** | `D4` | GPIO 2 | Software PWM / Active LOW |
-| **Gas Sensor (MQ-2)** | `A0` | ADC0 / GPIO 17 | Analog Gas Reading (`0`–`1023`) |
+| **Gas Sensor (MQ-2)** | `A0` | ADC0 / GPIO 17 | Disabled by default — Analog Gas Reading (`0`–`1023`), enable in Hardware Config |
 | **Multi-Button** | `D3` | GPIO 0 | Pull-up Button / AP Reset |
 
 #### ESP32 Standard 5-CH Profile
@@ -219,7 +219,7 @@ Both Web Dashboard and Companion App include real-time pin capability matrices:
 | **Wall Switches 1 – 5** | GPIO 13, 14, 27, 26, 25 | Toggle Rocker Inputs |
 | **Climate Sensor (DHT22)** | GPIO 4 | Bidirectional 1-Wire |
 | **I2C SDA & SCL** | GPIO 21 (SDA), GPIO 22 (SCL) | LCD1602 & I2C Sensors |
-| **Gas Sensor (MQ-2)** | GPIO 34 (Analog), GPIO 35 (Digital) | ADC1 Input (`0`–`4095`) |
+| **Gas Sensor (MQ-2)** | GPIO 34 (Analog), GPIO 35 (Digital) | Disabled by default — ADC1 (`0`–`4095`), enable in Hardware Config |
 | **Acoustic Alarm Buzzer** | GPIO 5 | LEDC Hardware PWM Channel |
 | **Multi-Function Button** | GPIO 33 | Multi-function button |
 
@@ -242,8 +242,8 @@ All pre-compiled firmware binaries and mobile application packages are included 
 ### 1. Embedded Firmware Binaries
 | Board | File Path | Usage |
 |:---|:---|:---|
-| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (842 KB) |
-| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.57 MB) |
+| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (940 KB) |
+| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.79 MB) |
 | **ESP32 (Full Flash)** | [`binaries/esp32/SmartHome_ESP32_merged_0x0.bin`](binaries/esp32/SmartHome_ESP32_merged_0x0.bin) | Serial flasher at offset `0x0` (4.00 MB) |
 
 ### 2. Flutter Companion App Release APKs
@@ -261,21 +261,21 @@ All pre-compiled firmware binaries and mobile application packages are included 
 
 | Method | Endpoint | Access Tier | Description |
 |:---|:---|:---:|:---|
-| `GET` | `/api/status` | Public | Real-time sensor telemetry, relay states, system heap & uptime |
-| `GET` | `/api/discovery` | Public | mDNS/SSDP discovery signature payload |
+| `GET` | `/api/status` | Family / Admin | Real-time sensor telemetry, relay states, system heap & uptime |
+| `GET` | `/api/discovery` | Public | Lightweight discovery payload (`auth_required`, MAC, model, relays) |
 | `POST` | `/api/relay` | Family / Admin | Toggle or set individual relay (`{"id": 0, "action": "toggle"}`) |
 | `POST` | `/api/relay/all` | Family / Admin | Bulk control (`{"action": "on"}` or `{"action": "off"}`) |
 | `POST` | `/api/relay/timer` | Family / Admin | Set quick off/on timer (`{"id": 0, "duration": 1800}`) |
 | `POST` | `/api/config` | Admin | Update system parameters (Device Name, Timezone, Passwords) |
-| `POST` | `/api/config/wifi` | Admin | Save Wi-Fi STA credentials & connect |
+| `POST` | `/api/config/wifi` | Admin (or Fresh Setup) | Save Wi-Fi STA credentials & connect |
 | `POST` | `/api/config/mqtt` | Admin | Configure Home Assistant MQTT IoT broker |
 | `POST` | `/api/hardware` | Admin | Save dynamic GPIO pin mapping template |
-| `GET` | `/api/backup` | Admin | Export complete system configuration JSON |
+| `GET` | `/api/backup` | Admin | Export sanitized system configuration JSON (`?sanitize=0` for full secrets) |
 | `POST` | `/api/restore` | Admin | Restore system configuration JSON & reboot |
 | `POST` | `/api/reboot` | Admin | Gracefully reboot controller |
 | `POST` | `/api/factory-reset`| Admin | Delete LittleFS configs & revert to factory defaults |
 | `GET` | `/api/logout` | Family / Admin | Invalidate session, evict browser HTTP auth headers |
-| `WS` | `/ws` | Public / Authed| Real-time bi-directional telemetry broadcast socket |
+| `WS` | `/ws` | Family / Admin | Real-time bi-directional telemetry broadcast socket |
 
 ---
 
@@ -346,22 +346,23 @@ sequenceDiagram
     participant Phone as Phone / PC Browser
 
     ESP->>ESP: First boot: No Wi-Fi credentials found
-    ESP->>ESP: Launch WPA2 Access Point: "SmartHome-XXXX"
-    ESP->>User: LCD displays AP SSID & unique WPA2 password
+    ESP->>ESP: Launch Open Setup AP: "SmartHome-XXXX" (or custom ap_pass)
+    ESP->>User: LCD displays Setup AP SSID
     User->>Phone: Connect to Wi-Fi "SmartHome-XXXX"
     Phone->>ESP: Captive Portal loads http://192.168.4.1
-    User->>Phone: Enter Home Wi-Fi SSID & Password
+    Note over ESP,Phone: Unlock with Admin login first if resetting Wi-Fi with Admin Auth enabled
+    User->>Phone: Enter Home Wi-Fi SSID, Password & optional Admin Password
     Phone->>ESP: POST /api/config/wifi
-    ESP->>ESP: Connect to local network
+    ESP->>ESP: Connect to local network (retries every 2 min if router is offline)
     ESP->>User: LCD shows assigned IP (e.g. 192.168.29.66)
     User->>Phone: Navigate to http://192.168.29.66 or launch Flutter App
-    User->>Phone: Settings > Security: Set Admin & Guest Passwords
+    User->>Phone: Settings > Security: Set/Manage Admin & Guest Passwords
     Phone->>ESP: POST /api/config (Credentials hashed & stored)
 ```
 
 1. **Power On**: Power the controller via 5V/2A power supply.
-2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX`. On a fresh flash or factory/Wi-Fi reset (with no Web Auth or custom `"ap_pass"`), the setup hotspot is **Open** (no password required—ideal for headless controllers without an LCD). Once Wi-Fi or Admin auth is configured, fallback AP mode uses WPA2-PSK (`SmartHome@<Last4MAC>!`, shown on LCD/Serial, or your custom `"ap_pass"`). Configured Admin authentication also protects `/api/config/wifi` and `/ws` in AP mode.
-3. **Captive Portal**: Open your browser to `http://192.168.4.1` and connect the controller to your home Wi-Fi network.
+2. **Join Hotspot**: Connect your smartphone or PC to `SmartHome-XXXX`. On a fresh flash or factory/Wi-Fi reset, the setup hotspot is **Open** (no password required—ideal for headless controllers without an LCD) unless you explicitly configure a custom `"ap_pass"`. Once Wi-Fi is configured, controllers never fall back to AP mode if your router goes offline; they retry connecting every 2 minutes until the router returns or you manually reset Wi-Fi via the physical button.
+3. **Captive Portal**: Tap the *"Sign in to Wi-Fi network"* notification (or open `http://192.168.4.1`) and connect the controller to your home Wi-Fi network. If you performed a Wi-Fi-only reset with Admin Auth already enabled, enter your existing Admin credentials inline on the setup screen to unlock Wi-Fi scanning and saving.
 4. **Access Dashboard**: Open `http://<device_ip>` or launch the Flutter companion app.
 5. **Set Passwords**: Go to **Settings > Security & Privilege Tiers** and set your **Admin** and **Guest** passwords.
 
@@ -373,14 +374,14 @@ sequenceDiagram
 This was caused by TCP MSS body fragmentation in older builds. Flash the latest firmware binary ([`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin)) via `/update` which reassembles fragmented TCP packets seamlessly.
 
 ### Captive portal does not open automatically
-Manually navigate to `http://192.168.4.1` in your browser while connected to the controller's Wi-Fi access point.
+If your phone previously connected to `SmartHome-XXXX` and dismissed the prompt (or tapped *"Use network anyway"*), tap **Forget** on `SmartHome-XXXX` in your phone's Wi-Fi settings and reconnect, or manually navigate to `http://192.168.4.1` in your browser while connected to the controller's Wi-Fi access point.
 
 ### Serial flasher fails with "Flash ID: 0" on ESP8266
 On ESP8266, GPIO 0, 2, and 15 are hardware strapping pins. If attached peripherals pull these pins during serial flashing, bootloader handshake fails. **Use Web OTA (`http://<device_ip>/update`) instead**, which completely bypasses all serial pin strapping restrictions.
 
 ### Physical Multi-Button Functions (GPIO 33 / GPIO 0)
-* **Hold 6–10 seconds**: Triggers a **Wi-Fi Reset** (reboots back to AP hotspot mode without losing relay configs).
-* **Hold 10–14 seconds**: Triggers a **Full Factory Reset** (wipes LittleFS configs back to factory defaults).
+* **Hold 6–10 seconds**: Triggers a **Wi-Fi Reset** (clears saved Wi-Fi credentials and enters AP setup mode without losing relay or auth configs).
+* **Hold 10–14 seconds**: Triggers a **Full Factory Reset** (wipes LittleFS configs & NVS state and reboots to factory defaults).
 
 ---
 
@@ -408,6 +409,7 @@ SmartHome/
 ├── TimeManager.h / .cpp           # SNTP network clock and DS3231 RTC fallback
 ├── AlarmScheduler.h / .cpp        # Scheduled calendar and delay event manager
 ├── RuleManager.h / .cpp           # Condition-action sensor automation engine
+├── RemoteAlertManager.h / .cpp    # Async remote webhook & ntfy push alerts
 ├── build_firmware.ps1             # Automated 1-click firmware build script (ESP8266 + ESP32)
 ├── CHANGELOG.md                   # Release notes and version history
 ├── asset/                         # Project icon and branding assets
@@ -420,7 +422,7 @@ SmartHome/
     ├── lib/                       # Dart application source code
     │   └── presentation/screens/
     │       └── about_screen.dart  # About & Sponsorship screen (UPI + PayPal)
-    └── test/                      # Automated unit and widget test suite (110+ tests)
+    └── test/                      # Automated unit and widget test suite (120 tests)
 ```
 
 ---

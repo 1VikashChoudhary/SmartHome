@@ -142,7 +142,12 @@ class AutomationRule {
     if (sensor == 2 && telemetry != null) {
       final spec = gasSpecFor(telemetry, sensorIndex);
       final idxSuffix = sensorIndex > 0 ? ' #${sensorIndex + 1}' : '';
-      return '${spec.isSgp40 ? 'SGP40 VOC' : 'Gas Sensor'}$idxSuffix';
+      if (spec.isSgp40) return 'SGP40 VOC$idxSuffix';
+      final model = (sensorIndex >= 0 && sensorIndex < telemetry.mq2s.length)
+          ? telemetry.mq2s[sensorIndex].typeName
+          : (sensorIndex == 0 ? telemetry.gasTypeName : '');
+      final prefix = model.isNotEmpty ? '$model Gas' : 'Gas Sensor';
+      return '$prefix$idxSuffix';
     }
     return sensorLabel;
   }

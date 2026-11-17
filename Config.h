@@ -239,14 +239,12 @@ enum BootStateMode : uint8_t {
 // ============================================================================
 // WiFi Configuration
 // ============================================================================
-#define WIFI_AP_SSID_PREFIX     "SmartHome-"  // Followed by last 4 of MAC
-#define WIFI_AP_PASSWORD_PREFIX "SmartHome@"    // Per-device WPA2-PSK AP password: SmartHome@<Last4MAC>!
-#define WIFI_AP_PASSWORD_SUFFIX "!"            // Suffix appended after MAC digits
-#define WIFI_CONNECT_TIMEOUT    30000     // ms — time to wait for STA connection
-#define WIFI_RECONNECT_INTERVAL 5000      // ms — retry interval after disconnect
-#define WIFI_MAX_SAVED_NETWORKS 3         // Max stored SSID/password pairs
-#define WIFI_AP_FALLBACK_ATTEMPTS 5       // Failed STA connects before AP mode
-#define WIFI_DEFAULT_HOSTNAME   "smarthome"
+#define WIFI_AP_SSID_PREFIX           "SmartHome-"  // Followed by last 4 of MAC
+#define WIFI_CONNECT_TIMEOUT          30000UL   // ms — time to wait for STA connection
+#define WIFI_QUICK_RECONNECT_INTERVAL 5000UL    // ms — brief pause when rotating saved SSIDs or quick link-drop retry
+#define WIFI_RECONNECT_INTERVAL       120000UL  // ms — retry router every 2 minutes when unavailable
+#define WIFI_MAX_SAVED_NETWORKS       3         // Max stored SSID/password pairs
+#define WIFI_DEFAULT_HOSTNAME         "smarthome"
 
 // ============================================================================
 // MQTT Configuration

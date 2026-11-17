@@ -360,6 +360,15 @@ class SmartHomeControlsService : ControlsProviderService() {
         action: ControlAction,
         consumer: Consumer<Int>
     ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
+            !NativeControlStore.getAllowLockscreenControls(this)) {
+            val km = getSystemService(Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            if (km != null && km.isDeviceLocked) {
+                consumer.accept(ControlAction.RESPONSE_FAIL)
+                return
+            }
+        }
+
         val parsed = parseControlId(controlId)
         if (parsed == null || action !is BooleanAction) {
             consumer.accept(ControlAction.RESPONSE_FAIL)

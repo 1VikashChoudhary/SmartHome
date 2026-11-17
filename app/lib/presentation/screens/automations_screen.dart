@@ -894,7 +894,7 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
                           children: [
                             Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 20),
                             SizedBox(width: 10),
-                            Text('Gas / Air Quality (MQ-2 / SGP40)', style: TextStyle(fontWeight: FontWeight.w600)),
+                            Text('Gas / Air Quality (MQ Series / SGP40)', style: TextStyle(fontWeight: FontWeight.w600)),
                           ],
                         ),
                       ),

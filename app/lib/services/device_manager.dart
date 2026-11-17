@@ -584,10 +584,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         if (rId != null && rState != null && rId >= 0 && rId < current.relays.length) {
           final rList = List<RelayChannel>.from(current.relays);
           final relay = rList[rId];
-          final bool shouldCancelTimer = relay.timerActive && (
-            rState == relay.timerTarget ||
-            (!relay.timerTarget && !rState)
-          );
+          final bool shouldCancelTimer =
+              relay.timerActive && (rState == relay.timerTarget || !rState);
           rList[rId] = relay.copyWith(
             state: rState,
             timerActive: shouldCancelTimer ? false : relay.timerActive,
@@ -851,10 +849,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     // Optimistic UI update
     final rList = List<RelayChannel>.from(dev.relays);
     final targetRelay = rList[relayIndex];
-    final bool cancelTimer = targetRelay.timerActive && (
-      newState == targetRelay.timerTarget ||
-      (!targetRelay.timerTarget && !newState)
-    );
+    final bool cancelTimer =
+        targetRelay.timerActive && (newState == targetRelay.timerTarget || !newState);
     rList[relayIndex] = targetRelay.copyWith(
       state: newState,
       timerActive: cancelTimer ? false : targetRelay.timerActive,
@@ -1599,7 +1595,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
   }
 
   /// Export Backup
-  Future<String?> exportBackup(String deviceId) async {
+  Future<String?> exportBackup(String deviceId, {bool sanitize = true}) async {
     if (!_isAlive) return null;
     final idx = state.indexWhere((d) => d.id == deviceId);
     if (idx < 0) return null;
@@ -1608,6 +1604,7 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
       dev.ip,
       password: dev.authPassword,
       username: dev.authUsername,
+      sanitize: sanitize,
     );
   }
 

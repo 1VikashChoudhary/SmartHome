@@ -48,7 +48,7 @@ class SmartDevice {
     required this.hostname,
     required this.name,
     this.room = 'Unassigned',
-    this.fwVersion = '3.2.0',
+    this.fwVersion = '1.1.0',
     this.numRelays = 5,
     this.authRequired = false,
     this.authLocked = false,
@@ -76,7 +76,7 @@ class SmartDevice {
         'smarthome_${mac.replaceAll(':', '').toLowerCase()}';
     final name = json['device_name'] as String? ?? 'SmartHome Device';
     final hostname = json['hostname'] as String? ?? 'smarthome';
-    final fw = json['fw_version'] as String? ?? '3.2.0';
+    final fw = json['fw_version'] as String? ?? '1.1.0';
     final relaysCount = (json['num_relays'] as num?)?.toInt() ?? 5;
     final auth = json['auth_required'] as bool? ?? false;
     final role = json['auth_role'] as String? ?? (auth ? 'guest' : 'admin');
@@ -116,7 +116,7 @@ class SmartDevice {
             : hostIp);
     final name = json['device_name'] as String? ?? 'SmartHome Controller';
     final hostname = json['hostname'] as String? ?? 'smarthome';
-    final fw = json['fw_version'] as String? ?? '3.2.0';
+    final fw = json['fw_version'] as String? ?? '1.1.0';
     final relaysCount = (json['num_relays'] as num?)?.toInt() ?? 5;
     final auth = json['auth_required'] as bool? ?? false;
     final role = json['auth_role'] as String? ?? (auth ? 'guest' : 'admin');

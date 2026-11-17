@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:smarthome_app/core/models/relay_channel.dart';
+import 'package:smarthome_app/core/models/device_diagnostics.dart';
 import 'package:smarthome_app/core/models/sensor_telemetry.dart';
 import 'package:smarthome_app/core/models/smart_device.dart';
 import 'package:smarthome_app/core/models/automation_rule.dart';
@@ -442,6 +443,69 @@ void main() {
       expect(find.textContaining('SGP40 VOC Sensor: 340 VOC'), findsOneWidget);
       expect(find.textContaining('Limit: 250 VOC'), findsOneWidget);
     });
+
+    testWidgets(
+      'Displays exact MQ model name (e.g. MQ-9 / MQ-135) in EmergencyAlarmDialog and telemetry',
+      (WidgetTester tester) async {
+        final mq9Slot = Mq2SensorSlotConfig.fromJson({
+          'type': 8, // MQ-9
+          'enabled': true,
+          'analog_pin': 34,
+          'digital_pin': 35,
+          'label': 'Boiler CO',
+        });
+        expect(mq9Slot.type, GasSensorType.mq9);
+        expect(mq9Slot.toJson()['analog_pin'], 34);
+
+        final mq135Telemetry = SensorTelemetry.fromJson({
+          'gas_raw': 512,
+          'gas_threshold': 400,
+          'gas_max': 4095,
+          'gas_unit': 'ADC',
+          'gas_enabled': true,
+          'gas_alarm': true,
+          'mq2s': [
+            {
+              'index': 0,
+              'enabled': true,
+              'hw_allowed': true,
+              'type': 9, // MQ-135
+              'type_name': 'MQ-135',
+              'raw': 512,
+              'percent': 12,
+              'threshold': 400,
+              'alarm': true,
+            },
+          ],
+        });
+        expect(mq135Telemetry.gasTypeName, 'MQ-135');
+        expect(mq135Telemetry.mq2s.first.typeName, 'MQ-135');
+
+        final mq9Device = SmartDevice(
+          id: 'dev_mq9_alarm',
+          mac: 'AA:BB:CC:11:22:77',
+          ip: '192.168.1.48',
+          hostname: 'smarthome-mq9',
+          name: 'Utility Room',
+          room: 'Utility',
+          isOnline: true,
+          telemetry: SensorTelemetry.fromJson({
+            'gas_raw': 720,
+            'gas_percent': 18,
+            'gas_threshold': 400,
+            'gas_max': 4095,
+            'gas_unit': 'ADC',
+            'gas_type_name': 'MQ-9',
+            'gas_enabled': true,
+            'gas_alarm': true,
+          }),
+        );
+        await _pumpEmergencyDialog(tester, mq9Device, 'gas');
+
+        expect(find.text('GAS / SMOKE HAZARD DETECTED'), findsOneWidget);
+        expect(find.textContaining('MQ-9 Gas Sensor: 720 ADC'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'EmergencyAlarmDialog exposes Silence Phone Siren button and silences cleanly',
@@ -2385,6 +2449,53 @@ void main() {
           selectedDeviceId: null,
         );
         expect(esp8266Targets.map((d) => d.id), ['d8266']);
+      },
+    );
+
+    test(
+      'ApiClient.fetchBackup requests ?sanitize=1 by default and ?sanitize=0 when disabled',
+      () async {
+        final seenQueries = <Map<String, String>>[];
+        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+        addTearDown(() => server.close(force: true));
+
+        server.listen((req) async {
+          seenQueries.add(req.uri.queryParameters);
+          req.response
+            ..statusCode = HttpStatus.ok
+            ..write('{"config.json":{}}');
+          await req.response.close();
+        });
+
+        final api = ApiClient();
+        addTearDown(api.dispose);
+        final host = '127.0.0.1:${server.port}';
+
+        final sanitized = await api.fetchBackup(host);
+        expect(sanitized, isNotNull);
+        expect(seenQueries.last['sanitize'], '1');
+
+        final raw = await api.fetchBackup(host, sanitize: false);
+        expect(raw, isNotNull);
+        expect(seenQueries.last['sanitize'], '0');
+      },
+    );
+
+    test(
+      'SmartDevice and DeviceDiagnostics default fwVersion to 1.1.0',
+      () {
+        final dev = SmartDevice(
+          id: 'dev_ver',
+          mac: 'AA:BB:CC:DD:EE:FF',
+          ip: '192.168.1.20',
+          hostname: 'smarthome',
+          name: 'Living Room',
+        );
+        final disc = SmartDevice.fromDiscovery({'mac': 'AA:BB:CC:DD:EE:FF'}, '192.168.1.20');
+        final diag = DeviceDiagnostics.fromJson({});
+        expect(dev.fwVersion, '1.1.0');
+        expect(disc.fwVersion, '1.1.0');
+        expect(diag.fwVersion, '1.1.0');
       },
     );
   });

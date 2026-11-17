@@ -49,7 +49,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
   final List<TextEditingController> _tankDepthControllers = [];
   final List<TextEditingController> _tankAirGapControllers = [];
   List<Mq2SensorSlotConfig> _mq2s = [
-    const Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35),
+    const Mq2SensorSlotConfig(enabled: false, analogPin: 34, digitalPin: 35),
   ];
   SensorLimitsConfig _sensorLimits = const SensorLimitsConfig();
   int _formGeneration = 0;
@@ -82,7 +82,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       _probes = [];
       _ultrasonics = [];
       _mq2s = [
-        const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+        const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
       ];
       _buzzerPin = 2;
       _i2cSdaPin = 4;
@@ -599,7 +599,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
       );
     });
     if (aPin == 255 && dPin == 255) {
-      _showPinWarning('MQ-2 Sensor ${_mq2s.length} added without free Analog or Digital GPIO.');
+      _showPinWarning('Gas Sensor ${_mq2s.length} added without free Analog or Digital GPIO.');
     }
   }
 
@@ -645,7 +645,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 14),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -661,7 +661,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ChannelHardwareConfig(relayPin: 15, switchPin: 255, switchEnabled: false, switchMode: SwitchMode.toggle, triggerMode: 0),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -678,7 +678,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ChannelHardwareConfig(relayPin: 5, switchPin: 255, switchEnabled: false, switchMode: SwitchMode.toggle, triggerMode: 0),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -698,7 +698,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             triggerMode: 0,
           ));
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -719,7 +719,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ProbeSensorSlotConfig(type: ProbeSensorType.ds18b20, pin: 13),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -735,7 +735,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ChannelHardwareConfig(relayPin: 14, switchPin: 16, switchMode: SwitchMode.toggle, triggerMode: 0),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 17, digitalPin: 255),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 17, digitalPin: 255),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 2;
@@ -770,7 +770,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 34, digitalPin: 35),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 5;
@@ -790,7 +790,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 34, digitalPin: 35),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 5;
@@ -825,7 +825,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 34, digitalPin: 35),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 5;
@@ -841,7 +841,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             const ClimateSensorSlotConfig(type: ClimateSensorType.dht22, pin: 4),
           ];
           _mq2s = [
-            const Mq2SensorSlotConfig(enabled: true, analogPin: 34, digitalPin: 35),
+            const Mq2SensorSlotConfig(enabled: false, analogPin: 34, digitalPin: 35),
           ];
           _buzzerEnabled = true;
           _buzzerPin = 5;
@@ -894,8 +894,8 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     for (int i = 0; i < _mq2s.length; i++) {
       final g = _mq2s[i];
       if (g.enabled && !g.type.isI2c) {
-        if (g.analogPin != 255) used[g.analogPin] = 'MQ-2 ${i + 1} (A)';
-        if (g.digitalPin != 255) used[g.digitalPin] = 'MQ-2 ${i + 1} (D)';
+        if (g.analogPin != 255) used[g.analogPin] = '${g.type.shortName} ${i + 1} (A)';
+        if (g.digitalPin != 255) used[g.digitalPin] = '${g.type.shortName} ${i + 1} (D)';
       }
     }
     if (_buzzerEnabled && _buzzerPin != 255) {
@@ -1065,14 +1065,15 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             final addr = g.i2cAddr > 0 ? g.i2cAddr : 0x59;
             claimI2c(addr, 'SGP40 Air Quality ${i + 1}');
           } else {
+            final gName = g.type.shortName;
             if (g.analogPin == 255 && g.digitalPin == 255) {
-              throw 'MQ-2 Sensor ${i + 1} has neither Analog nor Digital GPIO assigned';
+              throw '$gName Sensor ${i + 1} has neither Analog nor Digital GPIO assigned';
             }
             if (g.analogPin != 255) {
-              claim(g.analogPin, 'MQ-2 ${i + 1} Analog', isOutput: false, isAdc: true);
+              claim(g.analogPin, '$gName ${i + 1} Analog', isOutput: false, isAdc: true);
             }
             if (g.digitalPin != 255) {
-              claim(g.digitalPin, 'MQ-2 ${i + 1} Digital', isOutput: false);
+              claim(g.digitalPin, '$gName ${i + 1} Digital', isOutput: false);
             }
           }
         }
@@ -1883,9 +1884,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
 
                   _buildMultiSensorCard(
                     groupKey: 'mq2s',
-                    title: 'Gas & Air Quality Sensors (MQ-2 / SGP40)',
+                    title: 'Gas & Air Quality Sensors (MQ Series / SGP40)',
                     subtitle: widget.device.isEsp8266
-                        ? 'ESP8266 has 1 analog A0 pin; additional MQ-2 slots use digital D0, or SGP40 uses I2C 0x59'
+                        ? 'ESP8266 has 1 analog A0 pin; additional MQ slots use digital D0, or SGP40 uses I2C 0x59'
                         : null,
                     emptyLabel: 'gas / air quality sensors',
                     count: _mq2s.length,
@@ -2850,7 +2851,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     return _buildSlotContainer(
       groupKey: 'mq2s',
       index: i,
-      slotTitle: '${g.type.isI2c ? "SGP40 Air Quality" : "MQ-2 Gas Sensor"} #${i + 1}',
+      slotTitle: '${g.type.isI2c ? "SGP40 Air Quality" : "${g.type.shortName} Gas Sensor"} #${i + 1}',
       accentColor: AppColors.warning,
       onRemove: () => _removeSensorSlot(_mq2s, i),
       children: [

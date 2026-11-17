@@ -14,6 +14,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -127,6 +131,8 @@ private:
 
 #if defined(ESP32)
     mutable portMUX_TYPE _mux;
+    mutable SemaphoreHandle_t _stateMutex;
+    void ensureMutex() const;
 #endif
 
     // Non-blocking anti-brownout staggered energization (120ms spacing between coils)

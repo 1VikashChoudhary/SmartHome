@@ -342,7 +342,7 @@ class SafetyMonitorService : Service() {
                 if (!gasAlarm && gasEnabled && gasThr > 0 && gasRaw >= gasThr && !json.optBoolean("gas_warming", false)) {
                     gasAlarm = true
                 }
-                val mq2Arr = json.optJSONArray("mq2_sensors")
+                val mq2Arr = json.optJSONArray("mq2s") ?: json.optJSONArray("mq2_sensors")
                 if (!gasAlarm && mq2Arr != null) {
                     for (idx in 0 until mq2Arr.length()) {
                         val m = mq2Arr.optJSONObject(idx) ?: continue
@@ -408,6 +408,7 @@ class SafetyMonitorService : Service() {
                 if (silencedEpisodes.contains(epKey)) continue
 
                 val unit = json.optString("gas_unit", "ADC")
+                val gasModel = json.optString("gas_type_name", "MQ-2").ifEmpty { "MQ-2" }
                 val title = when (activeType) {
                     "gas" -> if (unit.equals("VOC", ignoreCase = true)) {
                         "VOC AIR ALERT: ${dev.name}"
@@ -418,8 +419,8 @@ class SafetyMonitorService : Service() {
                     else -> "SENSOR HARDWARE FAULT: ${dev.name}"
                 }
                 val body = when (activeType) {
-                    "gas" -> "${dev.room} — Reading: $gasRaw $unit (Limit: $gasThr $unit). Tap to inspect or cut power."
-                    "temperature" -> String.format("${dev.room} — Temperature: %.1f°C (Limit: %.1f°C).", temp, tempThr)
+                    "gas" -> "${dev.room} — $gasModel: $gasRaw $unit (Limit: $gasThr $unit). Tap to inspect or cut power."
+                    "temperature" -> "${dev.room} — Temperature: " + String.format(java.util.Locale.US, "%.1f°C (Limit: %.1f°C).", temp, tempThr)
                     else -> "${dev.room} — Climate sensor failed to respond; safety failsafe activated."
                 }
 

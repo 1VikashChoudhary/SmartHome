@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/models/device_diagnostics.dart';
+import '../../core/models/hardware_profile.dart';
 import '../../core/models/smart_device.dart';
 import '../../core/models/system_log_entry.dart';
 import '../../core/theme/app_colors.dart';
@@ -156,6 +157,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
   bool _isSavingCalibration = false;
   bool _isCalibratingCleanAir = false;
   bool _isExportingBackup = false;
+  bool _backupIncludeSecrets = false;
   bool _isLoadingConfig = true;
   bool _configLoadFailed = false;
 
@@ -277,15 +279,20 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
     if (idx >= 0 && idx < tList.length) {
       final tName = tList[idx].typeName.isNotEmpty
           ? tList[idx].typeName
-          : (tList[idx].isSgp40 ? 'SGP40' : 'MQ-2');
+          : GasSensorType.fromValue(tList[idx].type).shortName;
       return '${tList[idx].displayName} ($tName)';
     }
     if (idx >= 0 && idx < _mq2Cals.length) {
-      final isSgp = (_mq2Cals[idx]['type'] as num?)?.toInt() == 1;
-      return 'Gas #${idx + 1} (${isSgp ? "SGP40" : "MQ-2"})';
+      final tVal = (_mq2Cals[idx]['type'] as num?)?.toInt() ?? 0;
+      final tName = _mq2Cals[idx]['type_name']?.toString() ??
+          GasSensorType.fromValue(tVal).shortName;
+      return 'Gas #${idx + 1} ($tName)';
     }
     return 'Gas #${idx + 1}';
   }
+
+  String get _selectedMq2ShortName =>
+      GasSensorType.fromValue(_selectedMq2Type).shortName;
 
   Future<void> _loadInitialData() async {
     _loadDiagnostics();
@@ -1396,7 +1403,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 _buildHwDisabledNotice(
                   _selectedMq2Type == 1
                       ? 'SGP40 Air Quality Sensor is disabled or I2C pins unassigned in Hardware Profile.'
-                      : 'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+                      : '$_selectedMq2ShortName Gas Sensor is disabled or pins unassigned in Hardware Profile.',
                 ),
 
               // Gas Threshold
@@ -1405,7 +1412,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 children: [
                   Expanded(
                     child: Text(
-                      '${_selectedMq2Type == 1 ? "SGP40 VOC" : "MQ-2 Smoke/Gas"} Alarm Threshold',
+                      '${_selectedMq2Type == 1 ? "SGP40 VOC" : "$_selectedMq2ShortName Gas"} Alarm Threshold',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1474,8 +1481,8 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                                       ok
                                           ? (_selectedMq2Type == 1
                                                 ? 'Clean air VOC 100 baseline calibrated successfully!'
-                                                : 'MQ-2 Clean Air baseline calibrated successfully!')
-                                          : 'Failed to calibrate ${_selectedMq2Type == 1 ? "SGP40" : "MQ-2"} sensor baseline',
+                                                : '$_selectedMq2ShortName Clean Air baseline calibrated successfully!')
+                                          : 'Failed to calibrate $_selectedMq2ShortName sensor baseline',
                                     ),
                                     backgroundColor: ok
                                         ? AppColors.success
@@ -1925,7 +1932,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               'Custom SoftAP hotspot password',
               helper: _apPasswordSet
                   ? 'Custom AP password saved (8-63 chars; blank keeps current)'
-                  : 'Optional (8-63 chars; blank = Open on fresh setup, SmartHome@XXXX! after setup)',
+                  : 'Optional (8-63 chars; blank = Open setup hotspot)',
             ),
           ),
           if (_apPasswordSet)
@@ -2076,6 +2083,19 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           false,
                           '',
                           'Enter a guest username before enabling guest access.',
+                        );
+                        return;
+                      }
+                      if (_webAuth &&
+                          _guestAuth &&
+                          _guestUser.text.trim() ==
+                              (_webUser.text.trim().isEmpty
+                                  ? 'admin'
+                                  : _webUser.text.trim())) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Admin and Guest usernames must be different.',
                         );
                         return;
                       }
@@ -2640,14 +2660,14 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
             _buildHwDisabledNotice(
               _selectedMq2Type == 1
                   ? 'SGP40 Air Quality Sensor is disabled or I2C pins unassigned in Hardware Profile.'
-                  : 'MQ-2 Gas Sensor is disabled or pins unassigned in Hardware Profile.',
+                  : '$_selectedMq2ShortName Gas Sensor is disabled or pins unassigned in Hardware Profile.',
             ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: Text(
               _mq2SlotCount > 1
-                  ? '${_selectedMq2Type == 1 ? "SGP40 air quality" : "MQ-2 gas"} sensor enabled (${_mq2SlotName(_selectedMq2Idx)})'
-                  : '${_selectedMq2Type == 1 ? "SGP40 air quality" : "MQ-2 gas"} sensor enabled',
+                  ? '${_selectedMq2Type == 1 ? "SGP40 air quality" : "$_selectedMq2ShortName gas"} sensor enabled (${_mq2SlotName(_selectedMq2Idx)})'
+                  : '${_selectedMq2Type == 1 ? "SGP40 air quality" : "$_selectedMq2ShortName gas"} sensor enabled',
             ),
             value: _mq2Enabled,
             onChanged: (isGuest || !_mq2HwAllowed)
@@ -2896,7 +2916,21 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                 'Export full LittleFS system configuration (relays, rules, schedules, calibration) in standard JSON format.',
                 style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: const Text(
+                  'Include Wi-Fi, MQTT & Webhook passwords (plaintext)',
+                  style: TextStyle(fontSize: 12),
+                ),
+                value: _backupIncludeSecrets,
+                onChanged: isGuest
+                    ? null
+                    : (v) => setState(() => _backupIncludeSecrets = v ?? false),
+              ),
+              const SizedBox(height: 8),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -2919,6 +2953,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           setState(() => _isExportingBackup = true);
                           final jsonStr = await widget.manager.exportBackup(
                             widget.device.id,
+                            sanitize: !_backupIncludeSecrets,
                           );
                           if (!mounted) return;
                           setState(() => _isExportingBackup = false);

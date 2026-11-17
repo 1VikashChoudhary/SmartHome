@@ -114,9 +114,24 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
       _isScanningWifi = true;
     });
 
+    ({String? username, String? password}) pairedAuthFor(SmartDevice dev) {
+      final paired = ref.read(deviceManagerProvider);
+      for (final d in paired) {
+        if ((d.id == dev.id || (dev.mac.isNotEmpty && d.mac == dev.mac)) &&
+            d.authPassword != null &&
+            d.authPassword!.isNotEmpty) {
+          return (username: d.authUsername ?? 'admin', password: d.authPassword);
+        }
+      }
+      return (username: null, password: null);
+    }
+
+    final authCreds = pairedAuthFor(probed);
     final scanned = await _api.scanWifiNetworks(
       _apHost,
       forceRefresh: forceRefresh,
+      authUsername: authCreds.username,
+      authPassword: authCreds.password,
     );
     if (!mounted) return;
 
@@ -176,10 +191,25 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
 
     final apDev = _apDevice ?? await _api.probeDiscovery(_apHost);
     if (!mounted) return;
+    String? pairedUser;
+    String? pairedPass;
+    if (apDev != null && apDev.authRequired) {
+      for (final d in ref.read(deviceManagerProvider)) {
+        if ((d.id == apDev.id || (apDev.mac.isNotEmpty && d.mac == apDev.mac)) &&
+            d.authPassword != null &&
+            d.authPassword!.isNotEmpty) {
+          pairedUser = d.authUsername ?? 'admin';
+          pairedPass = d.authPassword;
+          break;
+        }
+      }
+    }
     final sent = await _api.saveWifiConfig(
       _apHost,
       ssid,
       wifiPass,
+      authUsername: pairedUser,
+      authPassword: pairedPass,
       deviceName: devName,
       webAuth: _enableWebAuth,
       webUser: _enableWebAuth ? adminUser : null,
@@ -391,7 +421,7 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
                         Text(
                           _apDevice != null
                               ? 'MAC: ${_apDevice!.mac} • FW v${_apDevice!.fwVersion}'
-                              : 'Connect phone Wi-Fi to SmartHome-XXXX (open on first setup/reset; password SmartHome@XXXX! or custom if previously configured).',
+                              : 'Connect phone Wi-Fi to SmartHome-XXXX (open on first setup or reset, or your custom AP password if configured).',
                           style: TextStyle(
                             fontSize: 11.5,
                             color: AppColors.textSecondary,

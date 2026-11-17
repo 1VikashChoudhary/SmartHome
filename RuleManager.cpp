@@ -7,12 +7,44 @@
 #include "RuleManager.h"
 #include "SensorManager.h"
 
+#if defined(ESP32)
+namespace {
+class RuleMutexGuard {
+public:
+    explicit RuleMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~RuleMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void RuleManager::ensureMutex() const {
+    if (!_ruleMutex) {
+        _ruleMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define RULE_LOCK() ensureMutex(); RuleMutexGuard _ruleLockGuard(_ruleMutex)
+#else
+#define RULE_LOCK() ((void)0)
+#endif
+
 RuleManager::RuleManager()
-    : _storage(nullptr), _ruleCount(0), _lastCheck(0) {
+    : _storage(nullptr), _ruleCount(0), _lastCheck(0)
+#if defined(ESP32)
+      , _ruleMutex(nullptr)
+#endif
+{
     memset(_rules, 0, sizeof(_rules));
 }
 
 void RuleManager::begin(StorageManager& storage) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     loadRules();
     _lastCheck = millis();
@@ -23,6 +55,17 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
     unsigned long now = millis();
     if (now - _lastCheck < 1000) return; // Evaluate every 1 second
     _lastCheck = now;
+
+    AutomationRule localRules[MAX_SENSOR_RULES];
+    uint8_t localCount = 0;
+    {
+        RULE_LOCK();
+        localCount = _ruleCount;
+        if (localCount > MAX_SENSOR_RULES) localCount = MAX_SENSOR_RULES;
+        for (uint8_t i = 0; i < localCount; i++) {
+            localRules[i] = _rules[i];
+        }
+    }
 
     auto applyRuleAction = [&](uint8_t targetRelay, bool state) {
         if (targetRelay == 0xFF) {
@@ -36,8 +79,8 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
         }
     };
 
-    for (uint8_t i = 0; i < _ruleCount; i++) {
-        AutomationRule& r = _rules[i];
+    for (uint8_t i = 0; i < localCount; i++) {
+        AutomationRule& r = localRules[i];
         if (!r.enabled) continue;
         if (r.targetRelay != 0xFF && relayMgr.getManualOverride(r.targetRelay)) continue;
 
@@ -49,7 +92,12 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
         if (r.condition == RULE_COND_ABOVE) {
             if (!r.triggered) {
                 if (val >= r.threshold) {
-                    r.triggered = true;
+                    {
+                        RULE_LOCK();
+                        int liveIdx = findRuleIndex(r.id);
+                        if (liveIdx < 0 || !_rules[liveIdx].enabled || _rules[liveIdx].triggered) continue;
+                        _rules[liveIdx].triggered = true;
+                    }
                     bool state = (r.action == RULE_ACT_RELAY_ON);
                     applyRuleAction(r.targetRelay, state);
                     SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f >= th=%.1f -> Relay %d %s\n",
@@ -59,15 +107,24 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
                 // Anti-flapping hysteresis to reset latch
                 float resetTh = r.threshold - r.hysteresis;
                 if (val < resetTh) {
-                    r.triggered = false;
-                    SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f < reset=%.1f\n",
-                                  r.id, r.name, val, resetTh);
+                    RULE_LOCK();
+                    int liveIdx = findRuleIndex(r.id);
+                    if (liveIdx >= 0 && _rules[liveIdx].triggered) {
+                        _rules[liveIdx].triggered = false;
+                        SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f < reset=%.1f\n",
+                                      r.id, r.name, val, resetTh);
+                    }
                 }
             }
         } else { // RULE_COND_BELOW
             if (!r.triggered) {
                 if (val <= r.threshold) {
-                    r.triggered = true;
+                    {
+                        RULE_LOCK();
+                        int liveIdx = findRuleIndex(r.id);
+                        if (liveIdx < 0 || !_rules[liveIdx].enabled || _rules[liveIdx].triggered) continue;
+                        _rules[liveIdx].triggered = true;
+                    }
                     bool state = (r.action == RULE_ACT_RELAY_ON);
                     applyRuleAction(r.targetRelay, state);
                     SERIAL_PRINTF("[Rule] Fired rule %d ('%s' s#%d): val=%.1f <= th=%.1f -> Relay %d %s\n",
@@ -77,9 +134,13 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
                 // Anti-flapping hysteresis to reset latch
                 float resetTh = r.threshold + r.hysteresis;
                 if (val > resetTh) {
-                    r.triggered = false;
-                    SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f > reset=%.1f\n",
-                                  r.id, r.name, val, resetTh);
+                    RULE_LOCK();
+                    int liveIdx = findRuleIndex(r.id);
+                    if (liveIdx >= 0 && _rules[liveIdx].triggered) {
+                        _rules[liveIdx].triggered = false;
+                        SERIAL_PRINTF("[Rule] Rearmed rule %d ('%s'): val=%.1f > reset=%.1f\n",
+                                      r.id, r.name, val, resetTh);
+                    }
                 }
             }
         }
@@ -125,6 +186,7 @@ bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType senso
 }
 
 bool RuleManager::addRule(const AutomationRule& rule) {
+    RULE_LOCK();
     if (_ruleCount >= MAX_SENSOR_RULES) return false;
 
     _rules[_ruleCount] = rule;
@@ -138,6 +200,7 @@ bool RuleManager::addRule(const AutomationRule& rule) {
 }
 
 bool RuleManager::updateRule(uint8_t id, const AutomationRule& rule) {
+    RULE_LOCK();
     int idx = findRuleIndex(id);
     if (idx < 0) return false;
 
@@ -149,6 +212,7 @@ bool RuleManager::updateRule(uint8_t id, const AutomationRule& rule) {
 }
 
 bool RuleManager::deleteRule(uint8_t id) {
+    RULE_LOCK();
     int idx = findRuleIndex(id);
     if (idx < 0) return false;
 
@@ -161,6 +225,7 @@ bool RuleManager::deleteRule(uint8_t id) {
 }
 
 bool RuleManager::enableRule(uint8_t id, bool enabled) {
+    RULE_LOCK();
     int idx = findRuleIndex(id);
     if (idx < 0) return false;
 
@@ -171,12 +236,14 @@ bool RuleManager::enableRule(uint8_t id, bool enabled) {
 }
 
 const AutomationRule* RuleManager::getRule(uint8_t id) {
+    RULE_LOCK();
     int idx = findRuleIndex(id);
     if (idx < 0) return nullptr;
     return &_rules[idx];
 }
 
 String RuleManager::getActiveRuleForRelay(uint8_t relayIdx) const {
+    RULE_LOCK();
     for (uint8_t i = 0; i < _ruleCount; i++) {
         const AutomationRule& r = _rules[i];
         if (r.enabled && r.triggered && (r.targetRelay == relayIdx || r.targetRelay == 0xFF)) {
@@ -187,10 +254,12 @@ String RuleManager::getActiveRuleForRelay(uint8_t relayIdx) const {
 }
 
 uint8_t RuleManager::getRuleCount() {
+    RULE_LOCK();
     return _ruleCount;
 }
 
 uint8_t RuleManager::getNextId() {
+    RULE_LOCK();
     for (uint16_t candidate = 1; candidate <= 255; candidate++) {
         if (findRuleIndex((uint8_t)candidate) < 0) {
             return (uint8_t)candidate;
@@ -210,6 +279,7 @@ void RuleManager::save() {
 }
 
 void RuleManager::toJson(JsonArray& arr) {
+    RULE_LOCK();
     for (uint8_t i = 0; i < _ruleCount; i++) {
         const AutomationRule& r = _rules[i];
         JsonObject obj = arr.add<JsonObject>();
@@ -271,6 +341,7 @@ bool RuleManager::fromJson(const JsonObject& obj, AutomationRule& rule) {
 }
 
 void RuleManager::loadRules() {
+    RULE_LOCK();
     _ruleCount = 0;
     if (!_storage) return;
 

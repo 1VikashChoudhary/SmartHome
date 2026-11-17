@@ -13,6 +13,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 #include "RelayManager.h"
@@ -78,6 +82,10 @@ private:
     AutomationRule _rules[MAX_SENSOR_RULES];
     uint8_t _ruleCount;
     unsigned long _lastCheck;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _ruleMutex;
+    void ensureMutex() const;
+#endif
 
     void loadRules();
     int findRuleIndex(uint8_t id);

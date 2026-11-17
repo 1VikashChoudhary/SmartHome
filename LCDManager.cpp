@@ -625,8 +625,9 @@ void LCDManager::appendConfigJson(JsonObject& lcdObj) const {
         for (uint8_t i = 0; i < _sensor->getMq2Count(); i++) {
             if (!_sensor->isMq2ActiveAt(i)) continue;
             const Mq2SensorConfig* cfg = _hw ? _hw->getMq2(i) : nullptr;
-            String kind = (_sensor->getMq2TypeAt(i) == GAS_SGP40) ? "VOC" : "Gas";
-            String lbl = (cfg && cfg->label[0]) ? String(cfg->label) : (kind + " #" + String(i + 1));
+            uint8_t mType = _sensor->getMq2TypeAt(i);
+            String kind = (mType == GAS_SGP40) ? "VOC" : String(HardwareManager::gasTypeShortName(mType));
+            String lbl = (cfg && cfg->label[0]) ? String(cfg->label) : ("Gas #" + String(i + 1));
             addWidget("gas:" + String(i), lbl + " (" + kind + ")");
         }
         for (uint8_t i = 0; i < _sensor->getUltrasonicCount(); i++) {
@@ -970,16 +971,17 @@ void LCDManager::formatWidgetLine(const char* widgetKey, char* out, size_t outSi
             snprintf(out, outSize, "Gas%u: Off", (unsigned)(idx + 1));
             return;
         }
-        bool isSgp40 = (_sensor->getMq2TypeAt(idx) == GAS_SGP40);
-        const char* tag = isSgp40 ? "VOC" : "Gas";
+        uint8_t mType = _sensor->getMq2TypeAt(idx);
+        bool isSgp40 = (mType == GAS_SGP40);
+        const char* tag = isSgp40 ? "VOC" : HardwareManager::gasTypeShortName(mType);
         int val = _sensor->getMQ2RawAt(idx);
         int thr = _sensor->getMQ2ThresholdAt(idx);
         if (_sensor->isMq2WarmingAt(idx)) {
-            snprintf(out, outSize, "%s%u:Warm %d", tag, (unsigned)(idx + 1), val);
+            snprintf(out, outSize, "%s#%u:Warm %d", tag, (unsigned)(idx + 1), val);
         } else if (_sensor->isMQ2AlarmAt(idx)) {
-            snprintf(out, outSize, "!%s%u ALRM %d!", tag, (unsigned)(idx + 1), val);
+            snprintf(out, outSize, "!%s ALRM %d!", tag, val);
         } else {
-            snprintf(out, outSize, "%s%u:%4d/%d", tag, (unsigned)(idx + 1), val, thr);
+            snprintf(out, outSize, "%s#%u:%d/%d", tag, (unsigned)(idx + 1), val, thr);
         }
         return;
     }
@@ -1549,7 +1551,7 @@ void LCDManager::renderNetworkPage() {
 
 void LCDManager::renderGasPage() {
     if (!_mq2Enabled) {
-        setLine(0, _gasIsSgp40 ? "SGP40 Disabled  " : "MQ-2 Disabled   ");
+        setLine(0, _gasIsSgp40 ? "SGP40 Disabled  " : "Gas Disabled    ");
         setLine(1, "Off in HW Config");
         return;
     }

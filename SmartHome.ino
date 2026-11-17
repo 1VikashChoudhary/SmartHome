@@ -199,7 +199,9 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                 logger.logCritical("Sensor", F("GAS ALARM triggered!"));
                 wsMgr.broadcastAlarm("gas", true);
                 relayMgr.activateFailsafe();
-                detailMsg = String(sensorMgr.isPrimarySgp40() ? "VOC Alert: " : "Gas Alert: ") +
+                detailMsg = String(sensorMgr.isPrimarySgp40()
+                                   ? "VOC Alert: "
+                                   : (String(sensorMgr.getPrimaryGasTypeName()) + " Alert: ").c_str()) +
                             String(sensorMgr.getMQ2Raw()) + " " +
                             String(sensorMgr.isPrimarySgp40() ? "VOC" : "ADC") +
                             " (Limit: " + String(sensorMgr.getMQ2Threshold()) + ")";

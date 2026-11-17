@@ -106,6 +106,14 @@ uint8_t HardwareManager::defaultI2cAddrForLight(LightSensorType t) {
     return (t == LIGHT_BH1750) ? 0x23 : 0;
 }
 
+const char* HardwareManager::gasTypeShortName(uint8_t t) {
+    static const char* const kNames[] = {
+        "MQ-2", "SGP40", "MQ-3", "MQ-4", "MQ-5",
+        "MQ-6", "MQ-7", "MQ-8", "MQ-9", "MQ-135"
+    };
+    return (t <= GAS_MQ_MAX) ? kNames[t] : "MQ-2";
+}
+
 const ClimateSensorConfig* HardwareManager::getClimate(uint8_t idx) const {
     return (idx < _config.numClimates) ? &_config.climates[idx] : nullptr;
 }
@@ -181,13 +189,13 @@ bool HardwareManager::isMq2Enabled() const {
     return (_config.numMq2s > 0) && _config.mq2Sensors[0].enabled;
 }
 uint8_t HardwareManager::getMq2AnalogPin() const {
-    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type == GAS_MQ2) {
+    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type != GAS_SGP40) {
         return _config.mq2Sensors[0].analogPin;
     }
     return PIN_UNUSED;
 }
 uint8_t HardwareManager::getMq2DigitalPin() const {
-    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type == GAS_MQ2) {
+    if (_config.numMq2s > 0 && _config.mq2Sensors[0].type != GAS_SGP40) {
         return _config.mq2Sensors[0].digitalPin;
     }
     return PIN_UNUSED;
@@ -528,11 +536,11 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
         if (!claimPin(u.echoPin, (tag + " Echo").c_str())) return false;
     }
 
-    // 3. Gas & Air Quality Sensors (MQ-2 / SGP40 I2C)
+    // 3. Gas & Air Quality Sensors (MQ Series / SGP40 I2C)
     for (uint8_t i = 0; i < cfg.numMq2s; i++) {
         const Mq2SensorConfig& g = cfg.mq2Sensors[i];
         if (!g.enabled) continue;
-        if (g.type > GAS_SGP40) {
+        if (g.type > GAS_MQ_MAX) {
             outError = String(F("Gas ")) + String(i + 1) + F(": Invalid gas sensor type");
             return false;
         }
@@ -547,7 +555,7 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
             i2cActive = true;
             continue;
         }
-        String tag = "MQ-2 " + String(i + 1);
+        String tag = String(gasTypeShortName(g.type)) + " " + String(i + 1);
         if (g.analogPin == PIN_UNUSED && g.digitalPin == PIN_UNUSED) {
             outError = tag + F(": Enable requires at least an Analog or Digital GPIO pin");
             return false;
@@ -1080,7 +1088,7 @@ bool HardwareManager::parseHardwareJson(JsonObjectConst obj, HardwareConfig& new
         for (JsonObjectConst g : arr) {
             String gTag = "Gas " + String(gIdx + 1);
             uint8_t gType = (uint8_t)GAS_MQ2;
-            if (!readByteRangeField(g, "type", (uint8_t)GAS_MQ2, GAS_SGP40, gType, gTag, outError)) return false;
+            if (!readByteRangeField(g, "type", (uint8_t)GAS_MQ2, GAS_MQ_MAX, gType, gTag, outError)) return false;
             newCfg.mq2Sensors[gIdx].enabled = g["enabled"] | true;
             newCfg.mq2Sensors[gIdx].type    = gType;
             if (gType == GAS_SGP40) {
@@ -1234,10 +1242,10 @@ static void addPresetClimate(HardwareConfig& cfg, ClimateSensorType t, uint8_t p
     assignDefaultLabel(cfg.climates[idx].label, sizeof(cfg.climates[idx].label), nullptr, "Climate", idx);
 }
 
-static void addPresetMq2(HardwareConfig& cfg, uint8_t aPin, uint8_t dPin) {
+static void addPresetMq2(HardwareConfig& cfg, uint8_t aPin, uint8_t dPin, bool enabled = false) {
     if (cfg.numMq2s >= MAX_MQ2_SENSORS) return;
     uint8_t idx = cfg.numMq2s++;
-    cfg.mq2Sensors[idx].enabled    = true;
+    cfg.mq2Sensors[idx].enabled    = enabled;
     cfg.mq2Sensors[idx].type       = GAS_MQ2;
     cfg.mq2Sensors[idx].analogPin  = aPin;
     cfg.mq2Sensors[idx].digitalPin = dPin;

@@ -661,7 +661,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                               Text(
                                 device.telemetry.gasUnit.toUpperCase() == 'VOC'
                                     ? 'SGP40 VOC Reading: ${device.telemetry.gasRaw} VOC. Check room air quality immediately!'
-                                    : 'MQ-2 Reading: ${device.telemetry.gasRaw} ADC. Check room environment immediately!',
+                                    : '${device.telemetry.gasTypeName} Reading: ${device.telemetry.gasRaw} ADC. Check room environment immediately!',
                                 style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                               ),
                             ],
@@ -1231,7 +1231,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   final isSgp = m.isSgp40;
                   final mMax = m.gasMax > 0 ? m.gasMax : (isSgp ? 500 : gasMax);
                   final label = (visibleMq2s.length == 1 && !m.hasCustomLabel)
-                      ? (isSgp ? 'VOC Air Quality' : 'Air / Gas')
+                      ? (isSgp ? 'VOC Air Quality' : '${m.typeName} Gas')
                       : (m.hasCustomLabel ? m.label : m.displayName);
                   allGauges.add(
                     TelemetryGauge(

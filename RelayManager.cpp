@@ -12,12 +12,38 @@
 #include "RelayManager.h"
 #include "HardwareManager.h"
 
+#if defined(ESP32)
+namespace {
+class RelayMutexGuard {
+public:
+    explicit RelayMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~RelayMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void RelayManager::ensureMutex() const {
+    if (!_stateMutex) {
+        _stateMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define RELAY_LOCK() ensureMutex(); RelayMutexGuard _relayLockGuard(_stateMutex)
+#else
+#define RELAY_LOCK() ((void)0)
+#endif
+
 RelayManager::RelayManager()
     : _storage(nullptr), _hw(nullptr), _numRelays(NUM_RELAYS),
       _hasSwitched(false), _lastRelaySwitchTime(0), _lastStaggerStep(0),
       _statesDirty(false), _lastStateSave(0), _changeCallback(nullptr) {
 #if defined(ESP32)
     _mux = portMUX_INITIALIZER_UNLOCKED;
+    _stateMutex = nullptr;
 #endif
     memset(_timers, 0, sizeof(_timers));
     memset(_pendingStaggerOn, 0, sizeof(_pendingStaggerOn));
@@ -29,6 +55,9 @@ RelayManager::RelayManager()
 // Initialize (Legacy Overload)
 // ============================================================================
 void RelayManager::begin(StorageManager& storage) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     _hw = nullptr;
     _numRelays = NUM_RELAYS;
@@ -85,6 +114,9 @@ void RelayManager::begin(StorageManager& storage) {
 // Initialize (Hardware Profile Engine)
 // ============================================================================
 void RelayManager::begin(StorageManager& storage, HardwareManager& hw) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     _hw = &hw;
     _numRelays = hw.getNumRelays();
@@ -189,56 +221,81 @@ void RelayManager::loop() {
     unsigned long now = millis();
 
     // --- Non-blocking OFF notification dispatch (keeps async_tcp HTTP handler fast) ---
-    for (uint8_t i = 0; i < _numRelays; i++) {
-        if (_pendingNotifyOff[i]) {
-            _pendingNotifyOff[i] = false;
-            if (!_state[i].logicalState && _changeCallback) {
-                _changeCallback(i, false);
+    int8_t notifyOffIdx = -1;
+    {
+        RELAY_LOCK();
+        for (uint8_t i = 0; i < _numRelays; i++) {
+            if (_pendingNotifyOff[i]) {
+                _pendingNotifyOff[i] = false;
+                if (!_state[i].logicalState) {
+                    notifyOffIdx = (int8_t)i;
+                }
+                break; // Dispatch one per loop iteration to avoid WebSocket/MQTT queue burst
             }
-            break; // Dispatch one per loop iteration to avoid WebSocket/MQTT queue burst
         }
+    }
+    if (notifyOffIdx >= 0 && _changeCallback) {
+        _changeCallback((uint8_t)notifyOffIdx, false);
     }
 
     // --- Non-blocking anti-brownout staggered coil energization (120ms spacing) ---
-    if (now - _lastStaggerStep >= RELAY_STAGGER_MS) {
-        for (uint8_t i = 0; i < _numRelays; i++) {
-            if (_pendingStaggerOn[i]) {
-                _pendingStaggerOn[i] = false;
-                _lastStaggerStep = now;
-                if (_state[i].logicalState) {
-                    applyState(i);
-                    _lastRelaySwitchTime = now;
-                    _hasSwitched = true;
-                    SERIAL_PRINTF("[Relay] %d staggered ON coil energized\n", i + 1);
-                    if (_changeCallback) {
-                        _changeCallback(i, true);
+    int8_t staggerOnIdx = -1;
+    {
+        RELAY_LOCK();
+        if (now - _lastStaggerStep >= RELAY_STAGGER_MS) {
+            for (uint8_t i = 0; i < _numRelays; i++) {
+                if (_pendingStaggerOn[i]) {
+                    _pendingStaggerOn[i] = false;
+                    _lastStaggerStep = now;
+                    if (_state[i].logicalState) {
+                        applyState(i);
+                        _lastRelaySwitchTime = now;
+                        _hasSwitched = true;
+                        SERIAL_PRINTF("[Relay] %d staggered ON coil energized\n", i + 1);
+                        staggerOnIdx = (int8_t)i;
                     }
+                    break; // Energize one coil per 120ms interval
                 }
-                break; // Energize one coil per 120ms interval
             }
         }
     }
+    if (staggerOnIdx >= 0 && _changeCallback) {
+        _changeCallback((uint8_t)staggerOnIdx, true);
+    }
 
-    // --- Auto-OFF timers ---
-    for (uint8_t i = 0; i < _numRelays; i++) {
-        if (_state[i].autoOffStart > 0 && _config[i].autoOffMinutes > 0) {
-            if (now - _state[i].autoOffStart >= (unsigned long)_config[i].autoOffMinutes * 60000UL) {
-                _state[i].autoOffStart = 0;
-                setState(i, false);
-                SERIAL_PRINTF("[Relay] %d auto-OFF triggered\n", i + 1);
+    // --- Auto-OFF & Auto-ON timers ---
+    uint8_t autoOffFired[MAX_RELAYS] = {0};
+    uint8_t autoOffCount = 0;
+    uint8_t autoOnFired[MAX_RELAYS] = {0};
+    uint8_t autoOnCount = 0;
+    {
+        RELAY_LOCK();
+        for (uint8_t i = 0; i < _numRelays; i++) {
+            if (_state[i].autoOffStart > 0 && _config[i].autoOffMinutes > 0) {
+                if (now - _state[i].autoOffStart >= (unsigned long)_config[i].autoOffMinutes * 60000UL) {
+                    _state[i].autoOffStart = 0;
+                    autoOffFired[autoOffCount++] = i;
+                }
+            }
+        }
+        for (uint8_t i = 0; i < _numRelays; i++) {
+            if (_state[i].autoOnStart > 0 && _config[i].autoOnMinutes > 0) {
+                if (now - _state[i].autoOnStart >= (unsigned long)_config[i].autoOnMinutes * 60000UL) {
+                    _state[i].autoOnStart = 0;
+                    autoOnFired[autoOnCount++] = i;
+                }
             }
         }
     }
-
-    // --- Auto-ON timers ---
-    for (uint8_t i = 0; i < _numRelays; i++) {
-        if (_state[i].autoOnStart > 0 && _config[i].autoOnMinutes > 0) {
-            if (now - _state[i].autoOnStart >= (unsigned long)_config[i].autoOnMinutes * 60000UL) {
-                _state[i].autoOnStart = 0;
-                setState(i, true);
-                SERIAL_PRINTF("[Relay] %d auto-ON triggered\n", i + 1);
-            }
-        }
+    for (uint8_t k = 0; k < autoOffCount; k++) {
+        uint8_t ch = autoOffFired[k];
+        setState(ch, false);
+        SERIAL_PRINTF("[Relay] %d auto-OFF triggered\n", ch + 1);
+    }
+    for (uint8_t k = 0; k < autoOnCount; k++) {
+        uint8_t ch = autoOnFired[k];
+        setState(ch, true);
+        SERIAL_PRINTF("[Relay] %d auto-ON triggered\n", ch + 1);
     }
 
     // --- One-Shot Quick Timers ---
@@ -267,7 +324,14 @@ void RelayManager::loop() {
     }
 
     // --- Coalesced state persistence ---
-    if (_statesDirty && (now - _lastStateSave >= RELAY_SAVE_COALESCE)) {
+    bool shouldSave = false;
+    {
+        RELAY_LOCK();
+        if (_statesDirty && (now - _lastStateSave >= RELAY_SAVE_COALESCE)) {
+            shouldSave = true;
+        }
+    }
+    if (shouldSave) {
         saveStates();
     }
 }
@@ -276,55 +340,59 @@ void RelayManager::loop() {
 // State Control
 // ============================================================================
 bool RelayManager::getState(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return false;
     return _state[index].logicalState;
 }
 
 void RelayManager::setState(uint8_t index, bool state) {
-    if (index >= _numRelays || !isChannelEnabled(index)) return;
-    if (_state[index].logicalState == state && !_pendingStaggerOn[index]) return; // No change
+    {
+        RELAY_LOCK();
+        if (index >= _numRelays || !isChannelEnabled(index)) return;
+        if (_state[index].logicalState == state && !_pendingStaggerOn[index]) return; // No change
 
-    // Track physical relay cycle count in NVS for wear-leveling monitoring
-    if (_storage && _state[index].logicalState != state) {
-        _storage->incrementRelayCycleNVS(index);
-    }
-
-    _pendingStaggerOn[index] = false;
-    _pendingNotifyOff[index] = false;
-    _state[index].logicalState = state;
-    applyState(index);
-
-    // Cancel quick timer if relay has reached the target state or was switched off manually
-#if defined(ESP32)
-    portENTER_CRITICAL(&_mux);
-#endif
-    if (_timers[index].active && (state == _timers[index].targetState || !state)) {
-        _timers[index].active = false;
-        _timers[index].durationMillis = 0;
-        _timers[index].startMillis = 0;
-    }
-#if defined(ESP32)
-    portEXIT_CRITICAL(&_mux);
-#endif
-
-    // Record relay switch time for EMI lockout
-    _lastRelaySwitchTime = millis();
-    _hasSwitched = true;
-
-    // Handle auto timers
-    if (state) {
-        _state[index].autoOnStart = 0;
-        if (_config[index].autoOffMinutes > 0) {
-            _state[index].autoOffStart = millis();
+        // Track physical relay cycle count in NVS for wear-leveling monitoring
+        if (_storage && _state[index].logicalState != state) {
+            _storage->incrementRelayCycleNVS(index);
         }
-    } else {
-        _state[index].autoOffStart = 0;
-        if (_config[index].autoOnMinutes > 0) {
-            _state[index].autoOnStart = millis();
-        }
-    }
 
-    _statesDirty = true;
+        _pendingStaggerOn[index] = false;
+        _pendingNotifyOff[index] = false;
+        _state[index].logicalState = state;
+        applyState(index);
+
+        // Cancel quick timer if relay has reached the target state or was switched off manually
+#if defined(ESP32)
+        portENTER_CRITICAL(&_mux);
+#endif
+        if (_timers[index].active && (state == _timers[index].targetState || !state)) {
+            _timers[index].active = false;
+            _timers[index].durationMillis = 0;
+            _timers[index].startMillis = 0;
+        }
+#if defined(ESP32)
+        portEXIT_CRITICAL(&_mux);
+#endif
+
+        // Record relay switch time for EMI lockout
+        _lastRelaySwitchTime = millis();
+        _hasSwitched = true;
+
+        // Handle auto timers
+        if (state) {
+            _state[index].autoOnStart = 0;
+            if (_config[index].autoOffMinutes > 0) {
+                _state[index].autoOffStart = millis();
+            }
+        } else {
+            _state[index].autoOffStart = 0;
+            if (_config[index].autoOnMinutes > 0) {
+                _state[index].autoOnStart = millis();
+            }
+        }
+
+        _statesDirty = true;
+    }
 
     if (_changeCallback) {
         _changeCallback(index, state);
@@ -332,11 +400,17 @@ void RelayManager::setState(uint8_t index, bool state) {
 }
 
 void RelayManager::toggle(uint8_t index) {
-    if (index >= _numRelays || !isChannelEnabled(index)) return;
-    setState(index, !_state[index].logicalState);
+    bool nextState;
+    {
+        RELAY_LOCK();
+        if (index >= _numRelays || !isChannelEnabled(index)) return;
+        nextState = !_state[index].logicalState;
+    }
+    setState(index, nextState);
 }
 
 void RelayManager::allOn() {
+    RELAY_LOCK();
     unsigned long now = millis();
     bool anyQueued = false;
 
@@ -377,6 +451,7 @@ void RelayManager::allOn() {
 }
 
 void RelayManager::allOff() {
+    RELAY_LOCK();
     unsigned long now = millis();
     for (uint8_t i = 0; i < _numRelays; i++) {
         bool wasOn = _state[i].logicalState || _pendingStaggerOn[i];
@@ -394,7 +469,7 @@ void RelayManager::allOff() {
 #if defined(ESP32)
         portENTER_CRITICAL(&_mux);
 #endif
-        if (_timers[i].active && !_timers[i].targetState) {
+        if (_timers[i].active) {
             _timers[i].active = false;
             _timers[i].durationMillis = 0;
             _timers[i].startMillis = 0;
@@ -416,11 +491,13 @@ void RelayManager::allOff() {
 // Configuration Getters/Setters
 // ============================================================================
 String RelayManager::getName(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return "";
     return String(_config[index].name);
 }
 
 void RelayManager::setName(uint8_t index, const String& name) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     strncpy(_config[index].name, name.c_str(), sizeof(_config[index].name) - 1);
     _config[index].name[sizeof(_config[index].name) - 1] = '\0';
@@ -428,11 +505,13 @@ void RelayManager::setName(uint8_t index, const String& name) {
 }
 
 String RelayManager::getIcon(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return "light";
     return String(_config[index].icon);
 }
 
 void RelayManager::setIcon(uint8_t index, const String& icon) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     String clean = icon;
     clean.trim();
@@ -444,11 +523,13 @@ void RelayManager::setIcon(uint8_t index, const String& icon) {
 }
 
 TriggerMode RelayManager::getTriggerMode(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return TRIGGER_ACTIVE_LOW;
     return _config[index].triggerMode;
 }
 
 void RelayManager::setTriggerMode(uint8_t index, TriggerMode mode) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].triggerMode = mode;
     applyState(index);
@@ -461,17 +542,20 @@ void RelayManager::setTriggerMode(uint8_t index, TriggerMode mode) {
 }
 
 BootStateMode RelayManager::getBootState(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return BOOT_RESTORE_LAST;
     return _config[index].bootState;
 }
 
 void RelayManager::setBootState(uint8_t index, BootStateMode mode) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].bootState = mode;
     saveConfig();
 }
 
 void RelayManager::setAutoOff(uint8_t index, uint16_t minutes) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].autoOffMinutes = minutes;
     _state[index].autoOffStart = 0;
@@ -479,6 +563,7 @@ void RelayManager::setAutoOff(uint8_t index, uint16_t minutes) {
 }
 
 void RelayManager::setAutoOn(uint8_t index, uint16_t minutes) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].autoOnMinutes = minutes;
     _state[index].autoOnStart = 0;
@@ -486,28 +571,34 @@ void RelayManager::setAutoOn(uint8_t index, uint16_t minutes) {
 }
 
 uint16_t RelayManager::getAutoOff(uint8_t index) {
+    RELAY_LOCK();
     return (index < _numRelays) ? _config[index].autoOffMinutes : 0;
 }
 
 uint16_t RelayManager::getAutoOn(uint8_t index) {
+    RELAY_LOCK();
     return (index < _numRelays) ? _config[index].autoOnMinutes : 0;
 }
 
 bool RelayManager::getFailsafe(uint8_t index) {
+    RELAY_LOCK();
     return (index < _numRelays) ? _config[index].failsafe : false;
 }
 
 void RelayManager::setFailsafe(uint8_t index, bool enabled) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].failsafe = enabled;
     saveConfig();
 }
 
 bool RelayManager::getManualOverride(uint8_t index) {
+    RELAY_LOCK();
     return (index < _numRelays) ? _config[index].manualOverride : false;
 }
 
 void RelayManager::setManualOverride(uint8_t index, bool enabled) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     _config[index].manualOverride = enabled;
     saveConfig();
@@ -517,6 +608,7 @@ void RelayManager::setManualOverride(uint8_t index, bool enabled) {
 // Wall Switch Integration & EMI Lockout
 // ============================================================================
 bool RelayManager::isInLockout() {
+    RELAY_LOCK();
     if (!_hasSwitched) return false;
     return (millis() - _lastRelaySwitchTime) < RELAY_SWITCH_LOCKOUT_MS;
 }
@@ -578,6 +670,7 @@ void RelayManager::initWallSwitchStates() {
 }
 
 void RelayManager::updateSwitchState(uint8_t index) {
+    RELAY_LOCK();
     if (index >= _numRelays) return;
     uint8_t pin = _hw ? _hw->getSwitchPin(index) : (index < NUM_RELAYS ? SWITCH_PINS[index] : PIN_UNUSED);
     if (pin == PIN_UNUSED) return;
@@ -590,11 +683,20 @@ void RelayManager::setChangeCallback(void (*cb)(uint8_t, bool)) {
 }
 
 void RelayManager::activateFailsafe() {
-    for (uint8_t i = 0; i < _numRelays; i++) {
-        if (_config[i].failsafe && _state[i].logicalState) {
-            setState(i, false);
-            SERIAL_PRINTF("[Relay] Failsafe: relay %d turned OFF\n", i + 1);
+    uint8_t turnOff[MAX_RELAYS] = {0};
+    uint8_t count = 0;
+    {
+        RELAY_LOCK();
+        for (uint8_t i = 0; i < _numRelays; i++) {
+            if (_config[i].failsafe && _state[i].logicalState) {
+                turnOff[count++] = i;
+            }
         }
+    }
+    for (uint8_t k = 0; k < count; k++) {
+        uint8_t i = turnOff[k];
+        setState(i, false);
+        SERIAL_PRINTF("[Relay] Failsafe: relay %d turned OFF\n", i + 1);
     }
 }
 
@@ -602,6 +704,7 @@ void RelayManager::activateFailsafe() {
 // Persistence
 // ============================================================================
 void RelayManager::saveConfig() {
+    RELAY_LOCK();
     if (!_storage) return;
 
     JsonDocument doc;
@@ -624,6 +727,7 @@ void RelayManager::saveConfig() {
 }
 
 void RelayManager::saveStates() {
+    RELAY_LOCK();
     if (!_storage) return;
 
     bool logical[MAX_RELAYS] = {0};
@@ -644,6 +748,7 @@ void RelayManager::saveStates() {
 // JSON Serialization
 // ============================================================================
 void RelayManager::toJson(JsonArray& arr) {
+    RELAY_LOCK();
     for (uint8_t i = 0; i < _numRelays; i++) {
         JsonObject r = arr.add<JsonObject>();
         r["id"]       = i;
@@ -670,6 +775,7 @@ void RelayManager::toJson(JsonArray& arr) {
 }
 
 void RelayManager::stateToJson(JsonArray& arr) {
+    RELAY_LOCK();
     for (uint8_t i = 0; i < _numRelays; i++) {
         JsonObject s = arr.add<JsonObject>();
         s["id"]      = i;

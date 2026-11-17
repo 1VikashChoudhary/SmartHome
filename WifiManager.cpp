@@ -42,8 +42,10 @@ WifiManager::WifiManager()
     : _storage(nullptr), _state(WIFI_ST_DISCONNECTED),
       _networkCount(0), _currentNetwork(0),
       _lastConnectAttempt(0), _lastConnectTime(0), _connectStartTime(0),
-      _disconnectDetectedAt(0), _lastApStaRetry(0),
-      _failCount(0), _usingPinnedBssid(false), _skipPinnedBssid(false), _dnsStarted(false),
+      _disconnectDetectedAt(0),
+      _failCount(0), _quickRetryPending(false), _usingPinnedBssid(false), _skipPinnedBssid(false),
+      _dnsStarted(false), _apScanPending(false), _apStartedAt(0),
+      _pendingReset(false), _pendingResetAt(0), _pendingResetDelay(250),
       _connectCallback(nullptr), _wasConnected(false) {
     for (uint8_t i = 0; i < WIFI_MAX_SAVED_NETWORKS; i++) {
         memset(_networks[i].bssid, 0, sizeof(_networks[i].bssid));
@@ -112,6 +114,12 @@ void WifiManager::begin(StorageManager& storage) {
 void WifiManager::loop() {
     unsigned long now = millis();
 
+    if (_pendingReset && (now - _pendingResetAt >= _pendingResetDelay)) {
+        _pendingReset = false;
+        resetWiFi();
+        return;
+    }
+
     switch (_state) {
         case WIFI_ST_CONNECTING:
             // Check if connected
@@ -145,7 +153,7 @@ void WifiManager::loop() {
                 }
                 _wasConnected = true;
             }
-            // Check timeout (fail fast out of pinned BSSID/channel without consuming AP fallback attempts)
+            // Check timeout (fail fast out of pinned BSSID/channel before full scan)
             else if (now - _connectStartTime > (_usingPinnedBssid ? 6000UL : (unsigned long)WIFI_CONNECT_TIMEOUT)) {
                 if (_usingPinnedBssid) {
                     _skipPinnedBssid = true;
@@ -153,19 +161,17 @@ void WifiManager::loop() {
                     tryConnect();
                 } else {
                     _failCount++;
-                    SERIAL_PRINTF("[WiFi] Connection timeout (attempt %d/%d)\n",
-                                  _failCount, WIFI_AP_FALLBACK_ATTEMPTS);
-
-                    if (_failCount >= WIFI_AP_FALLBACK_ATTEMPTS) {
-                        // Fallback to AP mode
-                        Serial.println(F("[WiFi] Max attempts reached, falling back to AP mode"));
-                        _lastApStaRetry = now;
-                        startAP();
+                    _quickRetryPending = false;
+                    _currentNetwork = (_currentNetwork + 1) % _networkCount;
+                    _state = WIFI_ST_DISCONNECTED;
+                    _lastConnectAttempt = now;
+                    WiFi.disconnect(false);
+                    if (_failCount >= _networkCount) {
+                        SERIAL_PRINTF("[WiFi] Router unavailable (failed %u/%u saved network(s)); retrying in 2 min until WiFi reset\n",
+                                      (unsigned)_failCount, (unsigned)_networkCount);
                     } else {
-                        // Try next network or retry
-                        _currentNetwork = (_currentNetwork + 1) % _networkCount;
-                        _state = WIFI_ST_DISCONNECTED;
-                        _lastConnectAttempt = now;
+                        SERIAL_PRINTF("[WiFi] Connection timeout (%u/%u), trying next saved network...\n",
+                                      (unsigned)_failCount, (unsigned)_networkCount);
                     }
                 }
             }
@@ -182,10 +188,12 @@ void WifiManager::loop() {
                 if (_disconnectDetectedAt == 0) {
                     _disconnectDetectedAt = now;
                 } else if (now - _disconnectDetectedAt >= 3500) {
-                    Serial.println(F("[WiFi] Connection lost, reconnecting..."));
+                    Serial.println(F("[WiFi] Connection lost, attempting reconnect..."));
                     _state = WIFI_ST_DISCONNECTED;
                     _disconnectDetectedAt = 0;
-                    _lastConnectAttempt = now - WIFI_RECONNECT_INTERVAL + 500; // Retry quickly
+                    _failCount = 0;
+                    _quickRetryPending = true;
+                    _lastConnectAttempt = now - WIFI_QUICK_RECONNECT_INTERVAL + 500; // Quick first retry
 
                     if (_connectCallback && _wasConnected) {
                         _connectCallback(false);
@@ -200,48 +208,37 @@ void WifiManager::loop() {
             break;
 
         case WIFI_ST_DISCONNECTED:
-            // Retry connection after interval
-            if (_networkCount > 0 && (now - _lastConnectAttempt >= WIFI_RECONNECT_INTERVAL)) {
-                _state = WIFI_ST_CONNECTING;
-                tryConnect();
+            // Retry quickly between saved SSIDs (or immediate link-drop retry),
+            // otherwise wait 2 minutes between cycles indefinitely until router returns or WiFi is reset.
+            if (_networkCount > 0) {
+                unsigned long retryWait = (_quickRetryPending || _failCount < _networkCount)
+                    ? WIFI_QUICK_RECONNECT_INTERVAL
+                    : WIFI_RECONNECT_INTERVAL;
+                if (now - _lastConnectAttempt >= retryWait) {
+                    if (_failCount >= _networkCount) {
+                        _failCount = 0;
+                    }
+                    _quickRetryPending = false;
+                    _state = WIFI_ST_CONNECTING;
+                    tryConnect();
+                }
             }
             break;
 
         case WIFI_ST_AP_MODE:
-            // Process DNS requests for captive portal
+            // Only active when _networkCount == 0 (fresh setup or explicit WiFi/factory reset)
             if (_dnsStarted) {
                 _dnsServer.processNextRequest();
             }
-
-            // Periodically retry STA connection in background only when no client is attached to SoftAP
-            if (_networkCount > 0 && WiFi.status() != WL_CONNECTED &&
-                WiFi.softAPgetStationNum() == 0 && (now - _lastApStaRetry >= 30000)) {
-                _lastApStaRetry = now;
-                _currentNetwork = (_currentNetwork + 1) % _networkCount;
-                WiFi.begin(_networks[_currentNetwork].ssid.c_str(),
-                           _networks[_currentNetwork].pass.c_str());
-            }
-
-            // Also check if STA gets connected (concurrent AP+STA mode)
-            if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
-                Serial.println(F("[WiFi] STA connected while in AP mode"));
-                _state = WIFI_ST_CONNECTED;
-                _lastConnectTime = now;
-                _disconnectDetectedAt = 0;
-                _usingPinnedBssid = false;
-                _skipPinnedBssid = false;
-                _failCount = 0;
-                _wasConnected = true;
-                saveBssidChannel();
-                setupMDNS();
-                if (_dnsStarted) {
-                    _dnsServer.stop();
-                    _dnsStarted = false;
+            // Defer initial background Wi-Fi scan until clients finish DHCP + captive portal checks
+            // so single-radio channel hopping doesn't interfere with initial association.
+            if (_apScanPending && (now - _apStartedAt >= 4000UL)) {
+                _apScanPending = false;
+                int scanStatus = WiFi.scanComplete();
+                if (scanStatus != WIFI_SCAN_RUNNING && scanStatus < 0) {
+                    WiFi.scanDelete();
+                    WiFi.scanNetworks(true, false);
                 }
-                // Switch to STA only mode
-                WiFi.mode(WIFI_STA);
-                disableWifiSleep();
-                if (_connectCallback) _connectCallback(true);
             }
             break;
     }
@@ -314,32 +311,47 @@ unsigned long WifiManager::getLastConnectTime() { return _lastConnectTime; }
 // Start Access Point mode
 // ============================================================================
 void WifiManager::startAP() {
-    WiFi.disconnect(false);
-    WiFi.mode(WIFI_AP_STA); // AP + STA so we can still connect if credentials are saved
+    if (_dnsStarted) {
+        _dnsServer.stop();
+        _dnsStarted = false;
+    }
 
-    // Re-evaluate AP security (Open for fresh unconfigured setup, WPA2 once configured)
+    // Bounce existing SoftAP cleanly when re-entering AP setup (e.g., repeated reset)
+    // so already-associated phones re-run DHCP + OS captive portal detection.
+    if (WiFi.getMode() & WIFI_AP) {
+        WiFi.softAPdisconnect(false);
+        delay(100);
+    }
+
+    WiFi.disconnect(false);
+    WiFi.mode(WIFI_AP_STA); // AP + STA so onboarding WiFi scan works reliably
+
+    // Re-evaluate AP security (Open unless custom ap_pass configured in config.json)
     _apPassword = generateAPPassword();
     const char* pass = _apPassword.length() > 0 ? _apPassword.c_str() : nullptr;
     WiFi.softAP(_apSSID.c_str(), pass);
 
-    // Start DNS server for captive portal
-    _dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+    IPAddress apIP(192, 168, 4, 1);
+#if defined(ESP32)
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0), IPAddress(192, 168, 4, 2), apIP);
+#else
+    WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+#endif
+
+    // Start DNS server for captive portal with 0s TTL so Android/iOS do not cache stale lookups across resets
+    _dnsServer.setTTL(0);
+    _dnsServer.start(DNS_PORT, "*", apIP);
     _dnsStarted = true;
 
     _state = WIFI_ST_AP_MODE;
 
-    SERIAL_PRINTF("[WiFi] AP Mode: SSID=%s  Pass=%s  IP=%s\n",
+    SERIAL_PRINTF("[WiFi] AP Setup Mode: SSID=%s  Pass=%s  IP=%s\n",
                   _apSSID.c_str(), pass ? pass : "None (Open)", WiFi.softAPIP().toString().c_str());
 
-    // If we have credentials, keep trying STA in background
-    _lastApStaRetry = millis();
-    if (_networkCount > 0) {
-        WiFi.begin(_networks[0].ssid.c_str(), _networks[0].pass.c_str());
-    } else {
-        // Trigger non-blocking background Wi-Fi scan so nearby 2.4 GHz networks
-        // are immediately ready for the onboarding wizard and captive portal
-        WiFi.scanNetworks(true, false);
-    }
+    // Clear stale scan results; defer background scan 4s so AP stays on ch 1 during initial DHCP/probe
+    WiFi.scanDelete();
+    _apScanPending = true;
+    _apStartedAt = millis();
 }
 
 // ============================================================================
@@ -395,9 +407,15 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
 
     SERIAL_PRINTF("[WiFi] Saved %d network(s)\n", _networkCount);
 
-    // Attempt connection to new network
+    // Attempt connection to new network (and exit setup AP mode immediately)
+    if (_dnsStarted) {
+        _dnsServer.stop();
+        _dnsStarted = false;
+    }
+    _apScanPending = false;
     _currentNetwork = _networkCount - 1;
     _failCount = 0;
+    _quickRetryPending = false;
     _skipPinnedBssid = false;
     _state = WIFI_ST_CONNECTING;
     tryConnect();
@@ -408,10 +426,49 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
 // ============================================================================
 void WifiManager::resetWiFi() {
     Serial.println(F("[WiFi] Resetting WiFi credentials"));
+    _pendingReset = false;
+    _apScanPending = false;
+    MDNS.end();
     WiFi.disconnect(false, true); // Disconnect and erase SDK credentials
     _networkCount = 0;
+    _failCount = 0;
+    _quickRetryPending = false;
+    _usingPinnedBssid = false;
+    _skipPinnedBssid = false;
+    _disconnectDetectedAt = 0;
+    _wasConnected = false;
     _storage->deleteFile(PATH_WIFI);
     startAP();
+}
+
+void WifiManager::requestReset(unsigned long delayMs) {
+    _pendingReset = true;
+    _pendingResetAt = millis();
+    _pendingResetDelay = delayMs;
+}
+
+bool WifiManager::setHostname(const String& hostname) {
+    String h = hostname;
+    h.trim();
+    if (h.length() == 0 || h.length() > 24) return false;
+    for (size_t i = 0; i < h.length(); i++) {
+        char c = h[i];
+        bool isAlnum = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+        bool isHyphen = (c == '-' && i > 0 && i + 1 < h.length());
+        if (!isAlnum && !isHyphen) return false;
+    }
+    if (h == _hostname) return true;
+    _hostname = h;
+#if defined(ESP8266)
+    WiFi.hostname(_hostname);
+#else
+    WiFi.setHostname(_hostname.c_str());
+#endif
+    if (isConnected()) {
+        MDNS.end();
+        setupMDNS();
+    }
+    return true;
 }
 
 // ============================================================================
@@ -592,11 +649,10 @@ String WifiManager::generateAPSSID() {
 }
 
 // ============================================================================
-// Generate AP password: Open ("") on fresh unconfigured setup; WPA2-PSK once
-// Wi-Fi credentials, Web Auth, or custom config.json "ap_pass" are present.
+// Generate AP password: Open ("") by default for fresh/reset setup; optional
+// custom "ap_pass" (8-63 chars) from config.json if explicitly configured.
 // ============================================================================
 String WifiManager::generateAPPassword() {
-    bool hasWebAuth = false;
     if (_storage) {
         JsonDocument cfg;
         if (_storage->loadJson(PATH_CONFIG, cfg)) {
@@ -606,19 +662,9 @@ String WifiManager::generateAPPassword() {
                     return customPass;
                 }
             }
-            String webHash = cfg["web_pass_hash"] | "";
-            String webPass = cfg["web_pass"] | "";
-            hasWebAuth = (cfg["web_auth"] | false) && (webHash.length() > 0 || webPass.length() > 0);
         }
     }
-    if (_networkCount == 0 && !hasWebAuth) {
-        return "";
-    }
-    uint8_t mac[6];
-    readFactoryStaMac(mac);
-    char suffix[5];
-    snprintf(suffix, sizeof(suffix), "%02X%02X", mac[4], mac[5]);
-    return String(WIFI_AP_PASSWORD_PREFIX) + suffix + WIFI_AP_PASSWORD_SUFFIX;
+    return "";
 }
 
 #if defined(ESP32)

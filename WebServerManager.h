@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 #include "WifiManager.h"
@@ -58,13 +62,13 @@ public:
     // Authentication helpers (Multi-User Privilege Tiers: Admin vs. Family / Guest)
     bool isAuthConfigured() const;
     bool isAuthEnabled() const;
-    bool isGuestAuthEnabled() const { return _guestAuthEnabled; }
-    const String& getGuestUsername() const { return _guestUsername; }
-    bool hasGuestPassword() const { return (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0); }
+    bool isGuestAuthEnabled() const;
+    String getGuestUsername() const;
+    bool hasGuestPassword() const;
     bool verifyCredentials(const String& user, const String& pass) const;
     bool verifyWsToken(const String& token) const;
-    const String& getWsToken() const { return _wsToken; }
-    const String& getDeviceName() const { return _deviceName; }
+    String getWsToken() const;
+    String getDeviceName() const;
     AuthRole getRequestRole(AsyncWebServerRequest* req);
     bool isAuthorized(AsyncWebServerRequest* req, AuthRole requiredRole = AUTH_ROLE_GUEST);
 
@@ -129,6 +133,7 @@ private:
     String _wsToken;
     String _wsGuestToken;
     void regenerateWsToken();
+    bool isApSetupRoute(AsyncWebServerRequest* req) const;
     AuthRole authenticateRequest(AsyncWebServerRequest* req);
     AuthRole authenticateBasicCredentials(AsyncWebServerRequest* req) const;
     bool applyWifiOnboardingSettings(AsyncWebServerRequest* req, const String& deviceName,
@@ -145,6 +150,10 @@ private:
     };
     static const int RATE_LIMIT_CACHE_SIZE = 8;
     RateLimitEntry _rateLimits[RATE_LIMIT_CACHE_SIZE];
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _webMutex;
+    void ensureMutex() const;
+#endif
 
     static bool constantTimeCompare(const String& a, const String& b);
     static String sha256Hex(const String& input);

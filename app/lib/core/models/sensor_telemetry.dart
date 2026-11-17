@@ -311,6 +311,18 @@ class Mq2Reading {
   bool get hasCustomLabel => isCustomSensorLabel(label, 'Gas');
 
   factory Mq2Reading.fromJson(Map<String, dynamic> json) {
+    const typeNames = <int, String>{
+      0: 'MQ-2',
+      1: 'SGP40',
+      2: 'MQ-3',
+      3: 'MQ-4',
+      4: 'MQ-5',
+      5: 'MQ-6',
+      6: 'MQ-7',
+      7: 'MQ-8',
+      8: 'MQ-9',
+      9: 'MQ-135',
+    };
     final parsedType = _parseInt(json['type'], 0);
     final parsedUnit =
         json['unit']?.toString() ?? (parsedType == 1 ? 'VOC' : 'ADC');
@@ -320,7 +332,7 @@ class Mq2Reading {
       index: _parseInt(json['index'], 0),
       type: parsedType,
       typeName: json['type_name']?.toString() ??
-          (parsedType == 1 ? 'SGP40' : 'MQ-2'),
+          (typeNames[parsedType] ?? 'MQ-2'),
       i2cAddr: _parseInt(json['i2c_addr'], parsedType == 1 ? 0x59 : 0),
       enabled: _parseBool(json['enabled'], false),
       hwAllowed: _parseBool(json['hw_allowed'], false),
@@ -387,7 +399,7 @@ class SensorTelemetry {
   final int tankLevelPct;
   final bool tankEnabled;
 
-  // Gas & Air Quality (MQ-2 / SGP40)
+  // Gas & Air Quality (MQ Series / SGP40)
   final int gasRaw;
   final int gasPercent;
   final bool gasAlarm;
@@ -395,6 +407,7 @@ class SensorTelemetry {
   final int gasThreshold;
   final int gasMax;
   final String gasUnit;
+  final String gasTypeName;
   final bool gasEnabled;
   final bool gasHwAllowed;
 
@@ -456,6 +469,7 @@ class SensorTelemetry {
     this.gasThreshold = 600,
     this.gasMax = 4095,
     this.gasUnit = 'ADC',
+    this.gasTypeName = 'MQ-2',
     this.gasEnabled = false,
     this.gasHwAllowed = false,
     this.climates = const [],
@@ -532,6 +546,10 @@ class SensorTelemetry {
       gasThreshold: _parseInt(json['gas_threshold'], 600),
       gasMax: _parseInt(json['gas_max'], parsedGasUnit == 'VOC' ? 500 : 4095),
       gasUnit: parsedGasUnit,
+      gasTypeName: json['gas_type_name']?.toString() ??
+          (mq2sList.isNotEmpty && mq2sList.first.typeName.isNotEmpty
+              ? mq2sList.first.typeName
+              : (parsedGasUnit.toUpperCase() == 'VOC' ? 'SGP40' : 'MQ-2')),
       gasEnabled: parsedGasEnabled,
       gasHwAllowed: parsedGasHwAllowed,
       climates: climatesList,

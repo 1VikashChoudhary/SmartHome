@@ -10,6 +10,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "StorageManager.h"
 #include "EventLogger.h"
 
@@ -20,9 +24,9 @@ public:
     void begin(StorageManager& storage, EventLogger& logger);
     void loop();
 
-    bool isEnabled() const { return _enabled; }
-    const String& getUrl() const { return _url; }
-    bool hasToken() const { return _token.length() > 0; }
+    bool isEnabled() const;
+    String getUrl() const;
+    bool hasToken() const;
     static bool isHttpsSupported();
 
     static bool validateUrl(const String& url, bool enabled, String& outError);
@@ -33,6 +37,7 @@ public:
     void notifyAlarm(const String& deviceName, const String& mac,
                      const char* alarmType, const String& detailMsg);
     bool sendTestAlert(const String& deviceName, const String& mac, String& outError);
+    void finishDispatch();
 
 private:
     StorageManager* _storage;
@@ -47,6 +52,10 @@ private:
     unsigned long _lastTempSentMs;
     unsigned long _lastFaultSentMs;
     void* _pendingEsp8266Job;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _alertMutex;
+    void ensureMutex() const;
+#endif
 
     void loadConfig();
     bool dispatch(const String& deviceName, const String& mac,

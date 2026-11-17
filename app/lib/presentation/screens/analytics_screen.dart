@@ -316,7 +316,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           chips.add(
             _valueChip(
               Icons.hourglass_top_rounded,
-              isVoc ? 'SGP40 warming' : 'MQ-2 warming',
+              isVoc ? 'SGP40 warming' : '${telemetry.gasTypeName} warming',
               AppColors.warning,
             ),
           );
@@ -550,7 +550,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
               ? _notice(
                   Icons.air_rounded,
                   'Air safety sensor disabled',
-                  'MQ-2 / SGP40 gas and air quality monitoring is disabled in Hardware Profile.',
+                  'MQ / SGP40 gas and air quality monitoring is disabled in Hardware Profile.',
                   AppColors.textMuted,
                 )
               : telemetry.gasWarming
@@ -558,7 +558,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                   Icons.hourglass_top_rounded,
                   telemetry.gasUnit.toUpperCase() == 'VOC'
                       ? 'SGP40 warming up'
-                      : 'MQ-2 warming up',
+                      : '${telemetry.gasTypeName} warming up',
                   'Alarm decisions wait until the ESP sensor warm-up completes.',
                   AppColors.warning,
                 )

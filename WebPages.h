@@ -511,7 +511,7 @@ Clear stored guest password
 <div class="form-group" style="margin-top:12px;">
 <label>SoftAP Hotspot Password (Optional Custom WPA2)</label>
 <input type="password" id="cfgApPass" maxlength="63" placeholder="New AP password (8-63 chars)">
-<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Overrides the fallback SoftAP password (SmartHome@XXXX! once configured; fresh setup AP is open unless set). Leave blank to keep current.</div>
+<div style="font-size:0.72rem;color:var(--text2);margin-top:4px">Optional WPA2 password for initial/reset setup hotspot (open by default unless set). Leave blank to keep current.</div>
 <label id="cfgApClearRow" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:0.75rem;color:var(--text2);text-transform:none;cursor:pointer;">
 <input type="checkbox" id="cfgApClearPass" onchange="const ap=document.getElementById('cfgApPass');ap.disabled=this.checked;if(this.checked)ap.value='';" style="width:auto;margin:0;">
 Clear custom SoftAP password (revert to default)
@@ -751,7 +751,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Gas &amp; Air Quality Sensors (MQ-2 / SGP40) <span id="hwMq2sCount" class="badge badge-info">0 / 4</span></div>
+<div style="font-weight:600;color:var(--accent2)">Gas &amp; Air Quality Sensors (MQ Series / SGP40) <span id="hwMq2sCount" class="badge badge-info">0 / 4</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('mq2s')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('mq2s')">&minus; Remove</button>
@@ -838,6 +838,10 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 <button class="btn btn-outline" onclick="backupConfig()">Backup Config</button>
 <button class="btn btn-outline" onclick="testBuzzer()">Test Buzzer</button>
 </div>
+<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.78rem;color:var(--text2);text-transform:none;cursor:pointer;">
+<input type="checkbox" id="backupIncludeSecrets" style="width:auto;margin:0;">
+Include Wi-Fi, MQTT &amp; Webhook passwords in backup (plaintext)
+</label>
 <div style="margin-top:16px">
 <div class="form-group"><label>Restore Config (Upload file or paste JSON)</label><input type="file" id="restoreFile" accept=".json,application/json" onchange="loadRestoreFile(event)" style="display:block;margin-bottom:8px;font-size:.8rem;color:var(--text2)"><textarea id="restoreJson" rows="4" placeholder="Or paste backup JSON here..." style="width:100%;background:var(--bg);color:var(--text);border:1px solid var(--card-border);border-radius:8px;padding:8px;font-size:.8rem;resize:vertical;"></textarea></div>
 <button class="btn btn-primary btn-sm" onclick="restoreConfig()">Restore Config</button>
@@ -859,7 +863,7 @@ R"rawliteral(>5 Relays (Standard)</option><option value="6">6 Relays</option><op
 <h2 style="margin:0;font-size:1.4rem;font-weight:800;letter-spacing:-0.03em;">SmartHome Pro</h2>
 <p style="color:var(--text2);font-size:.82rem;margin:6px 0 14px;">Multi-Channel Controller Suite</p>
 <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
-<span class="badge badge-info">v1.0.0 Stable</span>
+<span class="badge badge-info">v1.1.0 Stable</span>
 <span class="badge badge-ok">100% Local-First</span>
 <span class="badge" style="background:rgba(59,130,246,0.15);color:var(--blue);border:1px solid rgba(59,130,246,0.3);">Zero Cloud Required</span>
 </div>
@@ -1185,7 +1189,7 @@ View Project on GitHub
 <select id="ruleSensor" onchange="updateRuleSensorFields()">
 <option value="0">Temperature (&deg;C)</option>
 <option value="1">Humidity (%)</option>
-<option value="2">Gas / Air Quality (MQ-2 / SGP40)</option>
+<option value="2">Gas / Air Quality (MQ Series / SGP40)</option>
 <option value="3">Ambient Light (Lux)</option>
 <option value="4">Water Probe Temp (&deg;C)</option>
 <option value="5">Water Tank Level (%)</option>
@@ -1237,6 +1241,7 @@ localStorage.setItem('theme',theme);
 }
 function doLogout(){
 if(!confirm('Log out of SmartHome? You will be prompted to sign in again.')) return;
+const evictAuth = function(){
 const xhr = new XMLHttpRequest();
 xhr.open('GET', '/api/logout', true, 'logout_' + Date.now(), 'logout_nonce');
 xhr.onreadystatechange = function(){
@@ -1249,6 +1254,9 @@ xhr.onerror = function(){
 window.location.href = '/logout';
 };
 xhr.send();
+};
+fetch('/api/logout', { method: 'POST', headers: { 'X-Requested-With': 'SmartHome' } })
+.then(evictAuth, evictAuth);
 }
 
 // Tabs
@@ -1359,7 +1367,7 @@ setText('uptime',d.uptime||'--');
 setText('heap',d.free_heap?Math.round(d.free_heap/1024):'--');
 setText('datetime',d.datetime||'--');
 setText('devName',d.device_name||'SmartHome');
-setText('fwVer','v'+(d.fw_version||'1.0.0'));
+setText('fwVer','v'+(d.fw_version||'1.1.0'));
 document.title=(d.device_name||'SmartHome')+' Dashboard';
 
 // WiFi badge
@@ -1499,9 +1507,9 @@ const sMq2Card=document.getElementById('sensorMq2Card');if(sMq2Card)sMq2Card.sty
 const sPriGrid=document.getElementById('sensorPrimaryGrid');if(sPriGrid)sPriGrid.style.display=(cliEn||hasMq2)?'':'none';
 if(hasMq2){
 const gasCustom=activeMq2s.length>=1&&isCustomSensorLabel(activeMq2s[0].label,'Gas');
-const gasTypeName=(activeMq2s.length>=1&&activeMq2s[0].type_name)?activeMq2s[0].type_name:(d.gas_unit==='VOC'?'SGP40':'MQ-2');
+const gasTypeName=(activeMq2s.length>=1&&activeMq2s[0].type_name)?activeMq2s[0].type_name:(d.gas_type_name||(d.gas_unit==='VOC'?'SGP40':'MQ-2'));
 const isSgp=gasTypeName==='SGP40'||d.gas_unit==='VOC';
-setText('lblGas',gasCustom?(activeMq2s[0].label+(isSgp?' (VOC)':' (Gas)')):(isSgp?'VOC Air Quality':'Gas Level'));
+setText('lblGas',gasCustom?(activeMq2s[0].label+(isSgp?' (VOC)':' ('+gasTypeName+')')):(isSgp?'VOC Air Quality':(gasTypeName+' Gas Level')));
 const sMq2Title=document.getElementById('sensorMq2Title');
 if(sMq2Title)sMq2Title.textContent=gasCustom?(gasTypeName+' \u2014 '+activeMq2s[0].label):(gasTypeName+(isSgp?' \u2014 Air Quality (VOC)':' \u2014 Gas Sensor'));
 }
@@ -1860,7 +1868,8 @@ function calibrateMQ2(){
 const idx=getSelectedCalIdx('mq2CalIdx');
 const m=(gSensorCalData&&Array.isArray(gSensorCalData.mq2_sensors))?(gSensorCalData.mq2_sensors.find(x=>x.index===idx)||gSensorCalData.mq2_sensors[idx]):null;
 const isSgp=(m&&m.type===1)||(gSensorCalData&&gSensorCalData.gas_unit==='VOC');
-api('POST','/api/config/sensor',{sensor_index:idx,calibrate_mq2:true}).then(()=>toast(isSgp?'SGP40 clean-air VOC baseline calibrated':'MQ-2 clean-air baseline calibrated','ok'));
+const mName=(m&&m.type_name)?m.type_name:(isSgp?'SGP40':'MQ-2');
+api('POST','/api/config/sensor',{sensor_index:idx,calibrate_mq2:true}).then(()=>toast(isSgp?'SGP40 clean-air VOC baseline calibrated':(mName+' clean-air baseline calibrated'),'ok'));
 }
 function saveWiFi(){
 api('POST','/api/config/wifi',{ssid:document.getElementById('wifiSSID').value,pass:document.getElementById('wifiPass').value})
@@ -1932,6 +1941,10 @@ if (webAuth) {
 }
 if (guestAuth && !guestUser) {
     toast('Guest username cannot be empty', 'err');
+    return;
+}
+if (webAuth && guestAuth && guestUser === (webUser || 'admin')) {
+    toast('Admin and Guest usernames must be different', 'err');
     return;
 }
 if (alertWhUrl.length > 0 && !alertWhUrl.startsWith('http://') && !alertWhUrl.startsWith('https://')) {
@@ -2129,7 +2142,8 @@ reader.onload=ev=>{document.getElementById('restoreJson').value=ev.target.result
 reader.readAsText(file);
 }
 function backupConfig(){
-fetch('/api/backup',{headers:{'X-Requested-With':'SmartHome'}}).then(r=>{
+const includeSecrets=document.getElementById('backupIncludeSecrets')?.checked===true;
+fetch('/api/backup'+(includeSecrets?'?sanitize=0':'?sanitize=1'),{headers:{'X-Requested-With':'SmartHome'}}).then(r=>{
 if(!r.ok)throw new Error('Backup failed ('+r.status+')');
 return r.text();
 }).then(data=>{
@@ -2316,8 +2330,8 @@ const cnt=Math.max(1,mArr.length);
 for(let i=0;i<cnt;i++){
 const opt=document.createElement('option');opt.value=i;
 const wsLabel=(wsData&&Array.isArray(wsData.mq2s)&&wsData.mq2s[i]&&wsData.mq2s[i].label)?wsData.mq2s[i].label:'';
-const isSgp=(mArr[i]&&mArr[i].type===1);
-opt.textContent=(isSgp?'Gas SGP40 #':'Gas MQ-2 #')+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
+const mModel=(mArr[i]&&mArr[i].type_name)?mArr[i].type_name:((mArr[i]&&mArr[i].type===1)?'SGP40':'MQ-2');
+opt.textContent='Gas '+mModel+' #'+(i+1)+(wsLabel?(' ('+wsLabel+')'):'');
 mSel.appendChild(opt);
 }
 }
@@ -2634,7 +2648,7 @@ if(!rules||!rules.length){
 el.innerHTML='<div style="color:var(--text2);font-size:0.85rem;padding:12px 0;">No automation rules configured. Click "+ Add New Rule" to create one.</div>';
 return;
 }
-const sensorNames=['Temperature','Humidity','Gas MQ-2','Ambient Light','Water Probe Temp','Water Tank Level','Motion'];
+const sensorNames=['Temperature','Humidity','Gas Sensor','Ambient Light','Water Probe Temp','Water Tank Level','Motion'];
 const sensorUnits=['°C','%','','lx','°C','%',''];
 const condNames=['≥ (Rises above)','≤ (Falls below)'];
 const actNames=['Turn ON','Turn OFF'];
@@ -2644,7 +2658,8 @@ rules.forEach(r=>{
 const sIdx=(r.s_idx!==undefined)?r.s_idx:((r.sensor_index!==undefined)?r.sensor_index:0);
 const gSlot=(r.sensor===2&&wsData&&Array.isArray(wsData.mq2s))?wsData.mq2s[sIdx]:null;
 const isSgpRule=r.sensor===2&&((gSlot&&gSlot.type===1)||(!gSlot&&sIdx===0&&wsData&&wsData.gas_unit==='VOC'));
-const sBase=(r.sensor===2)?(isSgpRule?'SGP40 VOC':'Gas MQ-2'):(sensorNames[r.sensor]||'Sensor');
+const gModel=(gSlot&&gSlot.type_name)?gSlot.type_name:(wsData&&sIdx===0&&wsData.gas_type_name?wsData.gas_type_name:'MQ-2');
+const sBase=(r.sensor===2)?(isSgpRule?'SGP40 VOC':('Gas '+gModel)):(sensorNames[r.sensor]||'Sensor');
 const sName=sBase+(sIdx>0?(' #'+(sIdx+1)):'');
 const sUnit=(r.sensor===2)?(isSgpRule?' VOC':' ADC'):(sensorUnits[r.sensor]||'');
 const cName=condNames[r.cond]||'';
@@ -2884,7 +2899,7 @@ const SENSOR_GROUP_META = {
     motions:     { containerId: 'hwMotionsContainer',     badgeId: 'hwMotionsCount',     emptyText: 'No Motion / Radar sensors added — click + Add' },
     probes:      { containerId: 'hwProbesContainer',      badgeId: 'hwProbesCount',      emptyText: 'No DS18B20 Water Probes added — click + Add' },
     ultrasonics: { containerId: 'hwUltrasonicsContainer', badgeId: 'hwUltrasonicsCount', emptyText: 'No Ultrasonic Tank Monitors added — click + Add' },
-    mq2s:        { containerId: 'hwMq2sContainer',        badgeId: 'hwMq2sCount',        emptyText: 'No MQ-2 Gas sensors added — click + Add' }
+    mq2s:        { containerId: 'hwMq2sContainer',        badgeId: 'hwMq2sCount',        emptyText: 'No Gas / Air Quality sensors added — click + Add' }
 };
 
 function isI2cClimateType(t) {
@@ -3045,8 +3060,8 @@ function syncHwSensorsFromDOM() {
         if (!document.getElementById(`hw_mq2_en_${i}`)) return;
         g.type        = numOr(`hw_mq2_type_${i}`, g.type || 0);
         g.enabled     = (document.getElementById(`hw_mq2_en_${i}`).value === '1');
-        g.analog_pin  = (g.type === 0) ? numOr(`hw_mq2_apin_${i}`, g.analog_pin ?? 255) : 255;
-        g.digital_pin = (g.type === 0) ? numOr(`hw_mq2_dpin_${i}`, g.digital_pin ?? 255) : 255;
+        g.analog_pin  = (g.type !== 1) ? numOr(`hw_mq2_apin_${i}`, g.analog_pin ?? 255) : 255;
+        g.digital_pin = (g.type !== 1) ? numOr(`hw_mq2_dpin_${i}`, g.digital_pin ?? 255) : 255;
         g.i2c_addr    = (g.type === 1) ? 0x59 : 0;
         g.label       = strOr(`hw_mq2_lbl_${i}`, g.label || '');
     });
@@ -3184,7 +3199,15 @@ function renderHwSensorGroup(key) {
             card.innerHTML = header + `<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
                     <select id="hw_mq2_type_${i}" onchange="onMq2SlotTypeChange(${i})">
-                        <option value="0" ${mType===0?'selected':''}>MQ-2 (Analog/DO)</option>
+                        <option value="0" ${mType===0?'selected':''}>MQ-2 (Smoke / LPG)</option>
+                        <option value="3" ${mType===3?'selected':''}>MQ-4 (Methane / CNG)</option>
+                        <option value="4" ${mType===4?'selected':''}>MQ-5 (Natural Gas / LPG)</option>
+                        <option value="5" ${mType===5?'selected':''}>MQ-6 (LPG / Isobutane)</option>
+                        <option value="6" ${mType===6?'selected':''}>MQ-7 (Carbon Monoxide / CO)</option>
+                        <option value="8" ${mType===8?'selected':''}>MQ-9 (CO &amp; Combustible)</option>
+                        <option value="9" ${mType===9?'selected':''}>MQ-135 (Air Quality / CO2 / NH3)</option>
+                        <option value="2" ${mType===2?'selected':''}>MQ-3 (Alcohol / Ethanol)</option>
+                        <option value="7" ${mType===7?'selected':''}>MQ-8 (Hydrogen / H2)</option>
                         <option value="1" ${mType===1?'selected':''}>SGP40 (I2C VOC)</option>
                     </select>
                 </div>
@@ -3267,7 +3290,7 @@ function onMq2SlotTypeChange(idx) {
         g.i2c_addr = 0x59;
         ensureI2cPinsAssigned(true);
     } else {
-        g.type = 0;
+        if (g.type === undefined || g.type === null || isNaN(g.type) || g.type < 0 || g.type > 9) g.type = 0;
         g.i2c_addr = 0;
         if ((g.analog_pin === 255 || g.analog_pin === undefined) && (g.digital_pin === 255 || g.digital_pin === undefined)) {
             const used = getAllFormUsedPins(undefined, true);
@@ -3392,7 +3415,7 @@ function initHwDefaults() {
         motions: [],
         probes: [],
         ultrasonics: [],
-        mq2_sensors: [{ type: 0, enabled: true, analog_pin: gIsEsp8266 ? 17 : 34, digital_pin: gIsEsp8266 ? 255 : 35, i2c_addr: 0, label: '' }],
+        mq2_sensors: [{ type: 0, enabled: false, analog_pin: gIsEsp8266 ? 17 : 34, digital_pin: gIsEsp8266 ? 255 : 35, i2c_addr: 0, label: '' }],
         buzzer: { enabled: true, pin: gIsEsp8266 ? 2 : 5 },
         lcd: { enabled: true, i2c_addr: 39, cols: 16, rows: 2, sda_pin: gIsEsp8266 ? 4 : 21, scl_pin: gIsEsp8266 ? 5 : 22 },
         btn_multi_pin: gIsEsp8266 ? 0 : 33
@@ -3420,7 +3443,7 @@ function getFormNonChannelUsedPins(excludeElId, skipDomSync) {
     gHwSensors.motions.forEach(m => { if (m && m.type !== 0) addPin(m.pin); });
     gHwSensors.probes.forEach(p => { if (p && p.type !== 0) addPin(p.pin); });
     gHwSensors.ultrasonics.forEach(u => { if (u && u.type !== 0) { addPin(u.trig_pin); addPin(u.echo_pin); } });
-    gHwSensors.mq2s.forEach(g => { if (g && g.enabled !== false && (g.type || 0) === 0) { addPin(g.analog_pin); addPin(g.digital_pin); } });
+    gHwSensors.mq2s.forEach(g => { if (g && g.enabled !== false && (g.type || 0) !== 1) { addPin(g.analog_pin); addPin(g.digital_pin); } });
 
     const addEl = (id) => {
         if (id === excludeElId) return;
@@ -4305,8 +4328,8 @@ function saveHardware() {
         mq2_sensors: gHwSensors.mq2s.map(g => ({
             type: g.type || 0,
             enabled: g.enabled !== false,
-            analog_pin: (g.type || 0) === 0 ? (g.analog_pin ?? 255) : 255,
-            digital_pin: (g.type || 0) === 0 ? (g.digital_pin ?? 255) : 255,
+            analog_pin: (g.type || 0) !== 1 ? (g.analog_pin ?? 255) : 255,
+            digital_pin: (g.type || 0) !== 1 ? (g.digital_pin ?? 255) : 255,
             i2c_addr: (g.type || 0) === 1 ? (g.i2c_addr || 0x59) : 0,
             label: (g.label || '').slice(0, 15)
         })),
@@ -4395,6 +4418,13 @@ h2{font-size:1.4rem;font-weight:700;text-align:center;letter-spacing:-0.02em;mar
 <div class="logo"><svg viewBox="0 0 24 24"><path d="M12 3L4 9v12h16V9l-8-6zm0 2.5L18 10v9H6v-9l6-4.5z"/><path d="M10 14h4v5h-4z"/></svg></div>
 <h2>SmartHome Setup</h2>
 <div class="subtitle">Select your 2.4 GHz Wi-Fi network below or enter credentials manually to join your smart home network.</div>
+<div id="capExistingAuthBox" style="display:none;padding:12px;border-radius:10px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.35);margin-bottom:16px;">
+<div style="font-size:.82rem;font-weight:700;color:#fbbf24;margin-bottom:8px;">Admin Authentication Required</div>
+<div style="font-size:.76rem;color:#cbd5e1;margin-bottom:10px;">This controller has Admin Password Protection enabled. Enter your Admin credentials to scan &amp; save Wi-Fi:</div>
+<div class="form-group" style="margin-bottom:10px;"><label>Admin Username</label><input type="text" id="capLoginUser" value="admin" placeholder="admin"></div>
+<div class="form-group" style="margin-bottom:10px;"><label>Admin Password</label><input type="password" id="capLoginPass" placeholder="Enter existing Admin password"></div>
+<button type="button" class="btn" style="padding:10px;font-size:.86rem;" onclick="scanWifi(true)">Unlock &amp; Scan Wi-Fi</button>
+</div>
 <div class="form-group">
 <label style="display:flex;justify-content:space-between;align-items:center;">
 <span>Available Networks</span>
@@ -4406,7 +4436,7 @@ h2{font-size:1.4rem;font-weight:700;text-align:center;letter-spacing:-0.02em;mar
 <div class="form-group"><label>Wi-Fi Network (SSID)</label><input type="text" id="ssidIn" name="ssid" required placeholder="Select above or type SSID"></div>
 <div class="form-group"><label>Wi-Fi Password</label><input type="password" id="passIn" name="pass" placeholder="Enter Wi-Fi password"></div>
 <div class="form-group"><label>Device Name (Optional)</label><input type="text" id="capDevName" name="device_name" maxlength="20" placeholder="e.g. Living Room Switch"></div>
-<div class="form-group">
+<div class="form-group" id="capAuthRow">
 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;">
 <input type="checkbox" id="capAuthCb" name="web_auth" value="1" onchange="const b=this.checked;document.getElementById('capAuthBox').style.display=b?'block':'none';document.getElementById('capWebUser').disabled=!b;const p=document.getElementById('capWebPass');p.disabled=!b;p.required=b;" style="width:auto;">
 Protect Web Dashboard with Admin Password (Optional)
@@ -4421,16 +4451,28 @@ Protect Web Dashboard with Admin Password (Optional)
 <div class="msg">After connecting, launch the <b>SmartHome Pro</b> mobile app or visit <b>smarthome.local</b> in your browser.</div>
 </div>
 <script>
+let capAuthReq=false;
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function capAuthHeaders(){
+if(!capAuthReq)return {};
+const u=(document.getElementById('capLoginUser')?.value||'admin').trim();
+const p=document.getElementById('capLoginPass')?.value||'';
+if(!p)return {};
+return {'Authorization':'Basic '+btoa(unescape(encodeURIComponent(u+':'+p)))};
+}
 function pickNet(el,ssid){
 document.getElementById('ssidIn').value=ssid;
 document.getElementById('passIn').focus();
 }
 function scanWifi(refresh){
 const box=document.getElementById('netList');
+if(capAuthReq&&!(document.getElementById('capLoginPass')?.value||'')){
+box.innerHTML='<div style="padding:16px;text-align:center;color:#fbbf24;font-size:.84rem;">Enter your Admin password above, then tap Unlock &amp; Scan Wi-Fi.</div>';
+return;
+}
 if(refresh)box.innerHTML='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">Scanning 2.4 GHz networks...</div>';
-fetch('/api/wifi/scan'+(refresh?'?refresh=1':''))
-.then(r=>r.json()).then(d=>{
+fetch('/api/wifi/scan'+(refresh?'?refresh=1':''),{headers:capAuthHeaders()})
+.then(r=>{if(r.status===401||r.status===403)throw new Error('AUTH');if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(d=>{
 if(d.scanning){setTimeout(()=>scanWifi(false),1500);return;}
 const nets=d.networks||[];
 if(!nets.length){box.innerHTML='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">No networks found. Tap Rescan.</div>';return;}
@@ -4440,7 +4482,16 @@ nets.forEach(n=>{
 h+='<div class="net-item" data-ssid="'+esc(n.ssid)+'" onclick="pickNet(this,this.dataset.ssid)"><span><b>'+esc(n.ssid)+'</b></span><span class="net-badge">'+(n.secure?'&#128274; ':'Open ')+'&bull; '+(n.signal||0)+'%</span></div>';
 });
 box.innerHTML=h;
-}).catch(()=>{box.innerHTML='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">Scan unavailable &mdash; enter SSID manually</div>';});
+}).catch(err=>{
+if(err&&err.message==='AUTH'){
+capAuthReq=true;
+document.getElementById('capExistingAuthBox').style.display='block';
+document.getElementById('capAuthRow').style.display='none';
+box.innerHTML='<div style="padding:16px;text-align:center;color:#f43f5e;font-size:.84rem;">Admin login rejected or required. Check credentials above.</div>';
+}else{
+box.innerHTML='<div style="padding:16px;text-align:center;color:#94a3b8;font-size:.84rem;">Scan unavailable &mdash; enter SSID manually</div>';
+}
+});
 }
 function saveCapWifi(e){
 e.preventDefault();
@@ -4449,19 +4500,27 @@ if(!ssid)return false;
 const payload={ssid:ssid,pass:document.getElementById('passIn').value};
 const dn=document.getElementById('capDevName').value.trim();
 if(dn)payload.device_name=dn;
-if(document.getElementById('capAuthCb').checked){
+if(!capAuthReq&&document.getElementById('capAuthCb').checked){
 payload.web_auth=true;
 payload.web_user=document.getElementById('capWebUser').value.trim()||'admin';
 payload.web_pass=document.getElementById('capWebPass').value;
 }
 const msg=document.querySelector('.msg');
 msg.textContent='Connecting controller to '+ssid+'...';
-fetch('/api/config/wifi',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'SmartHome'},body:JSON.stringify(payload)})
+const headers=Object.assign({'Content-Type':'application/json','X-Requested-With':'SmartHome'},capAuthHeaders());
+fetch('/api/config/wifi',{method:'POST',headers:headers,body:JSON.stringify(payload)})
 .then(async r=>{const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.message||('HTTP '+r.status));document.body.innerHTML='<div style="display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px;"><h2>Connecting to '+esc(ssid)+'...<br><span style="font-size:.95rem;color:#94a3b8;font-weight:400;">You may now switch back to your home Wi-Fi.</span></h2></div>';})
 .catch(err=>{msg.innerHTML='<span style="color:#f43f5e;">'+esc(err.message||'Failed to save Wi-Fi')+'</span>';});
 return false;
 }
+fetch('/api/discovery').then(r=>r.json()).then(d=>{
+if(d&&d.auth_required){
+capAuthReq=true;
+document.getElementById('capExistingAuthBox').style.display='block';
+document.getElementById('capAuthRow').style.display='none';
+}
 scanWifi(false);
+}).catch(()=>scanWifi(false));
 </script>
 </body></html>
 )rawliteral";

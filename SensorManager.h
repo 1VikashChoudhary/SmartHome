@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <DHT.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -207,6 +211,7 @@ public:
     bool  hasBarometer() const;
     bool  hasHumidity() const;
     bool  isPrimarySgp40() const;
+    const char* getPrimaryGasTypeName() const;
     bool  isDHTFault();
     float getTempOffset();
     float getHumOffset();
@@ -341,6 +346,12 @@ private:
     bool _prevTempAlarm;
     bool _prevMQ2Alarm;
     bool _prevSensorFault;
+    bool _warmupDone[MAX_MQ2_SENSORS];
+
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _sensorMutex;
+    void ensureMutex() const;
+#endif
 
     void loadCalibration();
     void checkAlarms();

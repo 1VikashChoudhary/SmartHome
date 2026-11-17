@@ -410,7 +410,7 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                         uint8_t gt = g["type"] | 0;
                         if (gt == 1) { // SGP40 (I2C)
                             anyI2c = true;
-                        } else if (gt == 0) { // MQ-2 (Analog/Digital)
+                        } else if (gt <= GAS_MQ_MAX) { // MQ Series (Analog/Digital)
                             uint8_t ap = g["analog_pin"] | PIN_UNUSED;
                             uint8_t dp = g["digital_pin"] | PIN_UNUSED;
                             if ((ap != PIN_UNUSED && ap != 17) || !isValid8266DigitalPin(dp)) isEsp8266Compatible = false;
@@ -542,7 +542,7 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                         uint8_t gt = g["type"] | 0;
                         if (gt == 1) { // SGP40 (I2C)
                             anyI2c = true;
-                        } else if (gt == 0) { // MQ-2 (Analog/Digital)
+                        } else if (gt <= GAS_MQ_MAX) { // MQ Series (Analog/Digital)
                             uint8_t ap = g["analog_pin"] | PIN_UNUSED;
                             uint8_t dp = g["digital_pin"] | PIN_UNUSED;
                             if (ap == 17 || !isValidEsp32InPin(ap) || !isValidEsp32InPin(dp)) isEsp32Compatible = false;
@@ -689,6 +689,37 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                         if (subDoc["ap_pass"] == "__REDACTED__") subDoc.remove("ap_pass");
                         if (subDoc["alert_webhook_url"] == "__REDACTED__") subDoc.remove("alert_webhook_url");
                         if (subDoc["alert_webhook_token"] == "__REDACTED__") subDoc.remove("alert_webhook_token");
+                    }
+                }
+                if (subDoc["alert_webhook_url"].is<const char*>()) {
+                    String whUrl = subDoc["alert_webhook_url"] | "";
+                    whUrl.trim();
+                    bool urlOk = (whUrl.length() > 0 && whUrl.length() <= 192);
+                    if (urlOk) {
+                        for (size_t i = 0; i < whUrl.length(); i++) {
+                            char c = whUrl[i];
+                            if ((unsigned char)c <= 0x20 || c == '"' || c == '\\') {
+                                urlOk = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (urlOk) {
+                        String lower = whUrl;
+                        lower.toLowerCase();
+                        bool isHttp = lower.startsWith("http://");
+                        bool isHttps = lower.startsWith("https://");
+#if defined(ESP32)
+                        if (!isHttp && !isHttps) urlOk = false;
+#else
+                        if (!isHttp) urlOk = false;
+#endif
+                    }
+                    if (urlOk) {
+                        subDoc["alert_webhook_url"] = whUrl;
+                    } else {
+                        subDoc.remove("alert_webhook_url");
+                        subDoc["alert_webhook_en"] = false;
                     }
                 }
             } else if (strcmp(m.path, PATH_RELAY_STATES) == 0 && subDoc.containsKey("states")) {
@@ -1031,8 +1062,9 @@ void StorageManager::listFiles() {
 #define NVS_NAMESPACE_STATE "sh_state"
 
 bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* switchStates, uint8_t count) {
-    if (!logicalStates) return false;
+    if (!logicalStates || !_writeEnabled) return false;
     STORAGE_LOCK();
+    if (!_writeEnabled) return false;
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -1087,8 +1119,9 @@ bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates,
 }
 
 void StorageManager::incrementRelayCycleNVS(uint8_t index) {
-    if (index >= MAX_RELAYS) return;
+    if (index >= MAX_RELAYS || !_writeEnabled) return;
     STORAGE_LOCK();
+    if (!_writeEnabled) return;
     char key[16];
     snprintf(key, sizeof(key), "cyc_%u", index);
     nvs_handle_t handle;
@@ -1171,7 +1204,7 @@ static uint32_t eepromRead32(int offset) {
 }
 
 bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* switchStates, uint8_t count) {
-    if (!logicalStates) return false;
+    if (!logicalStates || !_writeEnabled) return false;
     eepromInitHeader();
     uint16_t logicalMask = 0;
     uint16_t switchMask = 0;
@@ -1206,7 +1239,7 @@ bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates,
 }
 
 void StorageManager::incrementRelayCycleNVS(uint8_t index) {
-    if (index >= MAX_RELAYS) return;
+    if (index >= MAX_RELAYS || !_writeEnabled) return;
     eepromInitHeader();
     uint32_t count = eepromRead32(EEPROM_OFF_CYCLES + (index * 4));
     count++;
