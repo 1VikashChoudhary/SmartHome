@@ -1282,9 +1282,23 @@ document.getElementById('toasts').appendChild(d);
 setTimeout(()=>d.remove(),4000);
 }
 
-// Copy to clipboard (About tab)
+// Copy to clipboard (About tab) — supports both HTTPS Clipboard API and plain-HTTP LAN fallback
+function copyTextFallback(text){
+const ta=document.createElement('textarea');
+ta.value=text;
+ta.setAttribute('readonly','');
+ta.style.cssText='position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;';
+document.body.appendChild(ta);
+ta.focus({preventScroll:true});
+ta.select();
+ta.setSelectionRange(0,text.length);
+let ok=false;
+try{ok=document.execCommand('copy');}catch(_){ok=false;}
+document.body.removeChild(ta);
+return ok;
+}
 function copyAboutText(text,label,btnId){
-navigator.clipboard.writeText(text).then(()=>{
+const onCopied=()=>{
 toast(label+' copied to clipboard!','ok');
 const btn=document.getElementById(btnId);
 if(btn){
@@ -1293,7 +1307,16 @@ if(btn._copyTimer)clearTimeout(btn._copyTimer);
 btn.innerHTML='<svg viewBox="0 0 24 24" width="16" height="16" style="fill:var(--green);"><path d="M9 16.2L4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z"/></svg> Copied';
 btn._copyTimer=setTimeout(()=>{btn.innerHTML=btn.dataset.origHtml;btn._copyTimer=null;},3000);
 }
-}).catch(()=>{toast('Copy failed','err');});
+};
+if(navigator.clipboard&&window.isSecureContext){
+navigator.clipboard.writeText(text).then(onCopied).catch(()=>{
+if(copyTextFallback(text))onCopied();
+else toast('Copy failed','err');
+});
+return;
+}
+if(copyTextFallback(text))onCopied();
+else toast('Copy failed','err');
 }
 
 // WebSocket
