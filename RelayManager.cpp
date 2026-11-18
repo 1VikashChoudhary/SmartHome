@@ -615,6 +615,7 @@ bool RelayManager::isInLockout() {
 
 void RelayManager::initWallSwitchStates() {
     bool changedAny = false;
+    bool pinConfigured = false;
     for (uint8_t i = 0; i < _numRelays; i++) {
         if (!isChannelEnabled(i) || !isSwitchEnabled(i)) continue;
         uint8_t pin = _hw ? _hw->getSwitchPin(i) : (i < NUM_RELAYS ? SWITCH_PINS[i] : PIN_UNUSED);
@@ -635,6 +636,18 @@ void RelayManager::initWallSwitchStates() {
 #else
         pinMode(pin, INPUT_PULLUP);
 #endif
+        pinConfigured = true;
+    }
+    // Allow internal INPUT_PULLUP resistors to charge pin/trace capacitance before boot read
+    if (pinConfigured) {
+        delayMicroseconds(200);
+    }
+
+    for (uint8_t i = 0; i < _numRelays; i++) {
+        if (!isChannelEnabled(i) || !isSwitchEnabled(i)) continue;
+        uint8_t pin = _hw ? _hw->getSwitchPin(i) : (i < NUM_RELAYS ? SWITCH_PINS[i] : PIN_UNUSED);
+        if (pin == PIN_UNUSED) continue;
+
         bool currentSwitch = !digitalRead(pin);
         bool savedSwitch = _state[i].lastSwitchState;
         SwitchMode swMode = _hw ? _hw->getSwitchMode(i) : SWITCH_MODE_TOGGLE;

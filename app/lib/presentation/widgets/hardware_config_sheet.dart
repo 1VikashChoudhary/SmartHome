@@ -1467,7 +1467,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                         ),
                       ),
                       Text(
-                        '${widget.device.name} • Tasmota-Style Configuration',
+                        '${widget.device.name} • Device Configuration',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 12, color: AppColors.textSecondary),

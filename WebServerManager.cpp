@@ -114,6 +114,17 @@ void broadcastChangedRelayTimers(RelayManager* relay, AlarmScheduler* alarm,
     }
 }
 
+/// Checks contiguous free heap before allocating an AsyncResponseStream cbuf,
+/// since ESP8266's cbuf constructor uses throwing new[] and aborts on OOM.
+bool hasContiguousHeap(size_t needed) {
+#if defined(ESP8266)
+    size_t maxBlock = ESP.getMaxFreeBlockSize();
+#else
+    size_t maxBlock = ESP.getMaxAllocHeap();
+#endif
+    return maxBlock > 128 && needed <= (maxBlock - 128);
+}
+
 } // namespace
 
 WebServerManager::WebServerManager()
@@ -514,47 +525,55 @@ void WebServerManager::setupAPIRoutes() {
     _server.on("/api/config", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req)) return;
         bool isAdmin = (!isAuthConfigured()) || (getRequestRole(req) == AUTH_ROLE_ADMIN);
-        JsonDocument doc;
 
-        // Device config (populate live defaults even if config file is missing)
-        doc["device_name"] = _deviceName;
-        doc["hostname"] = _wifi ? _wifi->getHostname() : "";
-        doc["mac"] = _wifi ? _wifi->getMAC() : "";
-        doc["device_id"] = _wifi ? _wifi->getDeviceId() : "";
-        doc["timezone"] = _time ? _time->getTimezone() : DEFAULT_TIMEZONE;
-        doc["use_24h"] = _time ? _time->getUse24h() : DEFAULT_24H_FORMAT;
-        if (isAdmin) {
-            doc["web_auth"] = _webAuthEnabled;
-            doc["web_user"] = _webUsername;
-            doc["web_pass_set"] = (_webPasswordHash.length() > 0 || _webPassword.length() > 0);
-            doc["guest_auth"] = _guestAuthEnabled;
-            doc["guest_user"] = _guestUsername;
-            doc["guest_pass_set"] = (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
-            doc["ap_pass_set"] = false;
-            doc["arduino_ota"] = _ota ? _ota->isArduinoOtaEnabled() : false;
-        }
-
-        JsonDocument cfgDoc;
-        if (_storage->loadJson(PATH_CONFIG, cfgDoc)) {
-            doc["device_name"] = cfgDoc["device_name"] | _deviceName;
-            doc["timezone"] = cfgDoc["timezone"] | (_time ? _time->getTimezone() : DEFAULT_TIMEZONE);
-            doc["use_24h"] = cfgDoc["use_24h"] | (_time ? _time->getUse24h() : DEFAULT_24H_FORMAT);
-            if (isAdmin) {
-                doc["web_auth"] = cfgDoc["web_auth"] | _webAuthEnabled;
-                doc["web_user"] = cfgDoc["web_user"] | _webUsername;
-                String savedPass = cfgDoc["web_pass"] | "";
-                String savedHash = cfgDoc["web_pass_hash"] | "";
-                doc["web_pass_set"] = (savedHash.length() > 0 || savedPass.length() > 0);
-                String savedApPass = cfgDoc["ap_pass"] | "";
-                doc["ap_pass_set"] = (savedApPass.length() >= 8 && savedApPass.length() <= 63);
-                if (_remoteAlert) {
-                    JsonObject rootObj = doc.as<JsonObject>();
-                    _remoteAlert->toConfigJson(rootObj);
+        String cfgDevName = _deviceName;
+        String cfgTz = _time ? _time->getTimezone() : DEFAULT_TIMEZONE;
+        bool cfgUse24h = _time ? _time->getUse24h() : DEFAULT_24H_FORMAT;
+        bool cfgWebAuth = _webAuthEnabled;
+        String cfgWebUser = _webUsername;
+        bool cfgWebPassSet = (_webPasswordHash.length() > 0 || _webPassword.length() > 0);
+        bool cfgApPassSet = false;
+        {
+            JsonDocument cfgDoc;
+            if (_storage->loadJson(PATH_CONFIG, cfgDoc)) {
+                cfgDevName = cfgDoc["device_name"] | _deviceName;
+                cfgTz = cfgDoc["timezone"] | cfgTz;
+                cfgUse24h = cfgDoc["use_24h"] | cfgUse24h;
+                if (isAdmin) {
+                    cfgWebAuth = cfgDoc["web_auth"] | _webAuthEnabled;
+                    cfgWebUser = cfgDoc["web_user"] | _webUsername;
+                    String savedPass = cfgDoc["web_pass"] | "";
+                    String savedHash = cfgDoc["web_pass_hash"] | "";
+                    cfgWebPassSet = (savedHash.length() > 0 || savedPass.length() > 0);
+                    String savedApPass = cfgDoc["ap_pass"] | "";
+                    cfgApPassSet = (savedApPass.length() >= 8 && savedApPass.length() <= 63);
                 }
             }
         }
-        if (isAdmin && !doc.containsKey("alert_https_supported")) {
-            doc["alert_https_supported"] = RemoteAlertManager::isHttpsSupported();
+
+        JsonDocument doc;
+        doc["device_name"] = cfgDevName;
+        doc["hostname"] = _wifi ? _wifi->getHostname() : "";
+        doc["mac"] = _wifi ? _wifi->getMAC() : "";
+        doc["device_id"] = _wifi ? _wifi->getDeviceId() : "";
+        doc["timezone"] = cfgTz;
+        doc["use_24h"] = cfgUse24h;
+        if (isAdmin) {
+            doc["web_auth"] = cfgWebAuth;
+            doc["web_user"] = cfgWebUser;
+            doc["web_pass_set"] = cfgWebPassSet;
+            doc["guest_auth"] = _guestAuthEnabled;
+            doc["guest_user"] = _guestUsername;
+            doc["guest_pass_set"] = (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
+            doc["ap_pass_set"] = cfgApPassSet;
+            doc["arduino_ota"] = _ota ? _ota->isArduinoOtaEnabled() : false;
+            if (_remoteAlert) {
+                JsonObject rootObj = doc.as<JsonObject>();
+                _remoteAlert->toConfigJson(rootObj);
+            }
+            if (!doc.containsKey("alert_https_supported")) {
+                doc["alert_https_supported"] = RemoteAlertManager::isHttpsSupported();
+            }
         }
         doc["ws_token"] = isAdmin ? _wsToken : _wsGuestToken;
         doc["auth_role"] = isAdmin ? "admin" : "guest";
@@ -620,15 +639,19 @@ void WebServerManager::setupAPIRoutes() {
     _server.on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req)) return;
         if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
-            AsyncResponseStream *response = req->beginResponseStream("text/csv");
+            String csv = _logger->toCSV();
+            size_t streamSize = csv.length() + 16;
+            if (!hasContiguousHeap(streamSize)) { req->send(503, "text/plain", "Low Memory"); return; }
+            AsyncResponseStream *response = req->beginResponseStream("text/csv", streamSize);
+            if (!response) { req->send(503, "text/plain", "Low Memory"); return; }
             response->addHeader("Connection", "close");
-            response->print(_logger->toCSV());
+            response->print(csv);
             req->send(response);
         } else {
-            AsyncResponseStream *response = req->beginResponseStream("application/json");
-            response->addHeader("Connection", "close");
-            response->print(_logger->toJson());
-            req->send(response);
+            JsonDocument doc;
+            JsonArray arr = doc.to<JsonArray>();
+            _logger->toJsonArray(arr, 50);
+            sendJson(req, 200, doc);
         }
     });
 
@@ -680,9 +703,13 @@ void WebServerManager::setupAPIRoutes() {
         if (req->hasParam("include_secrets") && req->getParam("include_secrets")->value() == "1") {
             sanitize = false;
         }
-        AsyncResponseStream *response = req->beginResponseStream("application/json");
+        String backup = _storage->exportAllConfig(sanitize);
+        size_t streamSize = backup.length() + 16;
+        if (!hasContiguousHeap(streamSize)) { req->send(503, "text/plain", "Low Memory"); return; }
+        AsyncResponseStream *response = req->beginResponseStream("application/json", streamSize);
+        if (!response) { req->send(503, "text/plain", "Low Memory"); return; }
         response->addHeader("Connection", "close");
-        response->print(_storage->exportAllConfig(sanitize));
+        response->print(backup);
         req->send(response);
     });
 
@@ -1933,7 +1960,17 @@ void WebServerManager::setupCaptivePortal() {
 // Response Helpers
 // ============================================================================
 void WebServerManager::sendJson(AsyncWebServerRequest* req, int code, const JsonDocument& doc) {
-    AsyncResponseStream *response = req->beginResponseStream("application/json");
+    size_t len = measureJson(doc);
+    size_t streamSize = len + 16;
+    if (!hasContiguousHeap(streamSize)) {
+        req->send(503, "text/plain", "Low Memory");
+        return;
+    }
+    AsyncResponseStream *response = req->beginResponseStream("application/json", streamSize);
+    if (!response) {
+        req->send(503, "text/plain", "Low Memory");
+        return;
+    }
     response->setCode(code);
     response->addHeader("Connection", "close");
     serializeJson(doc, *response);

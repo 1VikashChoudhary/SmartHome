@@ -601,6 +601,9 @@ void LCDManager::appendConfigJson(JsonObject& lcdObj) const {
     }
 
     JsonArray widgets = catalog["widgets"].to<JsonArray>();
+    if (!_hwLcdAllowed) {
+        return;
+    }
     auto addWidget = [&widgets](const String& id, const String& label) {
         JsonObject w = widgets.add<JsonObject>();
         w["id"] = id;

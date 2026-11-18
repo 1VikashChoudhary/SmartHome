@@ -80,6 +80,9 @@ RemoteAlertManager remoteAlertMgr;
 // WebSocket data provider — builds JSON status for broadcast
 // ============================================================================
 String wsDataProvider() {
+    if (ESP.getFreeHeap() < MIN_FREE_HEAP) {
+        return String();
+    }
     JsonDocument doc;
 
     // Device info (cached in RAM to eliminate SPI flash wear during 1Hz WebSocket broadcast)

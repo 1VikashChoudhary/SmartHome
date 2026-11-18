@@ -295,9 +295,13 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       GasSensorType.fromValue(_selectedMq2Type).shortName;
 
   Future<void> _loadInitialData() async {
-    _loadDiagnostics();
-    _loadLogs();
-    _loadDeviceConfig();
+    // Load sequentially so memory-constrained ESP8266 controllers never allocate
+    // 3 large JSON response buffers concurrently alongside active WebSockets.
+    await _loadDeviceConfig();
+    if (!mounted) return;
+    await _loadDiagnostics();
+    if (!mounted) return;
+    await _loadLogs();
   }
 
   Future<void> _loadDeviceConfig() async {
@@ -1057,7 +1061,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                         ),
                         Text(
-                          'Tasmota-style dynamic pin mapping, active relays (0-8) & switches',
+                          'Device dynamic pin mapping, active relays ,switches & Sensors',
                           style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
