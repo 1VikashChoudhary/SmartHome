@@ -145,7 +145,7 @@ To meet the security demands of commercial installations and multi-tenant homes,
 | **OTA Firmware Flashing** | Full Access | **403 Forbidden** | Blocked |
 | **Reboot & Factory Reset** | Full Access | **403 Forbidden** | Blocked |
 | **mDNS & UDP Discovery** | Allowed | Allowed | Allowed (`/api/discovery`) |
-| **Log Out / Session Invalidation** | Allowed (`/api/logout`) | Allowed (`/api/logout`) | Allowed (`/logout`) |
+
 
 ---
 
@@ -429,7 +429,7 @@ SmartHome/
 
 ## Sponsor & Support the Project
 
-SmartHome is an independent, 100% free and open-source project. If it brings value to your home or maker setups, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!
+If it brings value to your home or maker setups, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!
 
 ### 🇮🇳 India — UPI Payment (Zero Fee · Instant)
 
@@ -443,10 +443,8 @@ SmartHome is an independent, 100% free and open-source project. If it brings val
 |:---|:---|
 | **Vikash Choudhary** | [https://paypal.me/1vikash](https://paypal.me/1vikash) |
 
-> Both sponsorship options are also accessible directly from the **About & Sponsorship** screen in the ESP Web Dashboard and the Flutter Companion App — tap the ❤️ heart icon in Settings.
 
----
 
 ## License
 
-Copyright © 2026 Vikash Choudhary. Commercial & Private Production Use. All rights reserved.
+Copyright © 2026 Vikash Choudhary.  All rights reserved.
