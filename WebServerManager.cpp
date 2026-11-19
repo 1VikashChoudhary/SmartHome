@@ -206,22 +206,29 @@ void WebServerManager::begin(StorageManager& storage, WifiManager& wifi,
         _guestPasswordHash = cfgDoc["guest_pass_hash"] | "";
 
         bool needSave = false;
-        // Migration: If legacy plaintext web_pass exists, compute salted SHA-256 + ArduinoOTA MD5 and remove plaintext
+        bool otaEn = cfgDoc["arduino_ota"] | false;
+        // Migration: If legacy plaintext web_pass exists, compute salted SHA-256 and remove plaintext
         if (_webPassword.length() > 0) {
             if (_webPasswordHash.length() == 0) {
                 _webPasswordHash = hashPasswordSalted(_webPassword);
                 cfgDoc["web_pass_hash"] = _webPasswordHash;
             }
-            if (String(cfgDoc["ota_pass_md5"] | "").length() == 0) {
+            if (otaEn && String(cfgDoc["ota_pass_md5"] | "").length() == 0) {
                 cfgDoc["ota_pass_md5"] = md5Hex(_webPassword);
             }
             cfgDoc.remove("web_pass");
             needSave = true;
             Serial.println(F("[Web] Migrated plaintext admin password to salted SHA-256 hash"));
         }
-        if (_guestPasswordHash.length() == 0 && _guestPassword.length() > 0) {
-            _guestPasswordHash = hashPasswordSalted(_guestPassword);
-            cfgDoc["guest_pass_hash"] = _guestPasswordHash;
+        if (!otaEn && cfgDoc.containsKey("ota_pass_md5")) {
+            cfgDoc.remove("ota_pass_md5");
+            needSave = true;
+        }
+        if (_guestPassword.length() > 0) {
+            if (_guestPasswordHash.length() == 0) {
+                _guestPasswordHash = hashPasswordSalted(_guestPassword);
+                cfgDoc["guest_pass_hash"] = _guestPasswordHash;
+            }
             cfgDoc.remove("guest_pass");
             needSave = true;
             Serial.println(F("[Web] Migrated plaintext guest password to salted SHA-256 hash"));
@@ -323,19 +330,46 @@ void WebServerManager::setupAPIRoutes() {
     _server.on("/api/logout", HTTP_ANY, [this](AsyncWebServerRequest* req) {
         if (req->method() == HTTP_POST) {
             if (!isAuthorized(req, AUTH_ROLE_GUEST)) return;
-            regenerateWsToken();
+            AuthRole role = isAuthConfigured() ? getRequestRole(req) : AUTH_ROLE_ADMIN;
+            regenerateWsTokenForRole(role);
             sendOk(req, F("Session rotated"));
             return;
         }
         // Only rotate WebSocket tokens when the caller proves valid Basic Auth or an active WS token;
-        // bogus Basic Auth eviction requests from doLogout() still receive 401 without disrupting other sessions.
+        // enforce rate limiting before checking Basic Auth so GET /api/logout cannot be used as a password oracle.
+        IPAddress clientIp = req->client() ? req->client()->remoteIP() : IPAddress(0, 0, 0, 0);
         String hdrToken = req->header("X-WS-Token");
         String qToken = req->hasParam("token") ? req->getParam("token")->value() : "";
-        if (!isAuthConfigured() ||
-            authenticateBasicCredentials(req) != AUTH_ROLE_NONE ||
-            verifyWsToken(hdrToken) ||
-            verifyWsToken(qToken)) {
-            regenerateWsToken();
+        AuthRole rotateRole = AUTH_ROLE_NONE;
+        if (!isAuthConfigured()) {
+            rotateRole = AUTH_ROLE_ADMIN;
+        } else {
+            WEB_LOCK();
+            if (hdrToken.length() >= 32 && _wsToken.length() >= 32 && constantTimeCompare(hdrToken, _wsToken)) {
+                rotateRole = AUTH_ROLE_ADMIN;
+            } else if (qToken.length() >= 32 && _wsToken.length() >= 32 && constantTimeCompare(qToken, _wsToken)) {
+                rotateRole = AUTH_ROLE_ADMIN;
+            } else if (_guestAuthEnabled && hdrToken.length() >= 32 && _wsGuestToken.length() >= 32 && constantTimeCompare(hdrToken, _wsGuestToken)) {
+                rotateRole = AUTH_ROLE_GUEST;
+            } else if (_guestAuthEnabled && qToken.length() >= 32 && _wsGuestToken.length() >= 32 && constantTimeCompare(qToken, _wsGuestToken)) {
+                rotateRole = AUTH_ROLE_GUEST;
+            }
+        }
+        if (rotateRole == AUTH_ROLE_NONE && isAuthConfigured() && !isRateLimited(clientIp)) {
+            String authHdr = req->header("Authorization");
+            authHdr.trim();
+            if (authHdr.length() > 6 && !authHdr.startsWith("Basic bG9nb3V0OmxvZ291dA")) {
+                AuthRole basicRole = authenticateBasicCredentials(req);
+                if (basicRole != AUTH_ROLE_NONE) {
+                    resetRateLimit(clientIp);
+                    rotateRole = basicRole;
+                } else {
+                    recordFailedAttempt(clientIp);
+                }
+            }
+        }
+        if (rotateRole != AUTH_ROLE_NONE) {
+            regenerateWsTokenForRole(rotateRole);
         }
         AsyncWebServerResponse* r = req->beginResponse(
             401, "application/json",
@@ -488,6 +522,7 @@ void WebServerManager::setupAPIRoutes() {
 #endif
             net["channel"] = WiFi.channel(i);
         }
+        WiFi.scanDelete();
 
         sendJson(req, 200, doc);
     });
@@ -526,22 +561,37 @@ void WebServerManager::setupAPIRoutes() {
         if (!isAuthorized(req)) return;
         bool isAdmin = (!isAuthConfigured()) || (getRequestRole(req) == AUTH_ROLE_ADMIN);
 
-        String cfgDevName = _deviceName;
+        String cfgDevName;
         String cfgTz = _time ? _time->getTimezone() : DEFAULT_TIMEZONE;
         bool cfgUse24h = _time ? _time->getUse24h() : DEFAULT_24H_FORMAT;
-        bool cfgWebAuth = _webAuthEnabled;
-        String cfgWebUser = _webUsername;
-        bool cfgWebPassSet = (_webPasswordHash.length() > 0 || _webPassword.length() > 0);
+        bool cfgWebAuth;
+        String cfgWebUser;
+        bool cfgWebPassSet;
+        bool cfgGuestAuth;
+        String cfgGuestUser;
+        bool cfgGuestPassSet;
+        String cfgWsToken;
+        {
+            WEB_LOCK();
+            cfgDevName = _deviceName;
+            cfgWebAuth = _webAuthEnabled;
+            cfgWebUser = _webUsername;
+            cfgWebPassSet = (_webPasswordHash.length() > 0 || _webPassword.length() > 0);
+            cfgGuestAuth = _guestAuthEnabled;
+            cfgGuestUser = _guestUsername;
+            cfgGuestPassSet = (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
+            cfgWsToken = isAdmin ? _wsToken : _wsGuestToken;
+        }
         bool cfgApPassSet = false;
         {
             JsonDocument cfgDoc;
             if (_storage->loadJson(PATH_CONFIG, cfgDoc)) {
-                cfgDevName = cfgDoc["device_name"] | _deviceName;
+                cfgDevName = cfgDoc["device_name"] | cfgDevName;
                 cfgTz = cfgDoc["timezone"] | cfgTz;
                 cfgUse24h = cfgDoc["use_24h"] | cfgUse24h;
                 if (isAdmin) {
-                    cfgWebAuth = cfgDoc["web_auth"] | _webAuthEnabled;
-                    cfgWebUser = cfgDoc["web_user"] | _webUsername;
+                    cfgWebAuth = cfgDoc["web_auth"] | cfgWebAuth;
+                    cfgWebUser = cfgDoc["web_user"] | cfgWebUser;
                     String savedPass = cfgDoc["web_pass"] | "";
                     String savedHash = cfgDoc["web_pass_hash"] | "";
                     cfgWebPassSet = (savedHash.length() > 0 || savedPass.length() > 0);
@@ -562,9 +612,9 @@ void WebServerManager::setupAPIRoutes() {
             doc["web_auth"] = cfgWebAuth;
             doc["web_user"] = cfgWebUser;
             doc["web_pass_set"] = cfgWebPassSet;
-            doc["guest_auth"] = _guestAuthEnabled;
-            doc["guest_user"] = _guestUsername;
-            doc["guest_pass_set"] = (_guestPasswordHash.length() > 0 || _guestPassword.length() > 0);
+            doc["guest_auth"] = cfgGuestAuth;
+            doc["guest_user"] = cfgGuestUser;
+            doc["guest_pass_set"] = cfgGuestPassSet;
             doc["ap_pass_set"] = cfgApPassSet;
             doc["arduino_ota"] = _ota ? _ota->isArduinoOtaEnabled() : false;
             if (_remoteAlert) {
@@ -575,7 +625,7 @@ void WebServerManager::setupAPIRoutes() {
                 doc["alert_https_supported"] = RemoteAlertManager::isHttpsSupported();
             }
         }
-        doc["ws_token"] = isAdmin ? _wsToken : _wsGuestToken;
+        doc["ws_token"] = cfgWsToken;
         doc["auth_role"] = isAdmin ? "admin" : "guest";
 
         // MQTT config (redacted for Guest role)
@@ -638,7 +688,12 @@ void WebServerManager::setupAPIRoutes() {
     // --- GET /api/logs ---
     _server.on("/api/logs", HTTP_GET, [this](AsyncWebServerRequest* req) {
         if (!isAuthorized(req)) return;
+        bool isAdmin = (!isAuthConfigured()) || (getRequestRole(req) == AUTH_ROLE_ADMIN);
         if (req->hasParam("format") && req->getParam("format")->value() == "csv") {
+            if (!isAdmin) {
+                sendError(req, 403, F("Forbidden: Admin privileges required for CSV log export"));
+                return;
+            }
             String csv = _logger->toCSV();
             size_t streamSize = csv.length() + 16;
             if (!hasContiguousHeap(streamSize)) { req->send(503, "text/plain", "Low Memory"); return; }
@@ -651,6 +706,14 @@ void WebServerManager::setupAPIRoutes() {
             JsonDocument doc;
             JsonArray arr = doc.to<JsonArray>();
             _logger->toJsonArray(arr, 50);
+            if (!isAdmin) {
+                for (JsonObject entry : arr) {
+                    const char* src = entry["src"] | "";
+                    if (strcmp(src, "MQTT") == 0 || strcmp(src, "WiFi") == 0) {
+                        entry["msg"] = "[Redacted for Guest]";
+                    }
+                }
+            }
             sendJson(req, 200, doc);
         }
     });
@@ -1021,7 +1084,7 @@ void WebServerManager::setupAPIRoutes() {
                 sendError(req, 403, F("Admin authentication required to modify configured credentials"));
                 return;
             }
-            _wifi->saveCredentials(ssid, pass);
+            _wifi->saveCredentials(ssid, pass, false);
             _logger->logInfo("WiFi", "Credentials saved: " + ssid);
             req->send(200, "text/html", "<html><body style='background:#0f1117;color:#fff;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh'><h2>Connecting to " + escapeHtml(ssid) + "...<br>Please wait.</h2></body></html>");
             return;
@@ -1068,7 +1131,7 @@ void WebServerManager::setupAPIRoutes() {
                 sendError(req, 403, F("Admin authentication required to modify configured credentials"));
                 return;
             }
-            _wifi->saveCredentials(ssid, pass);
+            _wifi->saveCredentials(ssid, pass, false);
             _logger->logInfo("WiFi", "Credentials saved: " + ssid);
             sendOk(req, F("WiFi saved"));
         } else {
@@ -1417,7 +1480,14 @@ void WebServerManager::setupAPIRoutes() {
                 if (pass.length() > 0) {
                     _webPasswordHash = hashPasswordSalted(pass);
                     cfg["web_pass_hash"] = _webPasswordHash;
-                    cfg["ota_pass_md5"] = md5Hex(pass);
+                    bool otaEn = doc.containsKey("arduino_ota")
+                        ? (doc["arduino_ota"] | false)
+                        : (_ota ? _ota->isArduinoOtaEnabled() : (cfg["arduino_ota"] | false));
+                    if (otaEn) {
+                        cfg["ota_pass_md5"] = md5Hex(pass);
+                    } else {
+                        cfg.remove("ota_pass_md5");
+                    }
                     cfg.remove("web_pass"); // Never write plaintext password to flash
                     _webPassword = pass;
                 }
@@ -1502,12 +1572,18 @@ void WebServerManager::setupAPIRoutes() {
             cfg["arduino_ota"] = en;
             String otaSecret = _webPassword;
             bool isHash = false;
-            if (otaSecret.length() == 0) {
-                String savedMd5 = cfg["ota_pass_md5"] | "";
-                if (savedMd5.length() == 32) {
-                    otaSecret = savedMd5;
-                    isHash = true;
+            if (en) {
+                if (otaSecret.length() > 0) {
+                    cfg["ota_pass_md5"] = md5Hex(otaSecret);
+                } else {
+                    String savedMd5 = cfg["ota_pass_md5"] | "";
+                    if (savedMd5.length() == 32) {
+                        otaSecret = savedMd5;
+                        isHash = true;
+                    }
                 }
+            } else {
+                cfg.remove("ota_pass_md5");
             }
             if (_ota) _ota->setArduinoOtaEnabled(en, _wifi ? _wifi->getHostname() : "", otaSecret, isHash);
             _logger->logInfo("OTA", en ? "ArduinoOTA port 3232 enabled" : "ArduinoOTA port 3232 disabled");
@@ -1609,15 +1685,18 @@ void WebServerManager::setupAPIRoutes() {
         if (!_hw) { sendError(req, 500, F("Hardware manager not initialized")); return; }
 
         String err;
+        HardwareConfig prevCfg = _hw->getConfig();
         if (!_hw->fromJson(doc.as<JsonObjectConst>(), err)) {
             sendError(req, 400, err);
             return;
         }
 
         if (!_hw->save()) {
+            _hw->load();
             sendError(req, 500, F("Failed to save hardware configuration to flash"));
             return;
         }
+        (void)prevCfg;
 
         _logger->logInfo("Hardware", "Hardware profile updated (" + String(_hw->getBoardName()) + ")");
         _logger->persistNow();
@@ -1675,15 +1754,18 @@ void WebServerManager::setupAPIRoutes() {
             if (total == 0 || total > 32768 || index + len > 32768) {
                 state->body = String();
                 state->handled = true;
-                if (index == 0) {
-                    sendError(req, total == 0 ? 400 : 413, total == 0 ? "Empty backup payload" : "Backup payload too large");
-                }
+                sendError(req, total == 0 ? 400 : 413, total == 0 ? "Empty backup payload" : "Backup payload too large");
                 return;
             }
 
             // Accumulate body chunks across TCP fragmentation
             if (index == 0) {
-                state->body.reserve(total + 1);
+                if (!hasContiguousHeap(total + 256) || !state->body.reserve(total + 1)) {
+                    state->body = String();
+                    state->handled = true;
+                    sendError(req, 503, F("Insufficient memory for backup payload"));
+                    return;
+                }
             }
 
             state->body.concat((const char*)data, len);
@@ -1795,7 +1877,7 @@ void WebServerManager::setupAPIRoutes() {
                 isAuthorized(req, AUTH_ROLE_ADMIN);
                 return;
             }
-            if (!isAuthorized(req, AUTH_ROLE_ADMIN)) return;
+            if (marker != 4 && !isAuthorized(req, AUTH_ROLE_ADMIN)) return;
             if (_ota->lastHttpUpdateOk()) {
                 sendOk(req, F("Update complete. Rebooting..."));
                 // Request reboot in 1 second via main loop so the async HTTP
@@ -1814,19 +1896,25 @@ void WebServerManager::setupAPIRoutes() {
             if (existingMarker == 1 || existingMarker == 2 || existingMarker == 3) {
                 return;
             }
-            bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
-            if (isAP) {
-                setOtaTempMarker(req, 3);
-                return;
-            }
-            IPAddress clientIp = req->client() ? req->client()->remoteIP() : IPAddress(0, 0, 0, 0);
-            String xrw = req->header("X-Requested-With");
-            bool csrfOk = !isAuthConfigured() || (xrw == "SmartHome" || xrw == "SmartHomeCompanionApp");
-            bool allowed = csrfOk && !isRateLimited(clientIp) &&
-                           (!isAuthConfigured() || getRequestRole(req) >= AUTH_ROLE_ADMIN);
-            if (!allowed) {
-                setOtaTempMarker(req, 1);
-                return;
+            if (index == 0) {
+                bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
+                if (isAP) {
+                    setOtaTempMarker(req, 3);
+                    return;
+                }
+                IPAddress clientIp = req->client() ? req->client()->remoteIP() : IPAddress(0, 0, 0, 0);
+                String xrw = req->header("X-Requested-With");
+                bool csrfOk = (xrw == "SmartHome" || xrw == "SmartHomeCompanionApp");
+                bool allowed = csrfOk && !isRateLimited(clientIp) &&
+                               (!isAuthConfigured() || getRequestRole(req) >= AUTH_ROLE_ADMIN);
+                if (!allowed) {
+                    setOtaTempMarker(req, 1);
+                    return;
+                }
+                if (isAuthConfigured()) {
+                    resetRateLimit(clientIp);
+                }
+                setOtaTempMarker(req, 4);
             }
             // Determine type from filename extension or query param
             bool isFirmware = true;
@@ -2040,9 +2128,7 @@ bool WebServerManager::collectJsonBody(AsyncWebServerRequest* req, uint8_t* data
     if (total == 0 || total > 16384 || index + len > 16384) {
         state->body = String();
         state->handled = true;
-        if (index == 0) {
-            sendError(req, total == 0 ? 400 : 413, total == 0 ? "Empty request body" : "Payload too large");
-        }
+        sendError(req, total == 0 ? 400 : 413, total == 0 ? "Empty request body" : "Payload too large");
         return false;
     }
 
@@ -2060,7 +2146,12 @@ bool WebServerManager::collectJsonBody(AsyncWebServerRequest* req, uint8_t* data
 
     // Multi-chunk path: TCP fragmentation reassembly
     if (index == 0) {
-        state->body.reserve(total + 1);
+        if (!hasContiguousHeap(total + 256) || !state->body.reserve(total + 1)) {
+            state->body = String();
+            state->handled = true;
+            sendError(req, 503, F("Insufficient memory for request body"));
+            return false;
+        }
     }
 
     state->body.concat((const char*)data, len);
@@ -2099,6 +2190,8 @@ void WebServerManager::recordFailedAttempt(const IPAddress& ip) {
     WEB_LOCK();
     unsigned long now = millis();
     int emptySlot = -1;
+    unsigned long maxUnlockedAge = 0;
+    int oldestUnlockedSlot = -1;
     unsigned long maxAge = 0;
     int oldestSlot = 0;
 
@@ -2120,17 +2213,27 @@ void WebServerManager::recordFailedAttempt(const IPAddress& ip) {
             }
             return;
         }
+        if (_rateLimits[i].lockoutUntil != 0 && (long)(now - _rateLimits[i].lockoutUntil) >= 0) {
+            _rateLimits[i].ip = IPAddress(0, 0, 0, 0);
+            _rateLimits[i].failedCount = 0;
+            _rateLimits[i].lockoutUntil = 0;
+        }
         if (_rateLimits[i].ip == IPAddress(0, 0, 0, 0) && emptySlot == -1) {
             emptySlot = i;
         }
         unsigned long age = now - _rateLimits[i].lastAttempt;
+        bool isActivelyLocked = (_rateLimits[i].lockoutUntil != 0 && (long)(_rateLimits[i].lockoutUntil - now) > 0);
+        if (!isActivelyLocked && age >= maxUnlockedAge) {
+            maxUnlockedAge = age;
+            oldestUnlockedSlot = i;
+        }
         if (age >= maxAge) {
             maxAge = age;
             oldestSlot = i;
         }
     }
 
-    int slot = (emptySlot != -1) ? emptySlot : oldestSlot;
+    int slot = (emptySlot != -1) ? emptySlot : ((oldestUnlockedSlot != -1) ? oldestUnlockedSlot : oldestSlot);
     _rateLimits[slot].ip = ip;
     _rateLimits[slot].failedCount = 1;
     _rateLimits[slot].lockoutUntil = 0;
@@ -2267,7 +2370,12 @@ bool WebServerManager::applyWifiOnboardingSettings(AsyncWebServerRequest* req, c
     if (webPass.length() > 0) {
         _webPasswordHash = hashPasswordSalted(webPass);
         cfg["web_pass_hash"] = _webPasswordHash;
-        cfg["ota_pass_md5"] = md5Hex(webPass);
+        bool otaEn = (_ota && _ota->isArduinoOtaEnabled()) || (cfg["arduino_ota"] | false);
+        if (otaEn) {
+            cfg["ota_pass_md5"] = md5Hex(webPass);
+        } else {
+            cfg.remove("ota_pass_md5");
+        }
         cfg.remove("web_pass");
         _webPassword = webPass;
         if (_ota && _ota->isArduinoOtaEnabled()) {
@@ -2285,6 +2393,10 @@ bool WebServerManager::applyWifiOnboardingSettings(AsyncWebServerRequest* req, c
 }
 
 void WebServerManager::regenerateWsToken() {
+    regenerateWsTokenForRole(AUTH_ROLE_ADMIN);
+}
+
+void WebServerManager::regenerateWsTokenForRole(AuthRole role) {
     WEB_LOCK();
 #if defined(ESP8266)
     uint32_t rnd = ESP.random();
@@ -2293,10 +2405,14 @@ void WebServerManager::regenerateWsToken() {
     uint32_t rnd = esp_random();
     uint32_t rnd2 = esp_random();
 #endif
-    String seed = String(rnd) + ":" + String(micros()) + ":" + _webUsername + ":" + _webPasswordHash;
-    String guestSeed = String(rnd2) + ":" + String(micros()) + ":" + _guestUsername + ":" + _guestPasswordHash + ":guest";
-    _wsToken = sha256Hex(seed);
-    _wsGuestToken = sha256Hex(guestSeed);
+    if (role == AUTH_ROLE_ADMIN || _wsToken.length() < 32) {
+        String seed = String(rnd) + ":" + String(micros()) + ":" + _webUsername + ":" + _webPasswordHash;
+        _wsToken = sha256Hex(seed);
+    }
+    if (role == AUTH_ROLE_ADMIN || role == AUTH_ROLE_GUEST || _wsGuestToken.length() < 32) {
+        String guestSeed = String(rnd2) + ":" + String(micros()) + ":" + _guestUsername + ":" + _guestPasswordHash + ":guest";
+        _wsGuestToken = sha256Hex(guestSeed);
+    }
 }
 
 bool WebServerManager::isAuthConfigured() const {
@@ -2476,7 +2592,7 @@ bool WebServerManager::isApSetupRoute(AsyncWebServerRequest* req) const {
             url == "/connecttest.txt" || url == "/ncsi.txt" || url == "/redirect" || url == "/fwlink" ||
             url == "/hotspot-detect.html" || url == "/library/test/success.html" ||
             url == "/canonical.html" || url == "/success.txt" ||
-            url == "/logout" || url == "/api/logout");
+            url == "/logout");
 }
 
 AuthRole WebServerManager::authenticateRequest(AsyncWebServerRequest* req) {
@@ -2501,22 +2617,27 @@ bool WebServerManager::isAuthorized(AsyncWebServerRequest* req, AuthRole require
     bool isAP = (_wifi && _wifi->getState() == WIFI_ST_AP_MODE);
     bool authConfigured = isAuthConfigured();
 
+    // CSRF Protection: Require X-Requested-With header on all mutating POST/PUT/DELETE requests
+    // regardless of whether web_auth is enabled (except captive-portal HTML form POSTs on /api/config/wifi in AP mode).
+    String method = req->methodToString();
+    if (method == "POST" || method == "PUT" || method == "DELETE") {
+        bool isApFormPost = isAP && req->url().equals("/api/config/wifi") &&
+                            req->hasParam("ssid", true) && req->hasParam("pass", true);
+        if (!isApFormPost) {
+            String xrw = req->header("X-Requested-With");
+            if (xrw != "SmartHome" && xrw != "SmartHomeCompanionApp") {
+                sendError(req, 403, F("CSRF validation failed: missing X-Requested-With header"));
+                return false;
+            }
+        }
+    }
+
     if (isAP && isApSetupRoute(req)) {
         return true;
     }
 
     if (!authConfigured) {
         if (!isAP) return true;
-    }
-
-    // CSRF Protection: Require X-Requested-With header on mutating requests
-    String method = req->methodToString();
-    if (method == "POST" || method == "PUT" || method == "DELETE") {
-        String xrw = req->header("X-Requested-With");
-        if (xrw != "SmartHome" && xrw != "SmartHomeCompanionApp") {
-            sendError(req, 403, F("CSRF validation failed: missing X-Requested-With header"));
-            return false;
-        }
     }
 
     IPAddress clientIp = req->client() ? req->client()->remoteIP() : IPAddress(0, 0, 0, 0);

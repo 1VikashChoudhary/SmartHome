@@ -15,6 +15,23 @@
 #include "RelayManager.h"
 #include "AlarmScheduler.h"
 
+#if defined(ESP32)
+namespace {
+struct LcdLockGuard {
+    SemaphoreHandle_t m;
+    explicit LcdLockGuard(SemaphoreHandle_t mtx) : m(mtx) {
+        if (m) xSemaphoreTakeRecursive(m, portMAX_DELAY);
+    }
+    ~LcdLockGuard() {
+        if (m) xSemaphoreGiveRecursive(m);
+    }
+};
+}
+#define LCD_LOCK() LcdLockGuard _lcdGuard(_lcdMutex)
+#else
+#define LCD_LOCK() ((void)0)
+#endif
+
 namespace {
 
 const char* const kDefaultPageOrder[LCD_MAX_CUSTOM_PAGES] = {
@@ -57,6 +74,11 @@ LCDManager::LCDManager()
       _brightness(100), _autoDim(false),
       _dimStartTime("22:00"), _dimEndTime("06:00"),
       _dimmedBrightness(0), _currentAppliedBrightness(100),
+      _hwReinitPending(false), _backlightDirty(false),
+      _manualBrightnessOverride(false), _wasInAutoDimWindow(false),
+#if defined(ESP32)
+      _lcdMutex(nullptr),
+#endif
       _forceRedraw(true), _currentPage(0), _manualPageOverride(false),
       _lastPageChange(0), _lastUpdate(0),
       _lastUserInteraction(0), _pageOrderCount(0),
@@ -71,6 +93,9 @@ LCDManager::LCDManager()
     memset(_prevBuffer, 0, sizeof(_prevBuffer)); // Different from spaces to force first draw
     memset(_relayStates, 0, sizeof(_relayStates));
     initDefaultLayout();
+#if defined(ESP32)
+    _lcdMutex = xSemaphoreCreateRecursiveMutex();
+#endif
     for (int r = 0; r < LCD_MAX_ROWS; r++) {
         _buffer[r][LCD_MAX_COLS] = '\0';
         _prevBuffer[r][LCD_MAX_COLS] = '\0';
@@ -218,28 +243,115 @@ void LCDManager::attachModules(HardwareManager& hw, SensorManager& sensor, Relay
 }
 
 void LCDManager::loop() {
-    if (!_enabled) return;
+    bool enabled = false;
+    bool reinitNeeded = false;
+    bool blDirty = false;
+    uint8_t sdaPin = PIN_UNUSED, sclPin = PIN_UNUSED, i2cAddr = 0, cols = 16, rows = 2;
+    uint8_t brightness = 100, dimmedBrightness = 0;
+    bool autoDim = false, backlight = true;
+    String dimStart, dimEnd;
+    {
+        LCD_LOCK();
+        enabled = _enabled;
+        reinitNeeded = _hwReinitPending;
+        _hwReinitPending = false;
+        blDirty = _backlightDirty;
+        _backlightDirty = false;
+        sdaPin = _sdaPin;
+        sclPin = _sclPin;
+        i2cAddr = _i2cAddr;
+        cols = _lcdCols;
+        rows = _lcdRows;
+        brightness = _brightness;
+        dimmedBrightness = _dimmedBrightness;
+        autoDim = _autoDim;
+        backlight = _backlight;
+        dimStart = _dimStartTime;
+        dimEnd = _dimEndTime;
+    }
+
+    if (!enabled) {
+        if (blDirty) {
+            applyBacklight(0);
+            LCD_LOCK();
+            _currentAppliedBrightness = 0;
+        }
+        return;
+    }
+
+    if (reinitNeeded) {
+        Wire.begin(sdaPin, sclPin);
+        Wire.beginTransmission(i2cAddr);
+        if (Wire.endTransmission() != 0) {
+            SERIAL_PRINTF("[LCD] Cannot enable LCD: no I2C ACK at 0x%02X\n", i2cAddr);
+            {
+                LCD_LOCK();
+                _enabled = false;
+            }
+            saveConfig();
+            return;
+        }
+        _lcd = LiquidCrystal_I2C(i2cAddr, cols, rows);
+        _lcd.init();
+        uint8_t initBri = backlight ? brightness : 0;
+        applyBacklight(initBri);
+        createCustomChars();
+        {
+            LCD_LOCK();
+            _currentAppliedBrightness = initBri;
+            _forceRedraw = true;
+        }
+        blDirty = false;
+    }
 
     unsigned long now = millis();
 
+    // Immediate backlight application if user toggled brightness/backlight
+    if (blDirty) {
+        uint8_t target = backlight ? brightness : 0;
+        if (target != _currentAppliedBrightness) {
+            applyBacklight(target);
+            LCD_LOCK();
+            _currentAppliedBrightness = target;
+        }
+    }
+
+    // Update display content & auto-dim check periodically (500ms gate instead of every loop)
+    bool forceRedraw = false;
+    {
+        LCD_LOCK();
+        forceRedraw = _forceRedraw;
+    }
+    if (now - _lastUpdate < LCD_UPDATE_INTERVAL && !forceRedraw) return;
+    _lastUpdate = now;
+
     // --- Backlight Brightness & Auto Dim Schedule ---
-    uint8_t targetBrightness = _brightness;
-    if (_autoDim && _time && _time->isTimeSet()) {
+    uint8_t targetBrightness = backlight ? brightness : 0;
+    if (autoDim && _time && _time->isTimeSet()) {
         int hour = _time->getHour();
         int minute = _time->getMinute();
         int startH = 22, startM = 0;
         int endH = 6, endM = 0;
-        sscanf(_dimStartTime.c_str(), "%d:%d", &startH, &startM);
-        sscanf(_dimEndTime.c_str(), "%d:%d", &endH, &endM);
-        if (isTimeInInterval(hour, minute, startH, startM, endH, endM)) {
-            targetBrightness = _dimmedBrightness;
+        sscanf(dimStart.c_str(), "%d:%d", &startH, &startM);
+        sscanf(dimEnd.c_str(), "%d:%d", &endH, &endM);
+        bool inWindow = isTimeInInterval(hour, minute, startH, startM, endH, endM);
+        LCD_LOCK();
+        if (inWindow != _wasInAutoDimWindow) {
+            // Schedule boundary crossed — clear manual override so schedule takes effect again
+            _wasInAutoDimWindow = inWindow;
+            _manualBrightnessOverride = false;
+        }
+        if (inWindow && !_manualBrightnessOverride) {
+            targetBrightness = dimmedBrightness;
         }
     }
     if (targetBrightness != _currentAppliedBrightness) {
+        applyBacklight(targetBrightness);
+        LCD_LOCK();
         _currentAppliedBrightness = targetBrightness;
-        applyBacklight(_currentAppliedBrightness);
     }
 
+    LCD_LOCK();
     // Setup mode is a recovery flow: keep the hotspot credentials visible.
     // Do not let the normal dashboard page rotation hide them.
     if (_isAPMode && _alarmType == LCD_ALARM_NONE) {
@@ -277,10 +389,6 @@ void LCDManager::loop() {
             _forceRedraw = true;
         }
     }
-
-    // Update display content periodically
-    if (now - _lastUpdate < LCD_UPDATE_INTERVAL && !_forceRedraw) return;
-    _lastUpdate = now;
 
     // Clear off-screen buffer rows cleanly so 20x4 displays never leave stale lines
     uint8_t activeRows = (_lcdRows <= LCD_MAX_ROWS) ? _lcdRows : LCD_MAX_ROWS;
@@ -404,97 +512,128 @@ void LCDManager::showBootScreen(const char* deviceName) {
 // ============================================================================
 // Settings
 // ============================================================================
-bool LCDManager::isEnabled() { return _enabled; }
+bool LCDManager::isEnabled() { LCD_LOCK(); return _enabled; }
 
 void LCDManager::setEnabled(bool enabled) {
-    if (enabled && !_hwLcdAllowed) {
-        Serial.println(F("[LCD] Cannot enable LCD: disabled or pins unassigned in hardware profile"));
-        _enabled = false;
-        saveConfig();
-        return;
-    }
-    _enabled = enabled;
-    if (_enabled) {
-        Wire.begin(_sdaPin, _sclPin);
-        Wire.beginTransmission(_i2cAddr);
-        if (Wire.endTransmission() != 0) {
-            SERIAL_PRINTF("[LCD] Cannot enable LCD: no I2C ACK at 0x%02X\n", _i2cAddr);
+    {
+        LCD_LOCK();
+        if (enabled && !_hwLcdAllowed) {
+            Serial.println(F("[LCD] Cannot enable LCD: disabled or pins unassigned in hardware profile"));
             _enabled = false;
-            saveConfig();
-            return;
+            _hwReinitPending = false;
+            _backlightDirty = true;
+        } else {
+            _enabled = enabled;
+            // Defer Wire/I2C re-initialization to Core 1 loop() so Core 0 HTTP handlers never collide on TwoWire
+            _hwReinitPending = enabled;
+            _backlightDirty = !enabled;
+            if (enabled) _forceRedraw = true;
         }
-        _lcd = LiquidCrystal_I2C(_i2cAddr, _lcdCols, _lcdRows);
-        _lcd.init();
-        if (_backlight) _lcd.backlight();
-        createCustomChars();
+    }
+    saveConfig();
+}
+
+bool LCDManager::getBacklight() { LCD_LOCK(); return _brightness > 0 && _backlight; }
+
+void LCDManager::setBacklight(bool on) {
+    {
+        LCD_LOCK();
+        _backlight = on;
+        _brightness = on ? 100 : 0;
+        _manualBrightnessOverride = true;
+        _backlightDirty = true;
+    }
+    saveConfig();
+}
+
+uint8_t LCDManager::getBrightness() const { LCD_LOCK(); return _brightness; }
+
+void LCDManager::setBrightness(uint8_t brightness) {
+    {
+        LCD_LOCK();
+        _brightness = constrain(brightness, 0, 100);
+        _backlight = (_brightness > 0);
+        _manualBrightnessOverride = true;
+        _backlightDirty = true;
+    }
+    saveConfig();
+}
+
+bool LCDManager::isAutoDimEnabled() const { LCD_LOCK(); return _autoDim; }
+
+void LCDManager::setAutoDimEnabled(bool enabled) {
+    {
+        LCD_LOCK();
+        _autoDim = enabled;
+        _manualBrightnessOverride = false;
         _forceRedraw = true;
     }
     saveConfig();
 }
 
-bool LCDManager::getBacklight() { return _brightness > 0; }
-
-void LCDManager::setBacklight(bool on) {
-    _backlight = on;
-    _brightness = on ? 100 : 0;
-    if (_enabled) {
-        applyBacklight(_brightness);
-        _currentAppliedBrightness = _brightness;
-    }
-    saveConfig();
-}
-
-void LCDManager::setBrightness(uint8_t brightness) {
-    _brightness = constrain(brightness, 0, 100);
-    _backlight = (_brightness > 0);
-    if (_enabled) {
-        applyBacklight(_brightness);
-        _currentAppliedBrightness = _brightness;
-    }
-    saveConfig();
-}
-
-void LCDManager::setAutoDimEnabled(bool enabled) {
-    _autoDim = enabled;
-    saveConfig();
-}
+String LCDManager::getDimStartTime() const { LCD_LOCK(); return _dimStartTime; }
 
 void LCDManager::setDimStartTime(const String& time) {
     if (time.indexOf(':') < 1 || time.length() < 3 || time.length() > 5) return;
-    _dimStartTime = time;
+    {
+        LCD_LOCK();
+        _dimStartTime = time;
+        _manualBrightnessOverride = false;
+        _forceRedraw = true;
+    }
     saveConfig();
 }
+
+String LCDManager::getDimEndTime() const { LCD_LOCK(); return _dimEndTime; }
 
 void LCDManager::setDimEndTime(const String& time) {
     if (time.indexOf(':') < 1 || time.length() < 3 || time.length() > 5) return;
-    _dimEndTime = time;
+    {
+        LCD_LOCK();
+        _dimEndTime = time;
+        _manualBrightnessOverride = false;
+        _forceRedraw = true;
+    }
     saveConfig();
 }
+
+uint8_t LCDManager::getDimmedBrightness() const { LCD_LOCK(); return _dimmedBrightness; }
 
 void LCDManager::setDimmedBrightness(uint8_t brightness) {
-    _dimmedBrightness = constrain(brightness, 0, 100);
+    {
+        LCD_LOCK();
+        _dimmedBrightness = constrain(brightness, 0, 100);
+        _manualBrightnessOverride = false;
+        _forceRedraw = true;
+    }
     saveConfig();
 }
 
-uint16_t LCDManager::getRotationInterval() { return _rotationInterval; }
+uint16_t LCDManager::getRotationInterval() { LCD_LOCK(); return _rotationInterval; }
 
 void LCDManager::setRotationInterval(uint16_t seconds) {
-    _rotationInterval = constrain(seconds, 3, 30);
+    {
+        LCD_LOCK();
+        _rotationInterval = constrain(seconds, 3, 30);
+    }
     saveConfig();
 }
 
-String LCDManager::getDisplayMode() { return _displayMode; }
+String LCDManager::getDisplayMode() { LCD_LOCK(); return _displayMode; }
 
 void LCDManager::setDisplayMode(const String& mode) {
-    if (mode == LCD_MODE_DHT_RELAY || mode == LCD_MODE_ROTATE || mode == LCD_MODE_CUSTOM) {
-        _displayMode = mode;
-    } else {
-        _displayMode = LCD_MODE_ROTATE; // Unknown mode — safe default
+    {
+        LCD_LOCK();
+        if (mode == LCD_MODE_DHT_RELAY || mode == LCD_MODE_ROTATE || mode == LCD_MODE_CUSTOM) {
+            _displayMode = mode;
+        } else {
+            _displayMode = LCD_MODE_ROTATE; // Unknown mode — safe default
+        }
+        _currentPage = 0;
+        _manualPageOverride = false;
+        _lastPageChange = millis();
+        _forceRedraw = true;
     }
-    _currentPage = 0;
-    _manualPageOverride = false;
-    _lastPageChange = millis();
-    _forceRedraw = true;
     saveConfig();
 }
 
@@ -518,14 +657,17 @@ bool LCDManager::setPages(const JsonArrayConst& pages) {
         count++;
     }
     if (count == 0) return false;
-    for (uint8_t i = 0; i < count; i++) {
-        strncpy(_pageOrder[i], nextOrder[i], LCD_PAGE_ID_LEN);
+    {
+        LCD_LOCK();
+        for (uint8_t i = 0; i < count; i++) {
+            strncpy(_pageOrder[i], nextOrder[i], LCD_PAGE_ID_LEN);
+        }
+        _pageOrderCount = count;
+        _currentPage = 0;
+        _manualPageOverride = false;
+        _lastPageChange = millis();
+        _forceRedraw = true;
     }
-    _pageOrderCount = count;
-    _currentPage = 0;
-    _manualPageOverride = false;
-    _lastPageChange = millis();
-    _forceRedraw = true;
     saveConfig();
     return true;
 }
@@ -533,9 +675,12 @@ bool LCDManager::setPages(const JsonArrayConst& pages) {
 bool LCDManager::setCustomLines(const JsonArrayConst& lines) {
     if (lines.size() == 0) return false;
     char nextLines[LCD_MAX_ROWS][LCD_WIDGET_ID_LEN];
-    for (uint8_t r = 0; r < LCD_MAX_ROWS; r++) {
-        strncpy(nextLines[r], _customLines[r], LCD_WIDGET_ID_LEN - 1);
-        nextLines[r][LCD_WIDGET_ID_LEN - 1] = '\0';
+    {
+        LCD_LOCK();
+        for (uint8_t r = 0; r < LCD_MAX_ROWS; r++) {
+            strncpy(nextLines[r], _customLines[r], LCD_WIDGET_ID_LEN - 1);
+            nextLines[r][LCD_WIDGET_ID_LEN - 1] = '\0';
+        }
     }
     uint8_t r = 0;
     for (JsonVariantConst v : lines) {
@@ -547,16 +692,20 @@ bool LCDManager::setCustomLines(const JsonArrayConst& lines) {
         nextLines[r][LCD_WIDGET_ID_LEN - 1] = '\0';
         r++;
     }
-    for (uint8_t i = 0; i < LCD_MAX_ROWS; i++) {
-        strncpy(_customLines[i], nextLines[i], LCD_WIDGET_ID_LEN);
+    {
+        LCD_LOCK();
+        for (uint8_t i = 0; i < LCD_MAX_ROWS; i++) {
+            strncpy(_customLines[i], nextLines[i], LCD_WIDGET_ID_LEN);
+        }
+        _manualPageOverride = false;
+        _forceRedraw = true;
     }
-    _manualPageOverride = false;
-    _forceRedraw = true;
     saveConfig();
     return true;
 }
 
 void LCDManager::appendConfigJson(JsonObject& lcdObj) const {
+    LCD_LOCK();
     lcdObj["enabled"] = _enabled;
     lcdObj["hw_allowed"] = _hwLcdAllowed;
     lcdObj["cols"] = _lcdCols;
@@ -1052,7 +1201,7 @@ void LCDManager::formatWidgetLine(const char* widgetKey, char* out, size_t outSi
         } else {
             int pct = _sensor->getTankLevelPercentAt(idx);
             float cm = _sensor->getDistanceCmAt(idx);
-            if (pct < 0) snprintf(out, outSize, "%s: ERR", lbl);
+            if (_sensor->isUltrasonicFaultAt(idx) || pct < 0) snprintf(out, outSize, "%s: ERR", lbl);
             else snprintf(out, outSize, "%s:%d%% %.0fcm", lbl, pct, cm);
         }
         return;
@@ -1257,7 +1406,7 @@ void LCDManager::renderTankPage() {
         formatShortLabel(cfg ? cfg->label : nullptr, "Tank", lbl, sizeof(lbl));
         int pct = _sensor->getTankLevelPercentAt(idx);
         float cm = _sensor->getDistanceCmAt(idx);
-        if (pct < 0) {
+        if (_sensor->isUltrasonicFaultAt(idx) || pct < 0) {
             setLinef(0, "%s: Fault", lbl);
             setLine(1, "Check Ultrasonic");
         } else {

@@ -44,22 +44,26 @@ class TelemetryGauge extends StatelessWidget {
         ],
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Header Row with Micro-Tracking
+          // Header Row with Micro-Tracking (allows 2 lines so labels never crush to "CLIMA...")
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
+              Expanded(
                 child: Text(
                   label.toUpperCase(),
-                  maxLines: 1,
+                  maxLines: 2,
+                  softWrap: true,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 9.5,
+                    fontSize: 10,
                     fontWeight: FontWeight.w800,
                     color: AppColors.textMuted,
-                    letterSpacing: 0.8,
+                    letterSpacing: 0.45,
+                    height: 1.2,
                   ),
                 ),
               ),

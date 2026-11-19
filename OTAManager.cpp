@@ -5,6 +5,7 @@
  */
 
 #include "OTAManager.h"
+#include <LittleFS.h>
 #if defined(ESP8266)
 #include <Updater.h>
 #include <flash_hal.h>
@@ -145,7 +146,7 @@ void OTAManager::setArduinoOtaEnabled(bool enabled, const String& hostname, cons
 }
 
 void OTAManager::loop() {
-    if (_arduinoOtaEnabled) {
+    if (_arduinoOtaEnabled && !_httpInProgress) {
         ArduinoOTA.handle();
     }
 
@@ -267,6 +268,10 @@ void OTAManager::setErrorCallback(void (*cb)(const String&)) { _errorCb = cb; }
 
 void OTAManager::onOTAStart() {
     if (!_instance) return;
+    if (_instance->_httpInProgress) {
+        Serial.println(F("[OTA] Rejected ArduinoOTA start while HTTP OTA is in progress"));
+        return;
+    }
     _instance->_isUpdating = true;
     _instance->_progress = 0;
     _instance->_otaLastReportedPct = -1;
@@ -488,6 +493,36 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
                 if (_errorCb) _errorCb(_httpLastError);
                 return false;
             }
+#if defined(ESP8266)
+            // Reject ESP32 firmware binaries uploaded directly to an ESP8266 (ESP32 app desc magic 0xABCD5432 at offset 32)
+            if (index == 0 && len >= 36 &&
+                data[32] == 0x32 && data[33] == 0x54 && data[34] == 0xCD && data[35] == 0xAB) {
+                _httpLastError = "Incompatible firmware: ESP32 binary cannot be flashed onto ESP8266";
+                _statusString  = "Error: " + _httpLastError;
+                _isUpdating    = false;
+                _httpInProgress = false;
+                _httpBegun     = false;
+                _httpHeaderLen = 0;
+                _activeUploadOwner = nullptr;
+                _httpRejected  = true;
+                Serial.println(F("[OTA-HTTP] Upload rejected: ESP32 app magic detected on ESP8266"));
+                if (_errorCb) _errorCb(_httpLastError);
+                return false;
+            }
+#endif
+        } else {
+            if (index == 0 && len == 0 && isFinal) {
+                _httpLastError = "Empty filesystem image";
+                _statusString  = "Error: " + _httpLastError;
+                _isUpdating    = false;
+                _httpInProgress = false;
+                _httpBegun     = false;
+                _httpHeaderLen = 0;
+                _activeUploadOwner = nullptr;
+                _httpRejected  = true;
+                if (_errorCb) _errorCb(_httpLastError);
+                return false;
+            }
         }
 
 #if defined(ESP8266)
@@ -524,12 +559,19 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
             markAppValid();
         }
 
+        // Suspend competing network/storage services and unmount LittleFS before filesystem flash erase
+        if (_startCb) _startCb();
+        if (!isFirmware) {
+            LittleFS.end();
+        }
+
 #if defined(ESP8266)
         Update.runAsync(true);
+        uint32_t freeSketch = ESP.getFreeSketchSpace();
         size_t maxUpdateSpace = isFirmware
-            ? ((ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000)
+            ? ((freeSketch > 0x1000) ? ((freeSketch - 0x1000) & 0xFFFFF000) : 0)
             : ((size_t)FS_PHYS_SIZE);
-        if (!Update.begin(maxUpdateSpace, command)) {
+        if (maxUpdateSpace == 0 || !Update.begin(maxUpdateSpace, command)) {
 #else
         if (!Update.begin(updateSize, command)) {
 #endif
@@ -542,13 +584,15 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
             _activeUploadOwner = nullptr;
             _httpRejected  = true;
             SERIAL_PRINTF("[OTA-HTTP] begin() failed: %s\n", OTA_ERROR_STR());
+            if (!isFirmware) {
+                LittleFS.begin();
+            }
             restoreWdt();
             if (_errorCb) _errorCb(_httpLastError);
             return false;
         }
 
         _httpBegun = true;
-        if (_startCb) _startCb();
 
         if (isFirmware && _httpHeaderLen > 0) {
             if (Update.write(_httpHeaderBuf, _httpHeaderLen) != _httpHeaderLen) {
@@ -569,9 +613,7 @@ bool OTAManager::handleHttpUpload(uint8_t* data, size_t len,
     }
 
     // ---- Write remaining chunk bytes ----
-#if defined(ESP32)
-    esp_task_wdt_reset(); // Feed WDT every chunk
-#else
+#if defined(ESP8266)
     ESP.wdtFeed();
 #endif
     size_t remainLen = len - dataOffset;

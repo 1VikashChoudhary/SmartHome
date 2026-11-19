@@ -77,6 +77,7 @@ struct ClimateSlotState {
     float    tempOffset;
     float    humOffset;
     bool          fault;
+    bool          hasReading;
     uint8_t       failCount;
     unsigned long lastFaultRetry;
     bool          measPending;
@@ -86,6 +87,7 @@ struct ClimateSlotState {
 struct LightSlotState {
     bool     enabled;
     bool     detected;
+    bool     hasReading;
     uint8_t  i2cAddr;
     char     label[16];
     float    lux;
@@ -106,6 +108,7 @@ struct ProbeSlotState {
     char          label[16];
     float         temperature;
     bool          fault;
+    uint8_t       failCount;
     unsigned long lastRead;
 };
 
@@ -120,6 +123,7 @@ struct UltrasonicSlotState {
     float    distanceCm;
     int      tankLevelPct;
     bool     fault;
+    bool     hasReading;
     uint8_t  failCount;
 };
 
@@ -162,6 +166,7 @@ public:
     bool    hasBarometerAt(uint8_t idx) const;
     bool    hasHumidityAt(uint8_t idx) const;
     bool    isClimateFaultAt(uint8_t idx) const;
+    bool    isClimateValidAt(uint8_t idx) const;
     float   getTempOffsetAt(uint8_t idx) const;
     float   getHumOffsetAt(uint8_t idx) const;
     void    setTempOffsetAt(uint8_t idx, float offset);
@@ -169,6 +174,7 @@ public:
 
     uint8_t getLightCount() const { return _lightCount; }
     bool    isLightActiveAt(uint8_t idx) const;
+    bool    isLightValidAt(uint8_t idx) const;
     float   getLuxAt(uint8_t idx) const;
 
     uint8_t  getMotionCount() const { return _motionCount; }
@@ -183,6 +189,8 @@ public:
 
     uint8_t getUltrasonicCount() const { return _ultrasonicCount; }
     bool    isUltrasonicActiveAt(uint8_t idx) const;
+    bool    isUltrasonicFaultAt(uint8_t idx) const;
+    bool    isUltrasonicValidAt(uint8_t idx) const;
     float   getDistanceCmAt(uint8_t idx) const;
     int     getTankLevelPercentAt(uint8_t idx) const;
 
@@ -346,6 +354,7 @@ private:
     bool _prevTempAlarm;
     bool _prevMQ2Alarm;
     bool _prevSensorFault;
+    mutable bool _tempAlarmLatched;
     bool _warmupDone[MAX_MQ2_SENSORS];
 
 #if defined(ESP32)

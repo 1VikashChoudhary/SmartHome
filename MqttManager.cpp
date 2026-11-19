@@ -16,20 +16,68 @@
 
 MqttManager* MqttManager::_instance = nullptr;
 
+#if defined(ESP32)
+namespace {
+class MqttMutexGuard {
+public:
+    explicit MqttMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~MqttMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void MqttManager::ensureMutex() const {
+    if (!_mqttMutex) {
+        _mqttMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define MQTT_LOCK() ensureMutex(); MqttMutexGuard _mqttLockGuard(_mqttMutex)
+#else
+#define MQTT_LOCK() ((void)0)
+#endif
+
+static String sanitizeMqttIdentifier(const String& raw, const String& fallback) {
+    String s = raw;
+    s.trim();
+    String clean;
+    clean.reserve(s.length());
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if ((unsigned char)c > 0x20 && (unsigned char)c < 0x7F &&
+            c != '+' && c != '#' && c != '/' && c != '\\' && c != '"' && c != '\'') {
+            clean += c;
+        }
+    }
+    return clean.length() > 0 ? clean : fallback;
+}
+
 MqttManager::MqttManager()
     : _storage(nullptr), _logger(nullptr), _enabled(false),
       _suspended(false), _port(MQTT_DEFAULT_PORT),
       _wasConnected(false), _connectInProgress(false), _pendingBirthSync(false),
       _lastReconnectAttempt(0), _reconnectInterval(MQTT_RECONNECT_BASE),
       _connectStartedAt(0), _birthSyncReadyAt(0),
-      _lastPublish(0), _relayCallback(nullptr) {
+      _lastPublish(0), _relayCallback(nullptr)
+#if defined(ESP32)
+    , _mqttMutex(nullptr)
+#endif
+{
     _instance = this;
 }
 
 void MqttManager::begin(StorageManager& storage, EventLogger& logger) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     _logger = &logger;
     loadConfig();
+    applyClientConfig();
 
     // Set up callbacks
     _client.onConnect(_onConnect);
@@ -129,6 +177,7 @@ bool MqttManager::isConnected() { return _client.connected(); }
 bool MqttManager::isEnabled()   { return _enabled; }
 
 void MqttManager::setEnabled(bool enabled) {
+    MQTT_LOCK();
     _enabled = enabled;
     if (_storage) {
         JsonDocument doc;
@@ -152,6 +201,7 @@ void MqttManager::setEnabled(bool enabled) {
 }
 
 String MqttManager::getStateString() {
+    MQTT_LOCK();
     if (!_enabled) return F("Disabled");
     if (_suspended) return F("Suspended");
     if (_client.connected()) return F("Connected");
@@ -534,10 +584,10 @@ void MqttManager::publishHomeAssistantDiscoveryRemove(uint8_t index) {
 void MqttManager::publishInitialStates() {
     if (!_client.connected() || !_storage) return;
 
-    uint8_t relayCount = MAX_RELAYS;
+    uint8_t relayCount = NUM_RELAYS;
     JsonDocument hwDoc;
     if (_storage->loadJson(PATH_HARDWARE, hwDoc)) {
-        relayCount = hwDoc["num_relays"] | MAX_RELAYS;
+        relayCount = hwDoc["num_relays"] | NUM_RELAYS;
     }
     if (relayCount > MAX_RELAYS) relayCount = MAX_RELAYS;
 
@@ -558,6 +608,10 @@ void MqttManager::publishInitialStates() {
 void MqttManager::saveConfig(const String& broker, uint16_t port,
                               const String& user, const String& pass,
                               const String& clientId, const String& prefix) {
+    MQTT_LOCK();
+    // Disconnect BEFORE mutating member Strings so AsyncMqttClient never reads dangling const char* pointers
+    disconnect();
+
     _broker = broker;
     _broker.trim();
     _port = port > 0 ? port : MQTT_DEFAULT_PORT;
@@ -568,21 +622,12 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
         _pass = "";
     } else if (pass.length() > 0) {
         _pass = pass;
-        _pass.trim();
     }
 
     const String defaultSlug = defaultDeviceSlug();
 
-    _clientId = clientId;
-    _clientId.trim();
-    if (_clientId.length() == 0) {
-        _clientId = defaultSlug;
-    }
-    _prefix = prefix;
-    _prefix.trim();
-    if (_prefix.length() == 0) {
-        _prefix = defaultSlug;
-    }
+    _clientId = sanitizeMqttIdentifier(clientId, defaultSlug);
+    _prefix = sanitizeMqttIdentifier(prefix, defaultSlug);
 
     if (_storage) {
         JsonDocument doc;
@@ -596,10 +641,9 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
         _storage->saveJson(PATH_MQTT, doc);
     }
 
-    // Reconnect with new settings
-    disconnect();
+    // Refresh AsyncMqttClient internal pointers unconditionally
+    applyClientConfig();
     if (_enabled && _broker.length() > 0) {
-        applyClientConfig();
         SERIAL_PRINTF("[MQTT] Configured: %s:%d prefix=%s client_id=%s user=%s (pass_len=%d)\n",
                       _broker.c_str(), _port, _prefix.c_str(), _clientId.c_str(), _user.c_str(), _pass.length());
 
@@ -608,13 +652,14 @@ void MqttManager::saveConfig(const String& broker, uint16_t port,
     }
 }
 
-String MqttManager::getBroker()  { return _broker; }
-uint16_t MqttManager::getPort()  { return _port; }
-String MqttManager::getPrefix()  { return _prefix; }
-String MqttManager::getUser()    { return _user; }
-String MqttManager::getPassword() { return _pass; }
+String MqttManager::getBroker()   { MQTT_LOCK(); return _broker; }
+uint16_t MqttManager::getPort()   { MQTT_LOCK(); return _port; }
+String MqttManager::getPrefix()   { MQTT_LOCK(); return _prefix; }
+String MqttManager::getUser()     { MQTT_LOCK(); return _user; }
+String MqttManager::getPassword() { MQTT_LOCK(); return _pass; }
 
 void MqttManager::toJson(JsonObject& obj) {
+    MQTT_LOCK();
     obj["enabled"]   = _enabled;
     obj["broker"]    = _broker;
     obj["port"]      = _port;
@@ -683,6 +728,9 @@ void MqttManager::onDisconnect(AsyncMqttClientDisconnectReason reason) {
 void MqttManager::onMessage(char* topic, char* payload,
                              AsyncMqttClientMessageProperties properties,
                              size_t len, size_t index, size_t total) {
+    // Ignore fragmented or oversized frames (relay command payloads are compact single-frame tokens/JSON)
+    if (index != 0 || index + len != total) return;
+
     // Null-terminate payload (64 bytes supports both raw tokens and JSON command payloads)
     char payloadBuf[64];
     size_t copyLen = min(len, sizeof(payloadBuf) - 1);
@@ -716,13 +764,17 @@ void MqttManager::onMessage(char* topic, char* payload,
     }
 
     // Parse relay commands: {prefix}/relay/{N}/set
-    String relayPrefix = _prefix + "/relay/";
+    String relayPrefix = getPrefix() + "/relay/";
     if (topicStr.startsWith(relayPrefix) && topicStr.endsWith("/set")) {
         // Extract relay number
         int start = relayPrefix.length();
-        int end = topicStr.indexOf("/set");
-        String relayNumStr = topicStr.substring(start, end);
-        int relayNum = relayNumStr.toInt();
+        int end = topicStr.lastIndexOf("/set");
+        String relayNumStr = (end > start) ? topicStr.substring(start, end) : "";
+        bool validDigits = relayNumStr.length() > 0;
+        for (size_t k = 0; k < relayNumStr.length(); k++) {
+            if (!isDigit(relayNumStr[k])) { validDigits = false; break; }
+        }
+        int relayNum = validDigits ? relayNumStr.toInt() : 0;
 
         if (relayNum >= 1 && relayNum <= MAX_RELAYS) {
             if (payloadStr.equalsIgnoreCase("ON") || payloadStr == "1") {
@@ -781,13 +833,8 @@ void MqttManager::loadConfig() {
     _user      = doc["user"] | "";
     _user.trim();
     _pass      = doc["pass"] | "";
-    _pass.trim();
-    _clientId  = doc["client_id"] | defaultSlug;
-    _clientId.trim();
-    if (_clientId.length() == 0) _clientId = defaultSlug;
-    _prefix    = doc["prefix"] | defaultSlug;
-    _prefix.trim();
-    if (_prefix.length() == 0) _prefix = defaultSlug;
+    _clientId  = sanitizeMqttIdentifier(doc["client_id"] | defaultSlug, defaultSlug);
+    _prefix    = sanitizeMqttIdentifier(doc["prefix"] | defaultSlug, defaultSlug);
 }
 
 void MqttManager::applyClientConfig() {

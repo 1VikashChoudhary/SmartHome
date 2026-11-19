@@ -224,7 +224,7 @@ class DeviceWebSocketClient {
     } catch (_) {}
     _channel = null;
     try {
-      _httpClient?.close(force: false);
+      _httpClient?.close(force: true);
     } catch (_) {}
     _httpClient = null;
   }

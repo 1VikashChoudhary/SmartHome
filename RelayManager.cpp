@@ -39,6 +39,7 @@ void RelayManager::ensureMutex() const {
 
 RelayManager::RelayManager()
     : _storage(nullptr), _hw(nullptr), _numRelays(NUM_RELAYS),
+      _failsafeActive(false), _hasPriorSwitchBaseline(false), _cyclesDirty(false),
       _hasSwitched(false), _lastRelaySwitchTime(0), _lastStaggerStep(0),
       _statesDirty(false), _lastStateSave(0), _changeCallback(nullptr) {
 #if defined(ESP32)
@@ -280,6 +281,7 @@ void RelayManager::loop() {
         }
         for (uint8_t i = 0; i < _numRelays; i++) {
             if (_state[i].autoOnStart > 0 && _config[i].autoOnMinutes > 0) {
+                if (_failsafeActive && _config[i].failsafe) continue;
                 if (now - _state[i].autoOnStart >= (unsigned long)_config[i].autoOnMinutes * 60000UL) {
                     _state[i].autoOnStart = 0;
                     autoOnFired[autoOnCount++] = i;
@@ -318,6 +320,10 @@ void RelayManager::loop() {
         portEXIT_CRITICAL(&_mux);
 #endif
         if (timerFired) {
+            if (target && isFailsafeActive() && getFailsafe(i)) {
+                SERIAL_PRINTF("[Relay] %d quick timer ON blocked by active failsafe\n", i + 1);
+                continue;
+            }
             setState(i, target);
             SERIAL_PRINTF("[Relay] %d quick timer finished -> state %s\n", i + 1, target ? "ON" : "OFF");
         }
@@ -379,15 +385,17 @@ void RelayManager::setState(uint8_t index, bool state) {
         _hasSwitched = true;
 
         // Handle auto timers
+        unsigned long timerNow = millis();
+        if (timerNow == 0) timerNow = 1;
         if (state) {
             _state[index].autoOnStart = 0;
             if (_config[index].autoOffMinutes > 0) {
-                _state[index].autoOffStart = millis();
+                _state[index].autoOffStart = timerNow;
             }
         } else {
             _state[index].autoOffStart = 0;
-            if (_config[index].autoOnMinutes > 0) {
-                _state[index].autoOnStart = millis();
+            if (_config[index].autoOnMinutes > 0 && !(_failsafeActive && _config[index].failsafe)) {
+                _state[index].autoOnStart = timerNow;
             }
         }
 
@@ -416,6 +424,7 @@ void RelayManager::allOn() {
 
     for (uint8_t i = 0; i < _numRelays; i++) {
         if (!isChannelEnabled(i)) continue;
+        if (_failsafeActive && _config[i].failsafe) continue;
         _pendingNotifyOff[i] = false;
         if (_state[i].logicalState && !_pendingStaggerOn[i]) continue;
 
@@ -437,7 +446,7 @@ void RelayManager::allOn() {
 #endif
         _state[i].autoOnStart = 0;
         if (_config[i].autoOffMinutes > 0) {
-            _state[i].autoOffStart = now;
+            _state[i].autoOffStart = (now == 0) ? 1 : now;
         }
 
         _pendingStaggerOn[i] = true;
@@ -478,8 +487,8 @@ void RelayManager::allOff() {
         portEXIT_CRITICAL(&_mux);
 #endif
         _state[i].autoOffStart = 0;
-        if (_config[i].autoOnMinutes > 0) {
-            _state[i].autoOnStart = now;
+        if (_config[i].autoOnMinutes > 0 && !(_failsafeActive && _config[i].failsafe)) {
+            _state[i].autoOnStart = (now == 0) ? 1 : now;
         }
 
         _statesDirty = true;
@@ -664,7 +673,7 @@ void RelayManager::initWallSwitchStates() {
                     _state[i].logicalState = desired;
                     changedAny = true;
                 }
-            } else if (swMode == SWITCH_MODE_TOGGLE && currentSwitch != savedSwitch) {
+            } else if (swMode == SWITCH_MODE_TOGGLE && _hasPriorSwitchBaseline && currentSwitch != savedSwitch) {
                 SERIAL_PRINTF("[Relay] Switch %d changed during power off (%s→%s), toggling\n",
                               i + 1, savedSwitch ? "ON" : "OFF", currentSwitch ? "ON" : "OFF");
                 _state[i].logicalState = !_state[i].logicalState;
@@ -672,11 +681,12 @@ void RelayManager::initWallSwitchStates() {
             }
         }
 
-        if (_state[i].lastSwitchState != currentSwitch) {
+        if (_state[i].lastSwitchState != currentSwitch || !_hasPriorSwitchBaseline) {
             _state[i].lastSwitchState = currentSwitch;
             changedAny = true;
         }
     }
+    _hasPriorSwitchBaseline = true;
     if (changedAny) {
         _statesDirty = true;
     }
@@ -700,9 +710,13 @@ void RelayManager::activateFailsafe() {
     uint8_t count = 0;
     {
         RELAY_LOCK();
+        _failsafeActive = true;
         for (uint8_t i = 0; i < _numRelays; i++) {
-            if (_config[i].failsafe && _state[i].logicalState) {
-                turnOff[count++] = i;
+            if (_config[i].failsafe) {
+                _state[i].autoOnStart = 0;
+                if (_state[i].logicalState || _pendingStaggerOn[i]) {
+                    turnOff[count++] = i;
+                }
             }
         }
     }
@@ -711,6 +725,24 @@ void RelayManager::activateFailsafe() {
         setState(i, false);
         SERIAL_PRINTF("[Relay] Failsafe: relay %d turned OFF\n", i + 1);
     }
+}
+
+void RelayManager::clearFailsafe() {
+    RELAY_LOCK();
+    if (!_failsafeActive) return;
+    _failsafeActive = false;
+    unsigned long timerNow = millis();
+    if (timerNow == 0) timerNow = 1;
+    for (uint8_t i = 0; i < _numRelays; i++) {
+        if (_config[i].failsafe && !_state[i].logicalState && _config[i].autoOnMinutes > 0 && _state[i].autoOnStart == 0) {
+            _state[i].autoOnStart = timerNow;
+        }
+    }
+}
+
+bool RelayManager::isFailsafeActive() const {
+    RELAY_LOCK();
+    return _failsafeActive;
 }
 
 // ============================================================================
@@ -753,8 +785,8 @@ void RelayManager::saveStates() {
 
     if (_storage->saveRelayStatesNVS(logical, wallSw, _numRelays)) {
         _statesDirty = false;
-        _lastStateSave = millis();
     }
+    _lastStateSave = millis();
 }
 
 // ============================================================================
@@ -804,11 +836,14 @@ void RelayManager::stateToJson(JsonArray& arr) {
 // One-Shot Quick Timers
 // ============================================================================
 void RelayManager::startTimer(uint8_t index, bool targetState, uint32_t durationSeconds) {
+    RELAY_LOCK();
     if (index >= _numRelays || !isChannelEnabled(index) || durationSeconds == 0) return;
+    if (targetState && _failsafeActive && _config[index].failsafe) return;
     // Cap duration at max 32-bit millis range (~49.7 days) to avoid uint32 overflow
     uint32_t safeDurationSec = (durationSeconds > 4294967UL) ? 4294967UL : durationSeconds;
     unsigned long durMs = (unsigned long)safeDurationSec * 1000UL;
     unsigned long now = millis();
+    if (now == 0) now = 1;
 #if defined(ESP32)
     portENTER_CRITICAL(&_mux);
 #endif
@@ -876,7 +911,7 @@ uint32_t RelayManager::getTimerRemaining(uint8_t index) {
     if (!active) return 0;
     unsigned long elapsed = millis() - startMs;
     if (elapsed >= durMs) return 0;
-    return (uint32_t)((durMs - elapsed) / 1000UL);
+    return (uint32_t)((durMs - elapsed + 999UL) / 1000UL);
 }
 
 // ============================================================================
@@ -944,12 +979,14 @@ void RelayManager::loadStates() {
     bool wallSw[MAX_RELAYS] = {0};
 
     if (_storage->loadRelayStatesNVS(logical, wallSw, _numRelays)) {
+        _hasPriorSwitchBaseline = true;
         for (uint8_t i = 0; i < _numRelays; i++) {
             _state[i].logicalState = logical[i];
             _state[i].lastSwitchState = wallSw[i];
         }
         SERIAL_PRINTF("[Relay] Restored %d channel states from wear-leveled NVS\n", _numRelays);
     } else {
+        _hasPriorSwitchBaseline = false;
         Serial.println(F("[Relay] No prior states in NVS; defaults applied"));
     }
 }

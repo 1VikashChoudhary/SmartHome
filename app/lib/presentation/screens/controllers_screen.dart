@@ -730,7 +730,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
             tooltip: 'Refresh All Controllers',
             onPressed: () => manager.refreshAllDevices(),
           ),
-          // Batch OTA Shortcut
+          // Firmware OTA Shortcut
           IconButton(
             icon: Container(
               padding: const EdgeInsets.all(6),
@@ -751,7 +751,7 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                 size: 18,
               ),
             ),
-            tooltip: 'Batch Firmware OTA',
+            tooltip: 'Firmware Update (OTA)',
             onPressed: () {
               Navigator.push(
                 context,
@@ -842,81 +842,37 @@ class _ControllersScreenState extends ConsumerState<ControllersScreen> {
                         ],
                       ),
                       const SizedBox(height: 14),
-                      // Cluster Actions Row
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              onPressed: () => _showAddModal(context),
-                              icon: const Icon(
-                                Icons.add_rounded,
-                                size: 18,
-                                color: Colors.white,
-                              ),
-                              label: const Text(
-                                'Add Controller',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                elevation: 0,
-                              ),
+                      // Primary Add Controller Action (OTA remains in top-right menu / per-device tools)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _showAddModal(context),
+                          icon: const Icon(
+                            Icons.add_rounded,
+                            size: 18,
+                            color: Colors.white,
+                          ),
+                          label: const Text(
+                            'Add Controller',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
                             ),
                           ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const BatchOtaScreen(),
-                                  ),
-                                );
-                              },
-                              icon: Icon(
-                                Icons.system_update_alt_rounded,
-                                size: 18,
-                                color: AppColors.textPrimary,
-                              ),
-                              label: Text(
-                                'Batch Firmware',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              style: OutlinedButton.styleFrom(
-                                side: BorderSide(
-                                  color: isDark
-                                      ? const Color(0x28FFFFFF)
-                                      : const Color(0xFFCBD5E1),
-                                ),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 12,
                             ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
                           ),
-                        ],
+                        ),
                       ),
                     ],
                   ),

@@ -17,6 +17,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -292,6 +296,10 @@ private:
     static bool parseHardwareJson(JsonObjectConst obj, HardwareConfig& newCfg, String& outError);
     StorageManager* _storage;
     HardwareConfig _config;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _hwMutex;
+    void ensureMutex() const;
+#endif
 
     void setPreset5CH(HardwareConfig& cfg);
     void setPreset1CH(HardwareConfig& cfg);

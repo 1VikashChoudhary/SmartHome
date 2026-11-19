@@ -57,7 +57,11 @@ class _AutomationsScreenState extends ConsumerState<AutomationsScreen>
             _alarms.any((a) => a.id == id && a.enabled && !a.fired),
       );
       prevActiveCountdownIds = currentActiveIds;
-      setState(() {});
+      if ((currentActiveIds.isNotEmpty || justExpired) &&
+          _tabController.index == 1 &&
+          (ModalRoute.of(context)?.isCurrent ?? true)) {
+        setState(() {});
+      }
       tickCount++;
       if (!justExpired && tickCount % 15 != 0) return;
       if (isSyncingAlarms) return;

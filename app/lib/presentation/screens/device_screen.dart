@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/models/smart_device.dart';
 import '../../core/models/sensor_telemetry.dart';
@@ -39,7 +40,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       final manager = ref.read(deviceManagerProvider.notifier);
       if (idx >= 0 && !devices[idx].isOnline) {
         manager.refreshDevice(widget.deviceId);
-      } else {
+      } else if (idx >= 0 && !devices[idx].needsAuth) {
         manager.fetchDeviceRelays(widget.deviceId);
       }
     });
@@ -264,24 +265,47 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
+        titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              device.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w800,
-                color: AppColors.textPrimary,
-                letterSpacing: -0.3,
-              ),
+            Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    device.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.textPrimary,
+                      letterSpacing: -0.3,
+                    ),
+                  ),
+                ),
+                if (device.isGuest) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.amber.withValues(alpha: 0.4), width: 0.8),
+                    ),
+                    child: const Text(
+                      'Guest',
+                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amber),
+                    ),
+                  ),
+                ],
+              ],
             ),
             Row(
               children: [
                 if (device.room.isNotEmpty) ...[
                   Flexible(
+                    flex: 1,
                     child: Text(
                       device.room,
                       maxLines: 1,
@@ -292,6 +316,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   Text(' • ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
                 ],
                 Flexible(
+                  flex: 2,
                   child: Text(
                     device.ip,
                     maxLines: 1,
@@ -299,27 +324,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ),
-                if (device.isGuest) ...[
-                  Text(' • ', style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                    decoration: BoxDecoration(
-                      color: Colors.amber.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.amber.withValues(alpha: 0.4), width: 0.8),
-                    ),
-                    child: const Text(
-                      'Guest Tier',
-                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.amber),
-                    ),
-                  ),
-                ],
               ],
             ),
           ],
         ),
         actions: [
           IconButton(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             icon: Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
@@ -330,12 +342,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   width: 1,
                 ),
               ),
-              child: const Icon(Icons.handyman_outlined, size: 18),
+              child: const Icon(Icons.handyman_outlined, size: 17),
             ),
             tooltip: 'Hardware Tools & Logs',
             onPressed: () => DeviceToolsSheet.show(context, device, manager),
           ),
           IconButton(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             icon: Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
@@ -346,12 +360,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   width: 1,
                 ),
               ),
-              child: const Icon(Icons.edit_outlined, size: 18),
+              child: const Icon(Icons.edit_outlined, size: 17),
             ),
             tooltip: 'Rename Device',
             onPressed: () => _showRenameDialog(context, device),
           ),
           IconButton(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
             icon: Container(
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
@@ -362,12 +378,13 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   width: 1,
                 ),
               ),
-              child: const Icon(Icons.refresh_rounded, size: 18),
+              child: const Icon(Icons.refresh_rounded, size: 17),
             ),
             tooltip: 'Refresh Status',
             onPressed: () => manager.refreshDevice(device.id),
           ),
           PopupMenuButton<String>(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             color: isDark ? const Color(0xFF1A2337) : Colors.white,
             icon: Container(
               padding: const EdgeInsets.all(6),
@@ -379,7 +396,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   width: 1,
                 ),
               ),
-              child: const Icon(Icons.more_vert_rounded, size: 18),
+              child: const Icon(Icons.more_vert_rounded, size: 17),
             ),
             onSelected: (val) async {
               if (val == 'tools') {
@@ -530,7 +547,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 1000),
             child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                14,
+                16,
+                24 + MediaQuery.paddingOf(context).bottom,
+              ),
               children: [
                 if (device.needsAuth) ...[
                   InkWell(
@@ -721,117 +743,145 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
-                decoration: BoxDecoration(
-                  color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: isDark ? 0.16 : 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: 0.35),
-                    width: 0.8,
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4.5),
+                  decoration: BoxDecoration(
+                    color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: isDark ? 0.16 : 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: 0.35),
+                      width: 0.8,
+                    ),
                   ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 6.5,
-                      height: 6.5,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: device.isOnline ? AppColors.success : AppColors.danger,
-                        boxShadow: [
-                          BoxShadow(
-                            color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: 0.6),
-                            blurRadius: 5,
-                            spreadRadius: 1,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6.5,
+                        height: 6.5,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: device.isOnline ? AppColors.success : AppColors.danger,
+                          boxShadow: [
+                            BoxShadow(
+                              color: (device.isOnline ? AppColors.success : AppColors.danger).withValues(alpha: 0.6),
+                              blurRadius: 5,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          device.isOnline ? 'ONLINE • REAL-TIME WEBSOCKET' : 'OFFLINE CONTROLLER',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                            color: device.isOnline ? AppColors.success : AppColors.danger,
                           ),
-                        ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      device.isOnline ? 'ONLINE • REAL-TIME WEBSOCKET' : 'OFFLINE CONTROLLER',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5,
-                        color: device.isOnline ? AppColors.success : AppColors.danger,
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF1B2337) : const Color(0xFFF1F5F9),
-                      borderRadius: BorderRadius.circular(7),
-                    ),
-                    child: Text(
-                      'FW v${device.fwVersion}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1B2337) : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Text(
+                  'FW v${device.fwVersion}',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.textSecondary,
                   ),
-                ],
+                ),
               ),
             ],
           ),
           const SizedBox(height: 14),
 
-          // 4 Partitioned Hardware Telemetry Items
-          Row(
-            children: [
-              Expanded(
-                child: _buildHardwareStatTile(
-                  icon: Icons.wifi_rounded,
-                  iconGradient: const [Color(0xFF06B6D4), Color(0xFF3B82F6)],
-                  value: '${device.signalPercent}%',
-                  label: 'WIFI LINK',
-                  sub: '${device.rssi} dBm',
-                  isDark: isDark,
+          // 2x2 Symmetrical Hardware Telemetry Grid (full MAC & even heights)
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildHardwareStatTile(
+                    icon: Icons.wifi_rounded,
+                    iconGradient: const [Color(0xFF06B6D4), Color(0xFF3B82F6)],
+                    value: '${device.signalPercent}%',
+                    label: 'WIFI LINK',
+                    sub: '${device.rssi} dBm',
+                    isDark: isDark,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildHardwareStatTile(
-                  icon: Icons.timer_rounded,
-                  iconGradient: const [Color(0xFFF59E0B), Color(0xFFEF4444)],
-                  value: device.uptime.isNotEmpty ? device.uptime : '0m',
-                  label: 'UPTIME',
-                  sub: 'Continuous',
-                  isDark: isDark,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _buildHardwareStatTile(
+                    icon: Icons.timer_rounded,
+                    iconGradient: const [Color(0xFFF59E0B), Color(0xFFEF4444)],
+                    value: device.uptime.isNotEmpty ? device.uptime : '0m',
+                    label: 'UPTIME',
+                    sub: 'Continuous',
+                    isDark: isDark,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildHardwareStatTile(
-                  icon: Icons.memory_rounded,
-                  iconGradient: const [Color(0xFF6366F1), Color(0xFF818CF8)],
-                  value: '${device.freeHeap ~/ 1024} KB',
-                  label: 'FREE HEAP',
-                  sub: '${device.isEsp8266 ? "ESP8266" : "ESP32"} RAM',
-                  isDark: isDark,
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _buildHardwareStatTile(
+                    icon: Icons.memory_rounded,
+                    iconGradient: const [Color(0xFF6366F1), Color(0xFF818CF8)],
+                    value: '${device.freeHeap ~/ 1024} KB',
+                    label: 'FREE HEAP',
+                    sub: '${device.isEsp8266 ? "ESP8266" : "ESP32"} RAM',
+                    isDark: isDark,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _buildHardwareStatTile(
-                  icon: Icons.fingerprint_rounded,
-                  iconGradient: const [Color(0xFF10B981), Color(0xFF059669)],
-                  value: device.mac.isNotEmpty ? device.mac.substring(max(0, device.mac.length - 8)) : 'N/A',
-                  label: 'MAC ID',
-                  sub: 'Hardware ID',
-                  isDark: isDark,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _buildHardwareStatTile(
+                    icon: Icons.fingerprint_rounded,
+                    iconGradient: const [Color(0xFF10B981), Color(0xFF059669)],
+                    value: device.mac.isNotEmpty ? device.mac.toUpperCase() : 'N/A',
+                    label: 'MAC ID',
+                    sub: device.mac.isNotEmpty ? 'Tap to copy' : 'Hardware ID',
+                    isDark: isDark,
+                    monospaceValue: true,
+                    onTap: device.mac.isEmpty
+                        ? null
+                        : () {
+                            Clipboard.setData(
+                              ClipboardData(text: device.mac.toUpperCase()),
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('MAC ${device.mac.toUpperCase()} copied'),
+                                backgroundColor: AppColors.success,
+                                duration: const Duration(seconds: 2),
+                              ),
+                            );
+                          },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -845,9 +895,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     required String label,
     required String sub,
     required bool isDark,
+    bool monospaceValue = false,
+    VoidCallback? onTap,
   }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+    final content = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF182033) : const Color(0xFFF8FAFC),
         borderRadius: BorderRadius.circular(14),
@@ -856,46 +908,73 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           width: 0.8,
         ),
       ),
-      child: Column(
+      child: Row(
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: iconGradient),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(icon, size: 15, color: Colors.white),
+            child: Icon(icon, size: 16, color: Colors.white),
           ),
-          const SizedBox(height: 7),
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w900,
-              color: AppColors.textPrimary,
-            ),
-          ),
-          const SizedBox(height: 1),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 8.5,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.5,
-              color: AppColors.textMuted,
-            ),
-          ),
-          Text(
-            sub,
-            style: TextStyle(
-              fontSize: 8.5,
-              color: AppColors.textSecondary,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    style: TextStyle(
+                      fontSize: monospaceValue ? 11.5 : 13.5,
+                      fontWeight: FontWeight.w900,
+                      fontFamily: monospaceValue ? 'monospace' : null,
+                      color: AppColors.textPrimary,
+                      letterSpacing: monospaceValue ? -0.3 : -0.2,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  sub,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+    if (onTap == null) return content;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: content,
       ),
     );
   }
@@ -957,7 +1036,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Hardware Tools & System Console',
+                      'Hardware Tools & Console',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 14,
@@ -967,7 +1048,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Buzzer, I2C LCD, Sensor Calibration, Logs & System Diagnostics',
+                      'Buzzer, I2C LCD, Sensor Calibration, Logs & Diagnostics',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 11,
                         color: AppColors.textSecondary,
@@ -977,6 +1060,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   ],
                 ),
               ),
+              const SizedBox(width: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
@@ -1050,7 +1134,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        'Live Environmental Telemetry',
+                        'Live Telemetry',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -1067,7 +1151,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               const SizedBox(width: 8),
               TextButton.icon(
                 style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
                 ),
                 icon: Icon(Icons.auto_mode_rounded, size: 15, color: AppColors.accent),
@@ -1492,19 +1578,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               }
 
               final sections = <Widget>[];
-              if (allGauges.length == 3) {
-                sections.add(
-                  Row(
-                    children: [
-                      Expanded(child: allGauges[0]),
-                      const SizedBox(width: 10),
-                      Expanded(child: allGauges[1]),
-                      const SizedBox(width: 10),
-                      Expanded(child: allGauges[2]),
-                    ],
-                  ),
-                );
-              } else if (allGauges.isNotEmpty) {
+              if (allGauges.isNotEmpty) {
                 for (int i = 0; i < allGauges.length; i += 2) {
                   final chunk = allGauges.sublist(
                     i,
@@ -1513,14 +1587,17 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                   sections.add(
                     Padding(
                       padding: EdgeInsets.only(top: i == 0 ? 0 : 10),
-                      child: Row(
-                        children: [
-                          Expanded(child: chunk[0]),
-                          if (chunk.length > 1) ...[
-                            const SizedBox(width: 10),
-                            Expanded(child: chunk[1]),
+                      child: IntrinsicHeight(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Expanded(child: chunk[0]),
+                            if (chunk.length > 1) ...[
+                              const SizedBox(width: 10),
+                              Expanded(child: chunk[1]),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
                     ),
                   );
@@ -2127,5 +2204,4 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     );
   }
 
-  int max(int a, int b) => a > b ? a : b;
 }

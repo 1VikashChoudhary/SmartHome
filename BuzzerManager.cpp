@@ -10,6 +10,23 @@
 #include "BuzzerManager.h"
 #include "HardwareManager.h"
 
+#if defined(ESP32)
+namespace {
+struct BuzzerLockGuard {
+    SemaphoreHandle_t m;
+    explicit BuzzerLockGuard(SemaphoreHandle_t mtx) : m(mtx) {
+        if (m) xSemaphoreTakeRecursive(m, portMAX_DELAY);
+    }
+    ~BuzzerLockGuard() {
+        if (m) xSemaphoreGiveRecursive(m);
+    }
+};
+}
+#define BUZZER_LOCK() BuzzerLockGuard _buzGuard(_buzMutex)
+#else
+#define BUZZER_LOCK() ((void)0)
+#endif
+
 // Pattern definitions: durations in ms, alternating ON/OFF
 // Gas alarm: rapid beep 100ms on, 100ms off
 const uint16_t BuzzerManager::PATTERN_GAS[]  = {100, 100};
@@ -45,7 +62,15 @@ BuzzerManager::BuzzerManager()
     : _storage(nullptr), _buzzerPin(PIN_BUZZER), _hwAllowed(true), _enabled(DEFAULT_BUZZER_ENABLED), _muted(false),
       _alarming(false), _alarmType(0), _volume(BUZZER_DEFAULT_VOLUME),
       _muteStart(0), _toneOn(false), _patternStep(0), _stepStart(0),
-      _hasResumeAlarm(false), _resumeAlarmType(0) {}
+      _hasResumeAlarm(false), _resumeAlarmType(0)
+#if defined(ESP32)
+      , _buzMutex(nullptr)
+#endif
+{
+#if defined(ESP32)
+    _buzMutex = xSemaphoreCreateRecursiveMutex();
+#endif
+}
 
 void BuzzerManager::begin(StorageManager& storage) {
     _storage = &storage;
@@ -107,6 +132,7 @@ void BuzzerManager::begin(StorageManager& storage, HardwareManager& hw) {
 }
 
 void BuzzerManager::loop() {
+    BUZZER_LOCK();
     unsigned long now = millis();
 
     // Auto-unmute check
@@ -121,6 +147,7 @@ void BuzzerManager::loop() {
     const uint16_t* pattern = getPattern(_alarmType);
     uint8_t patLen = getPatternLen(_alarmType);
     if (!pattern || patLen == 0) return;
+    if (_patternStep >= patLen) _patternStep = 0;
 
     uint16_t stepDuration = pattern[_patternStep];
 
@@ -167,6 +194,7 @@ void BuzzerManager::loop() {
 }
 
 void BuzzerManager::startAlarm(uint8_t type) {
+    BUZZER_LOCK();
     if (!_enabled) return;
 
     // Preserve active repeating alarm (Gas/Temp/Fault/Scheduled) while playing a transient chirp/test beep.
@@ -179,9 +207,9 @@ void BuzzerManager::startAlarm(uint8_t type) {
         _hasResumeAlarm = false;
     }
 
+    _patternStep = 0;
     _alarmType = type;
     _alarming = true;
-    _patternStep = 0;
     _stepStart = millis();
 
     // Start with tone ON
@@ -191,6 +219,7 @@ void BuzzerManager::startAlarm(uint8_t type) {
 }
 
 void BuzzerManager::stopAlarm() {
+    BUZZER_LOCK();
     _alarming = false;
     _hasResumeAlarm = false;
     _patternStep = 0;
@@ -206,6 +235,7 @@ void BuzzerManager::beepLong()   { startAlarm(BUZZER_ALARM_LONG); }
 void BuzzerManager::beepCancel() { startAlarm(BUZZER_ALARM_CANCEL); }
 
 void BuzzerManager::mute() {
+    BUZZER_LOCK();
     _muted = true;
     _muteStart = millis();
     toneOff(); // Silence immediately
@@ -213,30 +243,36 @@ void BuzzerManager::mute() {
 }
 
 void BuzzerManager::unmute() {
+    BUZZER_LOCK();
     _muted = false;
     Serial.println(F("[Buzzer] Unmuted"));
 }
 
-bool BuzzerManager::isMuted()      { return _muted; }
-bool BuzzerManager::isAlarming()   { return _alarming; }
-bool BuzzerManager::isEnabled()    { return _enabled; }
-uint8_t BuzzerManager::getVolume() { return _volume; }
-uint8_t BuzzerManager::getActiveAlarmType() { return _alarmType; }
+bool BuzzerManager::isMuted()      { BUZZER_LOCK(); return _muted; }
+bool BuzzerManager::isAlarming()   { BUZZER_LOCK(); return _alarming; }
+bool BuzzerManager::isEnabled()    { BUZZER_LOCK(); return _enabled; }
+uint8_t BuzzerManager::getVolume() { BUZZER_LOCK(); return _volume; }
+uint8_t BuzzerManager::getActiveAlarmType() { BUZZER_LOCK(); return _alarmType; }
 
 void BuzzerManager::setEnabled(bool enabled) {
-    if (enabled && !_hwAllowed) {
-        _enabled = false;
-        stopAlarm();
-        saveConfig();
-        return;
+    {
+        BUZZER_LOCK();
+        if (enabled && !_hwAllowed) {
+            _enabled = false;
+            stopAlarm();
+        } else {
+            _enabled = enabled;
+            if (!_enabled) stopAlarm();
+        }
     }
-    _enabled = enabled;
-    if (!_enabled) stopAlarm();
     saveConfig();
 }
 
 void BuzzerManager::setVolume(uint8_t vol) {
-    _volume = vol;
+    {
+        BUZZER_LOCK();
+        _volume = vol;
+    }
     saveConfig();
 }
 

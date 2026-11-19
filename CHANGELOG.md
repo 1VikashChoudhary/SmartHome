@@ -1,6 +1,19 @@
 # Changelog
 
-All notable changes to the ESP32 SmartHome project are documented in this file.
+All notable changes to the SmartHome (ESP32 + ESP8266 Unified Firmware & Flutter Companion App) project are documented in this file.
+
+## [1.1.0] - 2026-11-19 — Unified Multi-Sensor, Concurrency & Security Hardening Edition
+
+### Added
+- **Unified ESP32 + ESP8266 Architecture**: Single firmware codebase supporting up to 8 relays and multi-instance sensors (`Climate x4`, `Light x2`, `Motion x6`, `Water Probe x4`, `Ultrasonic Tank x4`, `Gas/SGP40 VOC x4`).
+- **Safe-by-Default Firmware OTA**: Single-controller OTA default in the companion app with ESP32/ESP8266 chip-magic verification and gated same-chip batch mode.
+- **Sensor Pin Guide & Smart Auto-Pick**: Hardware Configurator guides users away from boot-strapping/wake pins (`D4/GPIO 2`, `D8/GPIO 15`, `D0/GPIO 16`) with live per-slot warnings.
+- **Personal Non-Commercial Source-Available License**: Added root `LICENSE` file for personal home use without modification or commercial redistribution.
+
+### Fixed & Hardened
+- **ESP32 Dual-Core Thread Safety**: Added FreeRTOS synchronization across `Diagnostics`, `LCDManager` (deferred Core 1 I2C writes), `TimeManager`, `BuzzerManager`, `SensorManager`, `HardwareManager`, `MqttManager`, `WifiManager`, `WebSocketManager`, and `StorageManager`.
+- **Safety & Failsafe Integrity**: Latched failsafe relays OFF during active Gas/Temp alarms, added `1.5°C` temperature alarm hysteresis, prevented low-threshold MQ-2 permanent latching, required 3 consecutive failures before DS18B20 probe fault, and prevented boot-time false firing of `BELOW` automation rules before first sensor sample.
+- **Security Hardening**: Enforced `X-Requested-With` CSRF validation on mutating API routes even when `web_auth` is disabled, added rate limiting and role-scoped WS token rotation on `/api/logout`, stored `ota_pass_md5` only when `arduino_ota` is enabled, sanitized outbound webhook headers against CRLF injection, hardened SSRF validation and TLS handshake timeout in `RemoteAlertManager`, and fixed Android `MainActivity` lockscreen flag persistence and `SafetyMonitorService` lockout loops.
 
 ## [1.0.5] - 2026-11-04 — Security Edition
 

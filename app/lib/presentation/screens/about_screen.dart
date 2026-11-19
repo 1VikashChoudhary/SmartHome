@@ -214,7 +214,7 @@ class _AboutScreenState extends State<AboutScreen> {
                   alignment: WrapAlignment.center,
                   children: [
                     _buildPill(
-                      label: 'v1.0.0 Stable',
+                      label: 'v1.1.0 Stable',
                       icon: Icons.verified_rounded,
                       color: AppColors.primary,
                     ),

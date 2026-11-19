@@ -742,6 +742,62 @@ void main() {
         expect(find.text('HUMIDITY'), findsNothing);
       },
     );
+
+    testWidgets(
+      'Narrow 360px phone layout shows full MAC, 2-col 3-gauge telemetry, and no AppBar overflow',
+      (WidgetTester tester) async {
+        tester.view.physicalSize = const Size(360, 800);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final device = SmartDevice(
+          id: 'dev-narrow-ui',
+          name: 'Office',
+          room: 'Living Room',
+          hostname: 'smarthome-184b.local',
+          ip: 'smarthome-184b.local',
+          mac: 'C4:D8:D5:03:18:4B',
+          platform: 'ESP8266',
+          authRole: 'guest',
+          isOnline: true,
+          relays: const [],
+          telemetry: SensorTelemetry(
+            dhtEnabled: true,
+            gasEnabled: false,
+            gasHwAllowed: false,
+            climates: const [
+              ClimateReading(
+                index: 0,
+                enabled: true,
+                label: 'Climate 1',
+                temperature: 24.6,
+                humidityEnabled: false,
+              ),
+              ClimateReading(
+                index: 1,
+                enabled: true,
+                label: 'Climate 2',
+                temperature: 26.0,
+                humidity: 79,
+                humidityEnabled: true,
+              ),
+            ],
+          ),
+        );
+
+        await pumpDeviceScreen(tester, device);
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('C4:D8:D5:03:18:4B'), findsOneWidget);
+        expect(find.text('Live Telemetry'), findsOneWidget);
+        expect(find.text('CLIMATE 1 TEMP'), findsOneWidget);
+        expect(find.text('CLIMATE 2 TEMP'), findsOneWidget);
+        expect(find.text('CLIMATE 2 HUMIDITY'), findsOneWidget);
+      },
+    );
   });
 
   group('AP Roaming Recovery & Connection Resilience Regressions', () {
@@ -2450,6 +2506,20 @@ void main() {
           selectedDeviceId: null,
         );
         expect(esp8266Targets.map((d) => d.id), ['d8266']);
+
+        // ESP32-S3 binary (chip_id 0x0009) rejected for classic ESP32 target
+        final fakeEsp32S3Bytes = Uint8List.fromList(fakeEsp32Bytes);
+        fakeEsp32S3Bytes[12] = 0x09;
+        fakeEsp32S3Bytes[13] = 0x00;
+        expect(
+          BatchOtaScreen.validateFirmwareBytes(
+            filename: 'firmware.bin',
+            bytes: fakeEsp32S3Bytes,
+            isFilesystemOta: false,
+            targetDevice: esp32Device,
+          ),
+          contains('ESP32-S3'),
+        );
       },
     );
 
@@ -2586,6 +2656,80 @@ void main() {
         manager.stopForegroundSync();
         await tester.pumpWidget(const SizedBox());
         await tester.pump(const Duration(seconds: 6));
+      },
+    );
+
+    test(
+      'SmartDevice.copyWith supports clearAuthUsername and clearAuthPassword for clean logout',
+      () {
+        final dev = SmartDevice(
+          id: 'smarthome_auth_test',
+          mac: '3C:8A:1F:81:21:60',
+          ip: '192.168.29.103',
+          hostname: 'smarthome-2160',
+          name: 'Bedroom',
+          authRequired: true,
+          authLocked: false,
+          authUsername: 'custom_admin',
+          authPassword: 'SecretPassword123',
+        );
+
+        final loggedOut = dev.copyWith(
+          authUsername: null,
+          clearAuthUsername: true,
+          authPassword: null,
+          clearAuthPassword: true,
+          authLocked: true,
+        );
+
+        expect(loggedOut.authUsername, isNull);
+        expect(loggedOut.authPassword, isNull);
+        expect(loggedOut.authLocked, isTrue);
+        expect(loggedOut.needsAuth, isTrue);
+
+        final fromJson = SmartDevice.fromStorageJson({
+          'id': 'smarthome_auth_test',
+          'mac': '3C:8A:1F:81:21:60',
+          'ip': '192.168.29.103',
+          'hostname': 'smarthome-2160',
+          'name': 'Bedroom',
+        });
+        expect(fromJson.fwVersion, '1.1.0');
+      },
+    );
+
+    testWidgets(
+      'ControllerLoginDialog never pre-fills stored plaintext password into password field',
+      (tester) async {
+        final dev = SmartDevice(
+          id: 'smarthome_login_test',
+          mac: '3C:8A:1F:81:21:60',
+          ip: '192.168.29.103',
+          hostname: 'smarthome-2160',
+          name: 'Bedroom',
+          authRequired: true,
+          authLocked: true,
+          authUsername: 'admin',
+          authPassword: 'TopSecretStoredPassword!',
+        );
+
+        await tester.pumpWidget(
+          ProviderScope(
+            child: MaterialApp(
+              theme: AppTheme.darkTheme,
+              home: Scaffold(
+                body: ControllerLoginDialog(device: dev),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text('TopSecretStoredPassword!'), findsNothing);
+        final textFields = tester.widgetList<TextField>(find.byType(TextField)).toList();
+        expect(textFields.length, greaterThanOrEqualTo(2));
+        expect(textFields[0].controller?.text, 'admin');
+        expect(textFields[1].controller?.text, isEmpty);
       },
     );
   });

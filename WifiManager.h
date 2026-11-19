@@ -14,6 +14,8 @@
 #else
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #endif
 #include <DNSServer.h>
 #include <ArduinoJson.h>
@@ -53,7 +55,8 @@ public:
 
     // --- Control ---
     void startAP();
-    void saveCredentials(const String& ssid, const String& pass);
+    void saveCredentials(const String& ssid, const String& pass, bool connectNow = true);
+    void requestReconnect(unsigned long delayMs = 250);
     void resetWiFi();
     void requestReset(unsigned long delayMs = 250);
     bool setHostname(const String& hostname);
@@ -98,6 +101,9 @@ private:
     bool _pendingReset;
     unsigned long _pendingResetAt;
     unsigned long _pendingResetDelay;
+    bool _pendingReconnect;
+    unsigned long _pendingReconnectAt;
+    unsigned long _pendingReconnectDelay;
 
     // Callback
     void (*_connectCallback)(bool);
@@ -111,6 +117,8 @@ private:
     String generateAPSSID();
     String generateAPPassword();
 #if defined(ESP32)
+    mutable SemaphoreHandle_t _wifiMutex;
+    void ensureMutex() const;
     void onWiFiEvent(WiFiEvent_t event);
     static void staticWiFiEvent(WiFiEvent_t event);
 #endif

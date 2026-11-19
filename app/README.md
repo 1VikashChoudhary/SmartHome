@@ -1,17 +1,14 @@
-# smarthome_app
+# SmartHome Pro — Flutter Companion App
 
-A new Flutter project.
+Cross-platform companion application (**Android, iOS, Windows, macOS**) for the unified **ESP32 & ESP8266 SmartHome** firmware (`v1.1.0`).
 
-## Getting Started
+> **Note:** Web browsers are served directly by each ESP controller's embedded PROGMEM Obsidian Web Dashboard at `http://<device_ip>/`.
 
-This project is a starting point for a Flutter application.
+## Quick Start
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```

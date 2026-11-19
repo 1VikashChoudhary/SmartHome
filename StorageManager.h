@@ -93,6 +93,7 @@ private:
 #if defined(ESP32)
     mutable SemaphoreHandle_t _fsMutex;
     void ensureMutex() const;
+    uint32_t _pendingCycleIncrements[MAX_RELAYS];
 #endif
 
     // Create default config file if it doesn't exist

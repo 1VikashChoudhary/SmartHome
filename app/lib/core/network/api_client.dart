@@ -993,6 +993,28 @@ class ApiClient {
     }
   }
 
+  /// Notify the controller to rotate active WebSocket session tokens on logout.
+  Future<bool> logout(
+    String ip, {
+    String? password,
+    String? username,
+  }) async {
+    try {
+      final res = await _dio.post(
+        _url(ip, '/api/logout'),
+        data: const <String, dynamic>{},
+        options: _authOptions(
+          password,
+          username: username,
+          skipUnauthorizedCallback: true,
+        ),
+      );
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Factory reset ESP32 controller
   Future<bool> factoryReset(
     String ip, {

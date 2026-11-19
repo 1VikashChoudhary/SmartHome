@@ -217,6 +217,15 @@ class DeviceStorageService {
       final rawDevices = map['devices'];
       if (rawDevices is! List) return null;
 
+      final existingDevices = await loadDevices();
+      final existingById = <String, SmartDevice>{
+        for (final d in existingDevices) d.id: d,
+      };
+      final existingByMac = <String, SmartDevice>{
+        for (final d in existingDevices)
+          if (d.mac.isNotEmpty) d.mac: d,
+      };
+
       final restoredDevices = <SmartDevice>[];
       for (final item in rawDevices) {
         if (item is Map) {
@@ -235,13 +244,31 @@ class DeviceStorageService {
               ? cleanHostname
               : 'smarthome';
 
-          final dev = SmartDevice.fromStorageJson(devMap);
+          var dev = SmartDevice.fromStorageJson(devMap);
           if (dev.id.trim().isEmpty ||
               dev.numRelays < 0 ||
               dev.numRelays > 16) {
             continue;
           }
+          final prior = existingById[dev.id] ??
+              (dev.mac.isNotEmpty ? existingByMac[dev.mac] : null);
+          if (prior != null &&
+              (dev.authPassword == null || dev.authPassword!.isEmpty) &&
+              prior.authPassword != null &&
+              prior.authPassword!.isNotEmpty) {
+            dev = dev.copyWith(
+              authPassword: prior.authPassword,
+              authUsername: dev.authUsername ?? prior.authUsername,
+            );
+          }
           restoredDevices.add(dev);
+        }
+      }
+
+      final restoredIds = restoredDevices.map((d) => d.id).toSet();
+      for (final oldDev in existingDevices) {
+        if (!restoredIds.contains(oldDev.id)) {
+          await deleteDeviceCredentials(oldDev.id);
         }
       }
 

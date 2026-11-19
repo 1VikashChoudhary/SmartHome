@@ -1291,6 +1291,17 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     final dev = state[idx];
     _wsClients.remove(dev.id)?.dispose();
 
+    // Best-effort notify controller to rotate active WebSocket token before wiping local credentials
+    if (dev.ip.isNotEmpty) {
+      unawaited(
+        _api.logout(
+          dev.ip,
+          password: dev.authPassword,
+          username: dev.authUsername,
+        ),
+      );
+    }
+
     ApiClient.unregisterDevice(dev.ip);
     await _storage.deleteDeviceCredentials(deviceId);
     if (!_isAlive) return;
@@ -1299,6 +1310,8 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
     if (curIdx < 0) return;
     final current = state[curIdx];
     final updated = current.copyWith(
+      authUsername: null,
+      clearAuthUsername: true,
       authPassword: null,
       clearAuthPassword: true,
       authLocked: true,
@@ -1766,9 +1779,12 @@ class DeviceManager extends Notifier<List<SmartDevice>> {
         authLocked: disablingAuth ? false : current.authLocked,
         authRole: disablingAuth ? 'admin' : current.authRole,
         authUsername: nextUsername,
-        authPassword: (newPass != null && newPass.isNotEmpty)
-            ? newPass
-            : current.authPassword,
+        clearAuthPassword: disablingAuth,
+        authPassword: disablingAuth
+            ? null
+            : ((newPass != null && newPass.isNotEmpty)
+                ? newPass
+                : current.authPassword),
       );
       final list = List<SmartDevice>.from(state);
       list[curIdx] = updated;

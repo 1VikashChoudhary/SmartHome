@@ -7,10 +7,10 @@
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-120%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-122%2B%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
-IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, Web). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard.
+IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, macOS). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard served directly by each controller.
 
 ---
 
@@ -115,7 +115,7 @@ graph TB
 
     subgraph Client_Interfaces["Client Interfaces"]
         WEB_UI["Embedded Obsidian Web Dashboard<br/>(SPA in PROGMEM, WebSocket, REST)"]
-        FLUTTER_APP["Unified Flutter Companion App<br/>(Android, iOS, Windows, Web)"]
+        FLUTTER_APP["Unified Flutter Companion App<br/>(Android, iOS, Windows, macOS)"]
         HA_HUB["Home Assistant / Node-RED<br/>(MQTT Auto-Discovery)"]
     end
 
@@ -137,14 +137,14 @@ To meet the security demands of commercial installations and multi-tenant homes,
 | **View Live Sensor Telemetry** | Full Access | Full Access | Blocked |
 | **Set Quick Off-Timers** | Full Access | Full Access | Blocked |
 | **Mute Alarm Buzzer** | Full Access | Full Access | Blocked |
-| **View Logs & Diagnostics** | Full Access | Read-Only | Blocked |
+| **View Logs & Diagnostics** | Full Access | Read-Only (Wi-Fi/MQTT redacted) | Blocked |
 | **Hardware & GPIO Template Config** | Full Access | **403 Forbidden** | Blocked |
 | **Wi-Fi & Network Configuration** | Full Access | **403 Forbidden** | Blocked |
 | **MQTT IoT Broker Settings** | Full Access | **403 Forbidden** | Blocked |
 | **System Backup & Restore** | Full Access | **403 Forbidden** | Blocked |
 | **OTA Firmware Flashing** | Full Access | **403 Forbidden** | Blocked |
 | **Reboot & Factory Reset** | Full Access | **403 Forbidden** | Blocked |
-| **mDNS & UDP Discovery** | Allowed | Allowed | Allowed (`/api/discovery`) |
+| **mDNS & HTTP Discovery** | Allowed | Allowed | Allowed (`/api/discovery`) |
 
 
 ---
@@ -283,9 +283,9 @@ All pre-compiled firmware binaries and mobile application packages are included 
 
 The Flutter companion app (`app/`) provides unified control over all ESP8266 and ESP32 controllers on your local network:
 
-* **Radar Discovery**: Automatically detects online controllers via UDP broadcasts and mDNS without manual IP configuration. Displays Amber badges for ESP8266 and Cyan badges for ESP32.
+* **Radar Discovery**: Automatically detects online controllers via mDNS (`_smarthome._tcp`) and intelligent subnet probing (`/api/discovery`) without manual IP configuration. Displays Amber badges for ESP8266 and Cyan badges for ESP32.
 * **Architecture-Aware Hardware Editor**: Adapts pin dropdowns and preset templates dynamically based on whether the selected controller is ESP8266 or ESP32.
-* **Batch OTA Updating**: Allows 1-click over-the-air firmware upgrades across multiple controllers simultaneously, with automatic architecture filtering to prevent cross-flashing incompatible binaries.
+* **Safe-by-Default Firmware OTA**: Defaults to single-controller OTA with binary header + chip-ID validation to prevent cross-flashing ESP32 and ESP8266 images, plus an opt-in same-chip batch mode when 2+ identical controllers are online.
 * **Hub Migration**: One-click export of all paired controllers, room assignments, credentials, and custom icon sets in a single `.json` file.
 
 ### Running the App Locally:
@@ -447,4 +447,9 @@ If it brings value to your home or maker setups, consider sponsoring to fuel ong
 
 ## License
 
-Copyright © 2026 Vikash Choudhary.  All rights reserved.
+Copyright © 2026 Vikash Choudhary. All rights reserved.
+
+This project is released under the **[Personal Non-Commercial Source-Available License](LICENSE)**:
+- **Permitted**: Free personal, private, non-commercial home use on your own hardware.
+- **Prohibited**: Any code modification, derivative works, redistribution, or commercial/business use.
+- **No Warranty**: Provided `"AS IS"` without warranty or liability of any kind. See [`LICENSE`](LICENSE) for full terms.

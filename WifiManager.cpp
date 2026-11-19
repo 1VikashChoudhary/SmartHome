@@ -35,6 +35,31 @@ void disableWifiSleep() {
 // Static instance pointer for WiFi event callback
 WifiManager* WifiManager::_instance = nullptr;
 
+#if defined(ESP32)
+namespace {
+class WifiMutexGuard {
+public:
+    explicit WifiMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~WifiMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void WifiManager::ensureMutex() const {
+    if (!_wifiMutex) {
+        _wifiMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define WIFI_LOCK() ensureMutex(); WifiMutexGuard _wifiLockGuard(_wifiMutex)
+#else
+#define WIFI_LOCK() ((void)0)
+#endif
+
 // ============================================================================
 // Constructor
 // ============================================================================
@@ -46,7 +71,12 @@ WifiManager::WifiManager()
       _failCount(0), _quickRetryPending(false), _usingPinnedBssid(false), _skipPinnedBssid(false),
       _dnsStarted(false), _apScanPending(false), _apStartedAt(0),
       _pendingReset(false), _pendingResetAt(0), _pendingResetDelay(250),
-      _connectCallback(nullptr), _wasConnected(false) {
+      _pendingReconnect(false), _pendingReconnectAt(0), _pendingReconnectDelay(250),
+      _connectCallback(nullptr), _wasConnected(false)
+#if defined(ESP32)
+    , _wifiMutex(nullptr)
+#endif
+{
     for (uint8_t i = 0; i < WIFI_MAX_SAVED_NETWORKS; i++) {
         memset(_networks[i].bssid, 0, sizeof(_networks[i].bssid));
         _networks[i].channel = 0;
@@ -59,6 +89,9 @@ WifiManager::WifiManager()
 // Initialize WiFi
 // ============================================================================
 void WifiManager::begin(StorageManager& storage) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
@@ -117,6 +150,23 @@ void WifiManager::loop() {
     if (_pendingReset && (now - _pendingResetAt >= _pendingResetDelay)) {
         _pendingReset = false;
         resetWiFi();
+        return;
+    }
+
+    if (_pendingReconnect && (now - _pendingReconnectAt >= _pendingReconnectDelay)) {
+        WIFI_LOCK();
+        _pendingReconnect = false;
+        if (_dnsStarted) {
+            _dnsServer.stop();
+            _dnsStarted = false;
+        }
+        _apScanPending = false;
+        _failCount = 0;
+        _quickRetryPending = false;
+        _skipPinnedBssid = false;
+        _wasConnected = false;
+        _state = WIFI_ST_CONNECTING;
+        tryConnect();
         return;
     }
 
@@ -269,11 +319,12 @@ String WifiManager::getIP() {
 }
 
 String WifiManager::getSSID() {
+    WIFI_LOCK();
     if (_state == WIFI_ST_AP_MODE) return _apSSID;
     return WiFi.SSID();
 }
 
-String WifiManager::getHostname() { return _hostname; }
+String WifiManager::getHostname() { WIFI_LOCK(); return _hostname; }
 String WifiManager::getMAC() {
     uint8_t mac[6];
     readFactoryStaMac(mac);
@@ -289,8 +340,8 @@ String WifiManager::getDeviceId() {
     snprintf(buf, sizeof(buf), "smarthome_%02x%02x%02x", mac[3], mac[4], mac[5]);
     return String(buf);
 }
-String WifiManager::getAPSSID() { return _apSSID; }
-String WifiManager::getAPPassword() { return _apPassword; }
+String WifiManager::getAPSSID() { WIFI_LOCK(); return _apSSID; }
+String WifiManager::getAPPassword() { WIFI_LOCK(); return _apPassword; }
 bool WifiManager::isAPMode() { return _state == WIFI_ST_AP_MODE; }
 
 int WifiManager::getRSSI() {
@@ -357,15 +408,18 @@ void WifiManager::startAP() {
 // ============================================================================
 // Save WiFi credentials to LittleFS
 // ============================================================================
-void WifiManager::saveCredentials(const String& ssid, const String& pass) {
+void WifiManager::saveCredentials(const String& ssid, const String& pass, bool connectNow) {
+    WIFI_LOCK();
     if (ssid.isEmpty()) return;
 
     // Check if this network already exists — update it
     bool found = false;
+    uint8_t targetIdx = 0;
     for (uint8_t i = 0; i < _networkCount; i++) {
         if (_networks[i].ssid == ssid) {
             _networks[i].pass = pass;
             _networks[i].hasBssid = false;
+            targetIdx = i;
             found = true;
             break;
         }
@@ -384,6 +438,7 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
         _networks[_networkCount].pass = pass;
         _networks[_networkCount].hasBssid = false;
         _networks[_networkCount].channel = 0;
+        targetIdx = _networkCount;
         _networkCount++;
     }
 
@@ -407,18 +462,31 @@ void WifiManager::saveCredentials(const String& ssid, const String& pass) {
 
     SERIAL_PRINTF("[WiFi] Saved %d network(s)\n", _networkCount);
 
-    // Attempt connection to new network (and exit setup AP mode immediately)
-    if (_dnsStarted) {
-        _dnsServer.stop();
-        _dnsStarted = false;
+    _currentNetwork = targetIdx;
+    if (connectNow) {
+        // Attempt connection to new network (and exit setup AP mode immediately)
+        if (_dnsStarted) {
+            _dnsServer.stop();
+            _dnsStarted = false;
+        }
+        _pendingReconnect = false;
+        _apScanPending = false;
+        _failCount = 0;
+        _quickRetryPending = false;
+        _skipPinnedBssid = false;
+        _wasConnected = false;
+        _state = WIFI_ST_CONNECTING;
+        tryConnect();
+    } else {
+        requestReconnect(300);
     }
-    _apScanPending = false;
-    _currentNetwork = _networkCount - 1;
-    _failCount = 0;
-    _quickRetryPending = false;
-    _skipPinnedBssid = false;
-    _state = WIFI_ST_CONNECTING;
-    tryConnect();
+}
+
+void WifiManager::requestReconnect(unsigned long delayMs) {
+    WIFI_LOCK();
+    _pendingReconnect = true;
+    _pendingReconnectAt = millis();
+    _pendingReconnectDelay = delayMs;
 }
 
 // ============================================================================
@@ -448,6 +516,7 @@ void WifiManager::requestReset(unsigned long delayMs) {
 }
 
 bool WifiManager::setHostname(const String& hostname) {
+    WIFI_LOCK();
     String h = hostname;
     h.trim();
     if (h.length() == 0 || h.length() > 24) return false;
@@ -600,6 +669,7 @@ void WifiManager::saveBssidChannel() {
 // Setup mDNS
 // ============================================================================
 void WifiManager::setupMDNS() {
+    MDNS.end();
     if (MDNS.begin(_hostname.c_str())) {
         // Standard HTTP service
         MDNS.addService("http", "tcp", WEB_SERVER_PORT);

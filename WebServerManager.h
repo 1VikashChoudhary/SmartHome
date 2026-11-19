@@ -133,6 +133,7 @@ private:
     String _wsToken;
     String _wsGuestToken;
     void regenerateWsToken();
+    void regenerateWsTokenForRole(AuthRole role);
     bool isApSetupRoute(AsyncWebServerRequest* req) const;
     AuthRole authenticateRequest(AsyncWebServerRequest* req);
     AuthRole authenticateBasicCredentials(AsyncWebServerRequest* req) const;

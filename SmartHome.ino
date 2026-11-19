@@ -137,6 +137,7 @@ String wsDataProvider() {
 void onAlarmAction(AlarmAction action, uint8_t relay) {
     auto applyRespectingOverride = [&](uint8_t ch, bool targetState) {
         if (!relayMgr.isChannelEnabled(ch) || relayMgr.getManualOverride(ch)) return;
+        if (targetState && relayMgr.isFailsafeActive() && relayMgr.getFailsafe(ch)) return;
         relayMgr.setState(ch, targetState);
     };
 
@@ -163,10 +164,12 @@ void onAlarmAction(AlarmAction action, uint8_t relay) {
             if (relay == 0xFF || relay == 255) {
                 for (uint8_t i = 0; i < relayMgr.getRelayCount(); i++) {
                     if (relayMgr.isChannelEnabled(i) && !relayMgr.getManualOverride(i)) {
+                        if (!relayMgr.getState(i) && relayMgr.isFailsafeActive() && relayMgr.getFailsafe(i)) continue;
                         relayMgr.toggle(i);
                     }
                 }
             } else if (relay < relayMgr.getRelayCount() && !relayMgr.getManualOverride(relay)) {
+                if (!relayMgr.getState(relay) && relayMgr.isFailsafeActive() && relayMgr.getFailsafe(relay)) break;
                 relayMgr.toggle(relay);
             }
             break;
@@ -210,8 +213,10 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                             " (Limit: " + String(sensorMgr.getMQ2Threshold()) + ")";
                 break;
             case ALARM_TYPE_TEMP:
-                buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
-                lcdMgr.showAlarm(LCD_ALARM_TEMP);
+                if (!sensorMgr.isMQ2Alarm()) {
+                    buzzerMgr.startAlarm(BUZZER_ALARM_TEMP);
+                    lcdMgr.showAlarm(LCD_ALARM_TEMP);
+                }
                 logger.logCritical("Sensor", F("HIGH TEMPERATURE alarm!"));
                 wsMgr.broadcastAlarm("temperature", true);
                 relayMgr.activateFailsafe();
@@ -219,7 +224,9 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
                             "C (Limit: " + String(sensorMgr.getTempAlarmThreshold(), 1) + "C)";
                 break;
             case ALARM_TYPE_SENSOR_FAULT:
-                buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
+                if (!sensorMgr.isMQ2Alarm() && !sensorMgr.isTempAlarm()) {
+                    buzzerMgr.startAlarm(BUZZER_ALARM_FAULT);
+                }
                 logger.logError("Sensor", F("Climate sensor fault detected"));
                 wsMgr.broadcastAlarm("sensor_fault", true);
                 // Activate failsafe relays
@@ -249,6 +256,7 @@ void onSensorAlarm(uint8_t alarmType, bool active) {
         } else {
             buzzerMgr.stopAlarm();
             lcdMgr.clearAlarm();
+            relayMgr.clearFailsafe();
         }
         wsMgr.broadcastAlarm(alarmKey, false);
         mqttMgr.publishAlarmEvent(alarmKey, false, "Alarm cleared",
@@ -616,6 +624,7 @@ void loop() {
 
     if (otaMgr.isUpdating()) {
         // Keep feeding WDT — OTA TCP receive can stall long enough to trigger a reset
+        lcdMgr.loop();
 #if defined(ESP32)
         esp_task_wdt_reset();
 #elif defined(ESP8266)

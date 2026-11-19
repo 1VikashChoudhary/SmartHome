@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <AsyncMqttClient.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -116,6 +120,10 @@ private:
                                const String& availabilityTopic, bool enabled);
     void subscribeTopics();
     String buildTopic(const String& suffix);
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _mqttMutex;
+    void ensureMutex() const;
+#endif
 };
 
 #endif // MQTT_MANAGER_H

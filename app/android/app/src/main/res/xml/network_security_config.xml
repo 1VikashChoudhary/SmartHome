@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  SmartHome Pro communicates directly with local ESP32/ESP8266 controllers over LAN HTTP
+  (arbitrary RFC1918 subnets such as 192.168.x.x, 10.x.x.x, 172.16-31.x.x, SoftAP 192.168.4.1,
+  and .local mDNS hostnames). Android's domain-config XML does not support IP CIDR wildcards,
+  so cleartext HTTP is permitted at the transport layer while application code enforces HTTPS
+  for external links and restricts controller connections to validated local hosts.
+-->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>

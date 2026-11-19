@@ -251,7 +251,10 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
 
   int _pickFreePin(List<int> candidates, Set<int> usedPins, {int? preferred}) {
     final isEsp8266 = widget.device.isEsp8266;
-    final strapping = HardwareProfile.strappingPinsFor(isEsp8266);
+    final avoid = <int>{
+      ...HardwareProfile.strappingPinsFor(isEsp8266),
+      if (isEsp8266) 16, // D0 has no internal pull-up and pulses during reset
+    };
     if (preferred != null &&
         preferred != 255 &&
         candidates.contains(preferred) &&
@@ -260,17 +263,84 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     }
     // Prefer safe non-strapping pins first
     for (final pin in candidates) {
-      if (!usedPins.contains(pin) && !strapping.contains(pin)) {
+      if (!usedPins.contains(pin) && !avoid.contains(pin)) {
         return pin;
       }
     }
-    // Fall back to strapping pins when free GPIO budget is tight
+    // Fall back to strapping/special pins when free GPIO budget is tight
     for (final pin in candidates) {
       if (!usedPins.contains(pin)) {
         return pin;
       }
     }
     return 255;
+  }
+
+  String? _sensorPinAdviceText(List<int> pins, bool isEsp8266) {
+    final msgs = <String>[];
+    final seen = <int>{};
+    for (final p in pins) {
+      if (p == 255 || !seen.add(p)) continue;
+      if (isEsp8266) {
+        if (p == 2) {
+          msgs.add(
+            'Avoid D4 (GPIO 2) for sensors: ESP8266 sends 74880-baud boot logs on D4 at every restart, which can lock up DHT22/1-Wire sensors until power is cycled. Recommended: D1, D2, D5, D6, or D7.',
+          );
+        } else if (p == 0) {
+          msgs.add(
+            'Caution: D3 (GPIO 0) is a boot/flash strapping pin (must stay HIGH at boot). Recommended sensor pins: D1, D2, D5, D6, or D7.',
+          );
+        } else if (p == 15) {
+          msgs.add(
+            'Caution: D8 (GPIO 15) has a 10kΩ pull-down to GND, which fights 1-Wire/DHT pull-ups. Recommended sensor pins: D1, D2, D5, D6, or D7.',
+          );
+        } else if (p == 16) {
+          msgs.add(
+            'Caution: D0 (GPIO 16) has no internal pull-up and pulses during reset (unreliable for DHT/DS18B20). Recommended sensor pins: D1, D2, D5, D6, or D7.',
+          );
+        }
+      } else {
+        if (p == 12) {
+          msgs.add(
+            'Caution: GPIO 12 is an ESP32 boot-voltage strapping pin — sensor pull-ups here can prevent booting. Recommended: GPIO 4, 13, 14, 16–19, 23, 25–27, 32, or 33.',
+          );
+        } else if (p == 0 || p == 2 || p == 15) {
+          msgs.add(
+            'Caution: GPIO $p is an ESP32 boot strapping pin (may glitch on restart or affect flashing). Recommended: GPIO 4, 13, 14, 16–19, 23, 25–27, 32, or 33.',
+          );
+        }
+      }
+    }
+    return msgs.isEmpty ? null : msgs.join(' ');
+  }
+
+  Widget _buildSensorPinWarning(List<int> pins, bool isEsp8266) {
+    final msg = _sensorPinAdviceText(pins, isEsp8266);
+    if (msg == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: AppColors.warning.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.warning.withValues(alpha: 0.45)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                msg,
+                style: TextStyle(fontSize: 11, height: 1.35, color: AppColors.textPrimary),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   ChannelHardwareConfig _allocateChannelForIndex(int idx, Set<int> usedPins) {
@@ -447,6 +517,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
     if (unassigned) {
       _showPinWarning('Climate Sensor ${_climates.length} added without free GPIO — switch to an I2C model or free a GPIO.');
+    } else if (slot.type.isOneWire) {
+      final advice = _sensorPinAdviceText([slot.pin], isEsp8266);
+      if (advice != null) _showPinWarning(advice);
     }
   }
 
@@ -490,6 +563,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
     if (pin == 255) {
       _showPinWarning('Motion Sensor ${_motions.length} added with unassigned GPIO — free a GPIO or assign one.');
+    } else {
+      final advice = _sensorPinAdviceText([pin], isEsp8266);
+      if (advice != null) _showPinWarning(advice);
     }
   }
 
@@ -509,6 +585,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
     if (pin == 255) {
       _showPinWarning('Probe ${_probes.length} added with unassigned GPIO — free an output GPIO or assign one.');
+    } else {
+      final advice = _sensorPinAdviceText([pin], isEsp8266);
+      if (advice != null) _showPinWarning(advice);
     }
   }
 
@@ -543,6 +622,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
     if (trig == 255 || echo == 255) {
       _showPinWarning('Ultrasonic Sensor ${_ultrasonics.length} added with unassigned Trig/Echo GPIO — free pins or assign manually.');
+    } else {
+      final advice = _sensorPinAdviceText([trig, echo], isEsp8266);
+      if (advice != null) _showPinWarning(advice);
     }
   }
 
@@ -600,6 +682,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
     });
     if (aPin == 255 && dPin == 255) {
       _showPinWarning('Gas Sensor ${_mq2s.length} added without free Analog or Digital GPIO.');
+    } else {
+      final advice = _sensorPinAdviceText([dPin], isEsp8266);
+      if (advice != null) _showPinWarning(advice);
     }
   }
 
@@ -1811,6 +1896,30 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                       style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.textSecondary, letterSpacing: 0.8),
                     ),
                   ),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.tips_and_updates_outlined, color: AppColors.accent, size: 16),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.device.isEsp8266
+                                ? 'Sensor Pin Guide: Best pins are D1 (GPIO 5), D2 (GPIO 4), D5 (GPIO 14), D6 (GPIO 12), and D7 (GPIO 13). Avoid D4 (GPIO 2 — ROM boot logs lock up DHT22/1-Wire on restart), D3 (GPIO 0), D8 (GPIO 15 — 10kΩ pull-down), and D0 (GPIO 16 — no pull-up).'
+                                : 'Sensor Pin Guide: Best pins are GPIO 4, 13, 14, 16–19, 23, 25–27, 32, and 33 (plus GPIO 34–39 for analog/input-only). Avoid boot strapping pins GPIO 0, 2, 12, and 15 for sensors.',
+                            style: TextStyle(fontSize: 11, height: 1.35, color: AppColors.textPrimary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
 
                   _buildMultiSensorCard(
                     groupKey: 'climates',
@@ -2426,6 +2535,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             ],
           ],
         ),
+        if (c.type.isOneWire) _buildSensorPinWarning([c.pin], isEsp8266),
         if (c.type.isI2c) ...[
           _buildSharedI2cBusPinRow(isEsp8266),
           const SizedBox(height: 6),
@@ -2583,6 +2693,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             ],
           ],
         ),
+        if (m.type != MotionSensorType.none) _buildSensorPinWarning([m.pin], isEsp8266),
         _buildSlotLabelField(
           groupKey: 'motions',
           index: i,
@@ -2646,6 +2757,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
             ],
           ],
         ),
+        if (p.type != ProbeSensorType.none) _buildSensorPinWarning([p.pin], isEsp8266),
         _buildSlotLabelField(
           groupKey: 'probes',
           index: i,
@@ -2833,6 +2945,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
               ),
             ),
           ],
+          _buildSensorPinWarning([u.trigPin, u.echoPin], isEsp8266),
         ],
         _buildSlotLabelField(
           groupKey: 'ultrasonics',
@@ -2987,6 +3100,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                 style: TextStyle(fontSize: 10.5, color: AppColors.textSecondary),
               ),
             ],
+            _buildSensorPinWarning([g.digitalPin], isEsp8266),
           ],
         ],
         _buildSlotLabelField(
@@ -3153,7 +3267,10 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                                           : null,
                                     );
                                   }
-                                  _channels[i] = ch.copyWith(switchEnabled: val, switchPin: sp);
+                                  _channels[i] = ch.copyWith(
+                                    switchEnabled: val,
+                                    switchPin: val ? sp : 255,
+                                  );
                                 });
                               },
                             ),
@@ -3162,22 +3279,34 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                       ),
                     ],
                   ),
-                  Opacity(
-                    opacity: isSwEn ? 1.0 : 0.4,
-                    child: IgnorePointer(
-                      ignoring: !isSwEn,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: _buildPinDropdown('Switch GPIO', ch.switchPin, HardwareProfile.inputPinsFor(widget.device.isEsp8266), (pin) {
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Opacity(
+                          opacity: isSwEn ? 1.0 : 0.65,
+                          child: _buildPinDropdown(
+                            'Switch GPIO (Optional)',
+                            isSwEn ? ch.switchPin : 255,
+                            HardwareProfile.inputPinsFor(widget.device.isEsp8266),
+                            (pin) {
                               setState(() {
                                 _enterCustomMode();
-                                _channels[i] = ch.copyWith(switchPin: pin);
+                                _channels[i] = ch.copyWith(
+                                  switchEnabled: pin != 255,
+                                  switchPin: pin,
+                                );
                               });
-                            }, allowNone: true),
+                            },
+                            allowNone: true,
                           ),
-                          const SizedBox(width: 8),
-                          Expanded(
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Opacity(
+                          opacity: isSwEn ? 1.0 : 0.4,
+                          child: IgnorePointer(
+                            ignoring: !isSwEn,
                             child: DropdownButtonFormField<SwitchMode>(
                               key: ValueKey('ch_${i}_mode_${ch.switchMode.value}'),
                               isExpanded: true,
@@ -3190,9 +3319,9 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                               }),
                             ),
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),

@@ -35,10 +35,10 @@ void Diagnostics::begin() {
 }
 
 void Diagnostics::loop() {
-    unsigned long now = millis();
 #if defined(ESP32)
     portENTER_CRITICAL(&_uptimeMux);
 #endif
+    unsigned long now = millis();
     if (now < _lastMillis) {
         _rolloverCount++;
     }
@@ -100,10 +100,10 @@ String Diagnostics::getUptimeString() {
 }
 
 unsigned long Diagnostics::getUptimeSeconds() {
-    unsigned long now = millis();
 #if defined(ESP32)
     portENTER_CRITICAL(&_uptimeMux);
 #endif
+    unsigned long now = millis();
     if (now < _lastMillis) {
         _rolloverCount++;
     }

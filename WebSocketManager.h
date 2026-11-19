@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 
 class WebSocketManager {
@@ -45,6 +49,7 @@ private:
         uint32_t clientId;
         unsigned long intervalMs;
         unsigned long lastSent;
+        unsigned long connectedAt;
         bool active;
         bool authenticated;
     };
@@ -52,8 +57,11 @@ private:
     AsyncWebSocket _ws;
     String (*_dataProvider)();
     WsAuthValidatorCallback _authValidator;
-    bool _enabled;
+    volatile bool _enabled;
     StatusSubscription _subscriptions[MAX_WS_CLIENTS];
+#if defined(ESP32)
+    SemaphoreHandle_t _wsMutex;
+#endif
 
     void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                  AwsEventType type, void* arg, uint8_t* data, size_t len);

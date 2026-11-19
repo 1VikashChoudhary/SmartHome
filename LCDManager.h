@@ -11,6 +11,10 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -87,15 +91,15 @@ public:
     static bool isKnownWidgetId(const char* id);
 
     // Brightness and Auto-Dim Schedule
-    uint8_t getBrightness() const { return _brightness; }
+    uint8_t getBrightness() const;
     void setBrightness(uint8_t brightness);
-    bool isAutoDimEnabled() const { return _autoDim; }
+    bool isAutoDimEnabled() const;
     void setAutoDimEnabled(bool enabled);
-    String getDimStartTime() const { return _dimStartTime; }
+    String getDimStartTime() const;
     void setDimStartTime(const String& time);
-    String getDimEndTime() const { return _dimEndTime; }
+    String getDimEndTime() const;
     void setDimEndTime(const String& time);
-    uint8_t getDimmedBrightness() const { return _dimmedBrightness; }
+    uint8_t getDimmedBrightness() const;
     void setDimmedBrightness(uint8_t brightness);
 
     // Data update methods (called from main loop)
@@ -134,6 +138,13 @@ private:
     String _dimEndTime;           // "HH:MM"
     uint8_t _dimmedBrightness;     // 0-100%
     uint8_t _currentAppliedBrightness;
+    bool _hwReinitPending;
+    bool _backlightDirty;
+    bool _manualBrightnessOverride;
+    bool _wasInAutoDimWindow;
+#if defined(ESP32)
+    mutable SemaphoreHandle_t _lcdMutex;
+#endif
 
     // Display buffers (diff-based update)
     char _buffer[LCD_MAX_ROWS][LCD_MAX_COLS + 1];

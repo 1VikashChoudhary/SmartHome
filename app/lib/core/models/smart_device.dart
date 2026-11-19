@@ -191,6 +191,7 @@ class SmartDevice {
     String? authPassword,
     String? authUsername,
     bool clearAuthPassword = false,
+    bool clearAuthUsername = false,
   }) {
     return SmartDevice(
       id: id ?? this.id,
@@ -204,7 +205,9 @@ class SmartDevice {
       authRequired: authRequired ?? this.authRequired,
       authLocked: authLocked ?? this.authLocked,
       authRole: authRole ?? this.authRole,
-      authUsername: authUsername ?? this.authUsername,
+      authUsername: clearAuthUsername
+          ? null
+          : (authUsername ?? this.authUsername),
       authPassword: clearAuthPassword
           ? null
           : (authPassword ?? this.authPassword),
@@ -261,7 +264,7 @@ class SmartDevice {
       hostname: json['hostname'] as String? ?? 'smarthome',
       name: json['name'] as String? ?? 'SmartHome',
       room: json['room'] as String? ?? 'Living Room',
-      fwVersion: json['fw_version'] as String? ?? '3.2.0',
+      fwVersion: json['fw_version'] as String? ?? '1.1.0',
       numRelays: (json['num_relays'] as num?)?.toInt() ?? 5,
       authRequired: json['auth_required'] as bool? ?? false,
       authLocked: json['auth_locked'] as bool? ?? false,

@@ -57,7 +57,7 @@ class _ControllerLoginDialogState extends ConsumerState<ControllerLoginDialog> {
           ? widget.device.authUsername!.trim()
           : 'admin',
     );
-    _passCtrl = TextEditingController(text: widget.device.authPassword ?? '');
+    _passCtrl = TextEditingController();
   }
 
   @override

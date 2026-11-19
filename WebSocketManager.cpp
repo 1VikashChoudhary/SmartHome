@@ -6,6 +6,23 @@
 
 #include "WebSocketManager.h"
 
+#if defined(ESP32)
+namespace {
+struct WsLockGuard {
+    SemaphoreHandle_t m;
+    explicit WsLockGuard(SemaphoreHandle_t mtx) : m(mtx) {
+        if (m) xSemaphoreTakeRecursive(m, portMAX_DELAY);
+    }
+    ~WsLockGuard() {
+        if (m) xSemaphoreGiveRecursive(m);
+    }
+};
+}
+#define WS_LOCK() WsLockGuard _wsGuard(_wsMutex)
+#else
+#define WS_LOCK() ((void)0)
+#endif
+
 namespace {
 bool isClientWritable(AsyncWebSocketClient* client) {
     return client &&
@@ -20,10 +37,17 @@ bool isClientWritable(AsyncWebSocketClient* client) {
 WebSocketManager* WebSocketManager::_instance = nullptr;
 
 WebSocketManager::WebSocketManager()
-    : _ws("/ws"), _dataProvider(nullptr), _authValidator(nullptr), _enabled(true) {
+    : _ws("/ws"), _dataProvider(nullptr), _authValidator(nullptr), _enabled(true)
+#if defined(ESP32)
+      , _wsMutex(nullptr)
+#endif
+{
     _instance = this;
+#if defined(ESP32)
+    _wsMutex = xSemaphoreCreateRecursiveMutex();
+#endif
     for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
-        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
     }
 }
 
@@ -47,49 +71,63 @@ void WebSocketManager::loop() {
     if (_ws.count() == 0 || !_dataProvider) return;
 
     bool hasDueSubscriber = false;
-    for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
-        StatusSubscription& sub = _subscriptions[i];
-        if (sub.clientId == 0) continue;
-        AsyncWebSocketClient* client = _ws.client(sub.clientId);
-        if (!client || client->status() != WS_CONNECTED) {
-            sub = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
-            continue;
-        }
-        if (!sub.active || !sub.authenticated) continue;
-        if (!isClientWritable(client)) continue;
-        if (now - sub.lastSent >= sub.intervalMs) {
-            hasDueSubscriber = true;
-            break;
+    {
+        WS_LOCK();
+        for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
+            StatusSubscription& sub = _subscriptions[i];
+            if (sub.clientId == 0) continue;
+            AsyncWebSocketClient* client = _ws.client(sub.clientId);
+            if (!client || client->status() != WS_CONNECTED) {
+                sub = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
+                continue;
+            }
+            // Drop unauthenticated sockets that linger >10s without subscribing
+            if (!sub.authenticated && _authValidator && sub.connectedAt != 0 && (now - sub.connectedAt >= 10000UL)) {
+                sub = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
+                client->close(4008, "Auth timeout");
+                continue;
+            }
+            if (!sub.active || !sub.authenticated) continue;
+            if (!isClientWritable(client)) continue;
+            if (now - sub.lastSent >= sub.intervalMs) {
+                hasDueSubscriber = true;
+                break;
+            }
         }
     }
 
-    // Build one bounded status document only when at least one client is due.
+    // Build one bounded status document outside WS_LOCK only when at least one client is due.
     if (!hasDueSubscriber) return;
     String data = _dataProvider();
     if (data.length() == 0) return;
 
-    for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
-        StatusSubscription& sub = _subscriptions[i];
-        if (!sub.active || !sub.authenticated || now - sub.lastSent < sub.intervalMs) continue;
-        AsyncWebSocketClient* client = _ws.client(sub.clientId);
-        if (!client || client->status() != WS_CONNECTED) {
-            sub = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
-            continue;
+    {
+        WS_LOCK();
+        if (!_enabled) return;
+        for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
+            StatusSubscription& sub = _subscriptions[i];
+            if (!sub.active || !sub.authenticated || now - sub.lastSent < sub.intervalMs) continue;
+            AsyncWebSocketClient* client = _ws.client(sub.clientId);
+            if (!client || client->status() != WS_CONNECTED) {
+                sub = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
+                continue;
+            }
+            if (!isClientWritable(client)) continue;
+            client->text(data);
+            sub.lastSent = now;
         }
-        if (!isClientWritable(client)) continue;
-        client->text(data);
-        sub.lastSent = now;
     }
 }
 
 void WebSocketManager::sendToAuthenticated(const String& json) {
+    WS_LOCK();
     if (!_enabled || _ws.count() == 0) return;
     for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
         StatusSubscription& sub = _subscriptions[i];
         if (sub.clientId == 0) continue;
         AsyncWebSocketClient* client = _ws.client(sub.clientId);
         if (!client || client->status() != WS_CONNECTED) {
-            sub = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+            sub = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
             continue;
         }
         if (!sub.active || !sub.authenticated) continue;
@@ -177,8 +215,9 @@ bool WebSocketManager::isEnabled() const {
 }
 
 void WebSocketManager::disconnectAll() {
+    WS_LOCK();
     for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
-        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
     }
     _ws.closeAll();
 }
@@ -213,6 +252,10 @@ void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cli
                                 AwsEventType type, void* arg, uint8_t* data, size_t len) {
     switch (type) {
         case WS_EVT_CONNECT: {
+            if (!_enabled) {
+                client->close(1013, "Busy");
+                break;
+            }
             // Configure keepalive and TCP RX timeout so roamed zombie sockets
             // do not linger waiting for lwIP retransmission timeouts.
             client->keepAlivePeriod(10);
@@ -221,24 +264,30 @@ void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cli
                 client->client()->setNoDelay(true);
             }
             IPAddress newIp = client->remoteIP();
-            for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
-                uint32_t oldId = _subscriptions[i].clientId;
-                if (oldId == 0 || oldId == client->id()) continue;
-                AsyncWebSocketClient* oldClient = _ws.client(oldId);
-                if (!oldClient) {
-                    _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
-                    continue;
+            {
+                WS_LOCK();
+                for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
+                    uint32_t oldId = _subscriptions[i].clientId;
+                    if (oldId == 0 || oldId == client->id()) continue;
+                    AsyncWebSocketClient* oldClient = _ws.client(oldId);
+                    if (!oldClient) {
+                        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
+                        continue;
+                    }
+                    if (oldClient->remoteIP() == newIp &&
+                        (!oldClient->client() || !oldClient->client()->canSend() || oldClient->client()->space() < 512)) {
+                        _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
+                        if (oldClient->client()) oldClient->client()->close(true);
+                    }
                 }
-                if (oldClient->remoteIP() == newIp &&
-                    (!oldClient->client() || !oldClient->client()->canSend() || oldClient->client()->space() < 512)) {
-                    _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
-                    if (oldClient->client()) oldClient->client()->close(true);
+                _ws.cleanupClients(MAX_WS_CLIENTS);
+                SERIAL_PRINTF("[WS] Client #%lu connected from %s\n",
+                              (unsigned long)client->id(), newIp.toString().c_str());
+                // Do not let unauthenticated flooders evict active authenticated slots
+                if (!subscriptionFor(client->id(), true)) {
+                    client->close(1013, "Slots full");
                 }
             }
-            _ws.cleanupClients(MAX_WS_CLIENTS);
-            SERIAL_PRINTF("[WS] Client #%lu connected from %s\n",
-                          (unsigned long)client->id(), newIp.toString().c_str());
-            subscriptionFor(client->id(), true);
             break;
         }
 
@@ -248,6 +297,10 @@ void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cli
             break;
 
         case WS_EVT_DATA: {
+            if (!_enabled) {
+                client->close(1013, "Busy");
+                break;
+            }
             AwsFrameInfo* info = reinterpret_cast<AwsFrameInfo*>(arg);
             // Reject fragmented/non-text frames. The protocol is intentionally
             // tiny so a malformed client cannot consume controller resources.
@@ -265,7 +318,7 @@ void WebSocketManager::onEvent(AsyncWebSocket* server, AsyncWebSocketClient* cli
 }
 
 void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data, size_t len) {
-    if (!client || !data || len == 0 || len > 512) return;
+    if (!_enabled || !client || !data || len == 0 || len > 512) return;
 
     JsonDocument doc;
     if (deserializeJson(doc, data, len)) return;
@@ -273,12 +326,13 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
     const char* stream = doc["stream"] | "";
     if (strcmp(stream, "status") != 0) return;
 
-    StatusSubscription* sub = subscriptionFor(client->id(), true);
-    if (!sub) return;
-
     if (strcmp(type, "unsubscribe") == 0) {
-        sub->active = false;
-        sub->authenticated = false;
+        WS_LOCK();
+        StatusSubscription* sub = subscriptionFor(client->id(), false);
+        if (sub) {
+            sub->active = false;
+            sub->authenticated = false;
+        }
         return;
     }
     if (strcmp(type, "subscribe") != 0) return;
@@ -289,8 +343,14 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
         String token = doc["token"] | "";
         IPAddress clientIp = client->remoteIP();
         if (!_authValidator(clientIp, user, pass, token)) {
-            sub->active = false;
-            sub->authenticated = false;
+            {
+                WS_LOCK();
+                StatusSubscription* sub = subscriptionFor(client->id(), false);
+                if (sub) {
+                    sub->active = false;
+                    sub->authenticated = false;
+                }
+            }
             client->text("{\"type\":\"auth_error\",\"auth_required\":true,\"message\":\"Authentication required\"}");
             client->close(4001, "Unauthorized");
             SERIAL_PRINTF("[WS] Client #%lu rejected: authentication required\n", (unsigned long)client->id());
@@ -298,6 +358,12 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
         }
     }
 
+    WS_LOCK();
+    StatusSubscription* sub = subscriptionFor(client->id(), true);
+    if (!sub) {
+        client->close(1013, "Slots full");
+        return;
+    }
     unsigned long requested = doc["interval_ms"] | WS_STATUS_MIN_INTERVAL;
     sub->intervalMs = constrain(requested, WS_STATUS_MIN_INTERVAL, WS_STATUS_MAX_INTERVAL);
     sub->lastSent = millis() - sub->intervalMs; // Send the first update promptly.
@@ -307,35 +373,39 @@ void WebSocketManager::handleMessage(AsyncWebSocketClient* client, uint8_t* data
 }
 
 void WebSocketManager::cleanupClients() {
+    WS_LOCK();
     _ws.cleanupClients(MAX_WS_CLIENTS);
 }
 
 WebSocketManager::StatusSubscription* WebSocketManager::subscriptionFor(uint32_t clientId, bool create) {
     StatusSubscription* empty = nullptr;
-    StatusSubscription* oldest = nullptr;
+    StatusSubscription* oldestUnauth = nullptr;
     for (uint8_t i = 0; i < MAX_WS_CLIENTS; i++) {
         if (_subscriptions[i].clientId == clientId) return &_subscriptions[i];
         if (_subscriptions[i].clientId != 0) {
             AsyncWebSocketClient* c = _ws.client(_subscriptions[i].clientId);
             if (!c || c->status() != WS_CONNECTED) {
-                _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+                _subscriptions[i] = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
             }
         }
         if (_subscriptions[i].clientId == 0 && !empty) {
             empty = &_subscriptions[i];
-        }
-        if (!oldest || _subscriptions[i].lastSent < oldest->lastSent) {
-            oldest = &_subscriptions[i];
+        } else if (!_subscriptions[i].authenticated &&
+                   (!oldestUnauth || _subscriptions[i].connectedAt < oldestUnauth->connectedAt)) {
+            oldestUnauth = &_subscriptions[i];
         }
     }
     if (!create) return nullptr;
-    StatusSubscription* target = empty ? empty : oldest;
+    // Never evict an authenticated slot for an unauthenticated newcomer
+    StatusSubscription* target = empty ? empty : oldestUnauth;
     if (!target) return nullptr;
-    *target = {clientId, WS_STATUS_MIN_INTERVAL, 0, false, false};
+    unsigned long now = millis();
+    *target = {clientId, WS_STATUS_MIN_INTERVAL, 0, now ? now : 1, false, false};
     return target;
 }
 
 void WebSocketManager::removeSubscription(uint32_t clientId) {
-    StatusSubscription* sub = subscriptionFor(clientId);
-    if (sub) *sub = {0, WS_STATUS_MIN_INTERVAL, 0, false, false};
+    WS_LOCK();
+    StatusSubscription* sub = subscriptionFor(clientId, false);
+    if (sub) *sub = {0, WS_STATUS_MIN_INTERVAL, 0, 0, false, false};
 }

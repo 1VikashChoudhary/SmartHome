@@ -71,10 +71,12 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
         if (targetRelay == 0xFF) {
             for (uint8_t ch = 0; ch < relayMgr.getRelayCount(); ch++) {
                 if (relayMgr.isChannelEnabled(ch) && !relayMgr.getManualOverride(ch)) {
+                    if (state && relayMgr.isFailsafeActive() && relayMgr.getFailsafe(ch)) continue;
                     relayMgr.setState(ch, state);
                 }
             }
         } else if (targetRelay < relayMgr.getRelayCount() && !relayMgr.getManualOverride(targetRelay)) {
+            if (state && relayMgr.isFailsafeActive() && relayMgr.getFailsafe(targetRelay)) return;
             relayMgr.setState(targetRelay, state);
         }
     };
@@ -150,11 +152,11 @@ void RuleManager::loop(SensorManager& sensorMgr, RelayManager& relayMgr) {
 bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType sensor, uint8_t idx, float& outVal) {
     switch (sensor) {
         case RULE_SENSOR_TEMP:
-            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx)) return false;
+            if (!sensorMgr.isClimateValidAt(idx)) return false;
             outVal = sensorMgr.getTemperatureAt(idx);
             return true;
         case RULE_SENSOR_HUM:
-            if (!sensorMgr.isClimateActiveAt(idx) || sensorMgr.isClimateFaultAt(idx) || !sensorMgr.hasHumidityAt(idx)) return false;
+            if (!sensorMgr.isClimateValidAt(idx) || !sensorMgr.hasHumidityAt(idx)) return false;
             outVal = sensorMgr.getHumidityAt(idx);
             return true;
         case RULE_SENSOR_GAS:
@@ -162,7 +164,7 @@ bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType senso
             outVal = (float)sensorMgr.getMQ2RawAt(idx);
             return true;
         case RULE_SENSOR_LUX:
-            if (!sensorMgr.isLightActiveAt(idx)) return false;
+            if (!sensorMgr.isLightValidAt(idx)) return false;
             outVal = sensorMgr.getLuxAt(idx);
             return true;
         case RULE_SENSOR_PROBE_TEMP: {
@@ -173,7 +175,7 @@ bool RuleManager::readSensorValue(SensorManager& sensorMgr, RuleSensorType senso
             return true;
         }
         case RULE_SENSOR_TANK_LEVEL:
-            if (!sensorMgr.isUltrasonicActiveAt(idx)) return false;
+            if (!sensorMgr.isUltrasonicValidAt(idx) || sensorMgr.isUltrasonicFaultAt(idx)) return false;
             outVal = (float)sensorMgr.getTankLevelPercentAt(idx);
             return true;
         case RULE_SENSOR_MOTION:

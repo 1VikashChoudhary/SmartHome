@@ -110,7 +110,8 @@ SensorManager::SensorManager()
       _alarmCallback(nullptr),
       _prevTempAlarm(false),
       _prevMQ2Alarm(false),
-      _prevSensorFault(false)
+      _prevSensorFault(false),
+      _tempAlarmLatched(false)
 #if defined(ESP32)
       , _sensorMutex(nullptr)
 #endif
@@ -142,6 +143,7 @@ SensorManager::~SensorManager() {
 
 void SensorManager::cleanup() {
     SENSOR_LOCK();
+    _tempAlarmLatched = false;
     memset(_warmupDone, 0, sizeof(_warmupDone));
     for (uint8_t i = 0; i < MAX_CLIMATE_SENSORS; i++) {
         if (_climates[i].dht) {
@@ -167,6 +169,7 @@ void SensorManager::cleanup() {
         _climates[i].tempOffset = DHT_TEMP_OFFSET_DEFAULT;
         _climates[i].humOffset = DHT_HUM_OFFSET_DEFAULT;
         _climates[i].fault = false;
+        _climates[i].hasReading = false;
         _climates[i].failCount = 0;
         _climates[i].lastFaultRetry = 0;
         _climates[i].measPending = false;
@@ -237,7 +240,8 @@ void SensorManager::begin(StorageManager& storage) {
         snprintf(_climates[0].label, sizeof(_climates[0].label), "Climate 1");
         _climates[0].dht = new DHT(PIN_DHT22, DHT_TYPE);
         if (_climates[0].dht) {
-            _climates[0].dht->begin(30);
+            _climates[0].dht->begin(55);
+            _climates[0].lastFaultRetry = _bootTime ? _bootTime : 1;
         } else {
             _climates[0].enabled = false;
         }
@@ -299,7 +303,9 @@ void SensorManager::begin(StorageManager& storage, HardwareManager& hw) {
                 uint8_t model = (cfg->type == CLIMATE_DHT11) ? DHT11 : DHT22;
                 s.dht = new DHT(cfg->pin, model);
                 if (s.dht) {
-                    s.dht->begin(30);
+                    s.dht->begin(55);
+                    // Keep bus idle-HIGH for >=2.5s after boot/restart so AM2302/DHT22 settles cleanly
+                    s.lastFaultRetry = _bootTime ? _bootTime : 1;
                     s.enabled = true;
                 }
             }
@@ -518,8 +524,8 @@ void SensorManager::loop() {
                 ClimateSlotState& s = _climates[idx];
                 if (!s.enabled || (s.type != CLIMATE_DHT11 && s.type != CLIMATE_DHT22) || s.pin == PIN_UNUSED) continue;
 
-                // Enforce at least 2200ms per DHT slot (5000ms when faulted) so AM2302 never violates 2s min rest
-                unsigned long slotCooldown = s.fault ? 5000UL : 2200UL;
+                // Enforce at least 2500ms per DHT slot (5000ms when faulted) so AM2302 never violates 2s min rest
+                unsigned long slotCooldown = s.fault ? 5000UL : 2500UL;
                 if (s.lastFaultRetry != 0 && (now - s.lastFaultRetry < slotCooldown)) {
                     continue;
                 }
@@ -547,6 +553,7 @@ void SensorManager::loop() {
                     s.rawHumidity = h;
                     s.temperature = t + s.tempOffset;
                     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+                    s.hasReading = true;
                 }
                 break;
             }
@@ -591,6 +598,7 @@ void SensorManager::loop() {
         else if (s.type == CLIMATE_SHT3X)  recovered = initSHT3x(s, s.i2cAddr);
         else if (s.type == CLIMATE_SHT4X)  recovered = initSHT4x(s, s.i2cAddr);
         if (recovered) {
+            s.hasReading = false;
             markClimateSuccess(s, "Climate I2C");
             SERIAL_PRINTF("[Sensor] Climate #%u I2C recovered at 0x%02X\n", (unsigned)(i + 1), s.i2cAddr);
         }
@@ -686,7 +694,8 @@ void SensorManager::loop() {
                     _ds18ConvertStart = now;
                     _ds18State = 1;
                 } else {
-                    p.fault = true;
+                    if (p.failCount < 255) p.failCount++;
+                    if (p.failCount >= 3) p.fault = true;
                     _ds18Cursor = (idx + 1) % _probeCount;
                     _lastProbeCycle = now;
                 }
@@ -779,9 +788,10 @@ void SensorManager::loop() {
                 g.raw = rawReading;
                 g.digitalState = digReading;
                 if (!warming) {
+                    int clearTh = (g.threshold > MQ2_HYSTERESIS) ? (g.threshold - MQ2_HYSTERESIS) : 1;
                     if (!g.alarmActive && g.raw >= g.threshold) {
                         g.alarmActive = true;
-                    } else if (g.alarmActive && g.raw < (g.threshold - MQ2_HYSTERESIS)) {
+                    } else if (g.alarmActive && g.raw < clearTh) {
                         g.alarmActive = false;
                     }
                 }
@@ -852,23 +862,30 @@ void SensorManager::recoverI2cBus() {
 
 void SensorManager::recoverDhtSlot(ClimateSlotState& s) {
     if (s.pin == PIN_UNUSED) return;
-    // Release line and issue a clean 20ms wake-up/reset pulse so a glitched DHT11/DHT22 resets without reboot
+    // Release line to idle HIGH first — avoid sending an out-of-spec 20ms LOW pulse to DHT22/AM2302,
+    // which can trigger an unread frame or lock up sensitive AM2302 clones.
     pinMode(s.pin, INPUT_PULLUP);
-    delayMicroseconds(200);
+    delay(2);
     if (digitalRead(s.pin) == LOW) {
-        delay(2);
+        // Line is genuinely stuck LOW: issue a spec-compliant start pulse and let any frame flush cleanly.
+        pinMode(s.pin, OUTPUT);
+        digitalWrite(s.pin, LOW);
+        if (s.type == CLIMATE_DHT11) {
+            delay(20);
+        } else {
+            delayMicroseconds(1500);
+        }
+        pinMode(s.pin, INPUT_PULLUP);
+        delay(6);
     }
-    pinMode(s.pin, OUTPUT);
-    digitalWrite(s.pin, LOW);
-    delay(20);
-    pinMode(s.pin, INPUT_PULLUP);
 
     if (s.dht) {
         delete s.dht;
         s.dht = nullptr;
     }
     uint8_t model = (s.type == CLIMATE_DHT11) ? DHT11 : DHT22;
-    uint8_t pullUsec = ((s.failCount % 2) == 0) ? 30 : 55;
+    static const uint8_t kPullTimings[3] = {55, 45, 35};
+    uint8_t pullUsec = kPullTimings[s.failCount % 3];
     s.dht = new DHT(s.pin, model);
     if (s.dht) {
         s.dht->begin(pullUsec);
@@ -1066,6 +1083,7 @@ void SensorManager::readBME280(ClimateSlotState& s) {
     s.temperature = t + s.tempOffset;
     s.humidity = s.bmpDetected ? 0.0f : constrain(h + s.humOffset, 0.0f, 100.0f);
     s.pressure = p;
+    s.hasReading = true;
     markClimateSuccess(s, "BME280");
 }
 
@@ -1138,6 +1156,7 @@ void SensorManager::readAHT20(ClimateSlotState& s) {
     s.rawHumidity = h;
     s.temperature = t + s.tempOffset;
     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.hasReading = true;
     markClimateSuccess(s, "AHT20");
 }
 
@@ -1195,6 +1214,7 @@ void SensorManager::readSHT3x(ClimateSlotState& s) {
     s.rawHumidity = h;
     s.temperature = t + s.tempOffset;
     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.hasReading = true;
     markClimateSuccess(s, "SHT3x");
 }
 
@@ -1250,6 +1270,7 @@ void SensorManager::readSHT4x(ClimateSlotState& s) {
     s.rawHumidity = h;
     s.temperature = t + s.tempOffset;
     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
+    s.hasReading = true;
     markClimateSuccess(s, "SHT4x");
 }
 
@@ -1378,6 +1399,7 @@ void SensorManager::readBH1750(LightSlotState& s) {
     if (Wire.available() >= 2) {
         uint16_t raw = ((uint16_t)Wire.read() << 8) | Wire.read();
         s.lux = (float)raw / 1.2f;
+        s.hasReading = true;
     } else {
         s.detected = false;
     }
@@ -1464,9 +1486,11 @@ void SensorManager::readDS18B20(ProbeSlotState& s) {
     float c = -127.0f;
     if (readDS18B20Scratchpad(s.pin, c)) {
         s.temperature = c;
+        s.failCount = 0;
         s.fault = false;
     } else {
-        s.fault = true;
+        if (s.failCount < 255) s.failCount++;
+        if (s.failCount >= 3) s.fault = true;
     }
 }
 
@@ -1479,6 +1503,7 @@ void SensorManager::readClimateDS18B20(ClimateSlotState& s) {
         s.rawHumidity = 0.0f;
         s.temperature = c + s.tempOffset;
         s.humidity = 0.0f;
+        s.hasReading = true;
     } else {
         markClimateFailure(s, "Climate DS18B20");
     }
@@ -1510,6 +1535,7 @@ void SensorManager::readUltrasonic(UltrasonicSlotState& s) {
             float waterHeight = (float)s.tankDepthCm - dist;
             float pct = (waterHeight / (float)usableDepth) * 100.0f;
             s.tankLevelPct = (int)constrain(pct, 0.0f, 100.0f);
+            s.hasReading = true;
         }
     } else {
         if (s.failCount < 255) s.failCount++;
@@ -1584,33 +1610,46 @@ uint8_t SensorManager::primaryMq2Idx() const {
 
 // --- Indexed getters ---
 bool SensorManager::isClimateActiveAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _climateCount && _climates[idx].enabled;
 }
+bool SensorManager::isClimateValidAt(uint8_t idx) const {
+    SENSOR_LOCK();
+    return idx < _climateCount && _climates[idx].enabled && !_climates[idx].fault && _climates[idx].hasReading;
+}
 float SensorManager::getTemperatureAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _climateCount) ? _climates[idx].temperature : 0.0f;
 }
 float SensorManager::getHumidityAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _climateCount) ? _climates[idx].humidity : 0.0f;
 }
 float SensorManager::getPressureAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _climateCount && _climates[idx].type == CLIMATE_BME280 && _climates[idx].i2cDetected)
            ? _climates[idx].pressure : 0.0f;
 }
 bool SensorManager::hasBarometerAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _climateCount && _climates[idx].enabled &&
            _climates[idx].type == CLIMATE_BME280 && _climates[idx].i2cDetected;
 }
 bool SensorManager::hasHumidityAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _climateCount && _climates[idx].enabled &&
            !_climates[idx].bmpDetected && _climates[idx].type != CLIMATE_DS18B20;
 }
 bool SensorManager::isClimateFaultAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _climateCount && _climates[idx].enabled && _climates[idx].fault;
 }
 float SensorManager::getTempOffsetAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < MAX_CLIMATE_SENSORS) ? _climates[idx].tempOffset : 0.0f;
 }
 float SensorManager::getHumOffsetAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < MAX_CLIMATE_SENSORS) ? _climates[idx].humOffset : 0.0f;
 }
 void SensorManager::setTempOffsetAt(uint8_t idx, float offset) {
@@ -1623,40 +1662,63 @@ void SensorManager::setHumOffsetAt(uint8_t idx, float offset) {
 }
 
 bool SensorManager::isLightActiveAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _lightCount && _lights[idx].enabled && _lights[idx].detected;
 }
+bool SensorManager::isLightValidAt(uint8_t idx) const {
+    SENSOR_LOCK();
+    return idx < _lightCount && _lights[idx].enabled && _lights[idx].detected && _lights[idx].hasReading;
+}
 float SensorManager::getLuxAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _lightCount) ? _lights[idx].lux : 0.0f;
 }
 
 bool SensorManager::isMotionActiveAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _motionCount && _motions[idx].enabled;
 }
 bool SensorManager::isMotionDetectedAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return isMotionActiveAt(idx) && _motions[idx].detected;
 }
 uint32_t SensorManager::getMotionAgeSecondsAt(uint8_t idx) const {
+    SENSOR_LOCK();
     if (!isMotionActiveAt(idx) || _motions[idx].lastMotionTime == 0) return 99999;
     return (uint32_t)((millis() - _motions[idx].lastMotionTime) / 1000);
 }
 
 bool SensorManager::isProbeActiveAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _probeCount && _probes[idx].enabled;
 }
 float SensorManager::getProbeTemperatureAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _probeCount) ? _probes[idx].temperature : -127.0f;
 }
 bool SensorManager::isProbeFaultAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return isProbeActiveAt(idx) && _probes[idx].fault;
 }
 
 bool SensorManager::isUltrasonicActiveAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return idx < _ultrasonicCount && _ultrasonics[idx].enabled;
 }
+bool SensorManager::isUltrasonicFaultAt(uint8_t idx) const {
+    SENSOR_LOCK();
+    return idx < _ultrasonicCount && _ultrasonics[idx].enabled && _ultrasonics[idx].fault;
+}
+bool SensorManager::isUltrasonicValidAt(uint8_t idx) const {
+    SENSOR_LOCK();
+    return idx < _ultrasonicCount && _ultrasonics[idx].enabled && !_ultrasonics[idx].fault && _ultrasonics[idx].hasReading;
+}
 float SensorManager::getDistanceCmAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _ultrasonicCount) ? _ultrasonics[idx].distanceCm : 0.0f;
 }
 int SensorManager::getTankLevelPercentAt(uint8_t idx) const {
+    SENSOR_LOCK();
     return (idx < _ultrasonicCount) ? _ultrasonics[idx].tankLevelPct : 0;
 }
 
@@ -1794,12 +1856,25 @@ void  SensorManager::setTempAlarmThreshold(float t) { SENSOR_LOCK(); _tempAlarmT
 
 bool SensorManager::isTempAlarm() {
     SENSOR_LOCK();
+    bool anyAboveTrigger = false;
+    bool anyAboveClear = false;
+    const float clearThreshold = _tempAlarmThreshold - 1.5f;
     for (uint8_t i = 0; i < _climateCount; i++) {
-        if (_climates[i].enabled && !_climates[i].fault && _climates[i].temperature >= _tempAlarmThreshold) {
-            return true;
+        if (_climates[i].enabled && !_climates[i].fault && _climates[i].hasReading) {
+            if (_climates[i].temperature >= _tempAlarmThreshold) {
+                anyAboveTrigger = true;
+            }
+            if (_climates[i].temperature >= clearThreshold) {
+                anyAboveClear = true;
+            }
         }
     }
-    return false;
+    if (anyAboveTrigger) {
+        _tempAlarmLatched = true;
+    } else if (_tempAlarmLatched && !anyAboveClear) {
+        _tempAlarmLatched = false;
+    }
+    return _tempAlarmLatched;
 }
 
 float SensorManager::getLux() {

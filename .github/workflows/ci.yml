@@ -1,0 +1,52 @@
+name: SmartHome CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  flutter-analyze-and-test:
+    name: Flutter Analyze & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install dependencies
+        run: flutter pub get
+      - name: Run static analysis
+        run: flutter analyze
+      - name: Run unit & widget regression tests
+        run: flutter test
+
+  web-ui-js-syntax:
+    name: Embedded Web UI JS Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate embedded script blocks in WebPages.h
+        run: |
+          node -e '
+            const fs = require("fs");
+            const vm = require("vm");
+            const src = fs.readFileSync("WebPages.h", "utf8");
+            const re = /<script>([\s\S]*?)<\/script>/g;
+            let m, count = 0;
+            while ((m = re.exec(src)) !== null) {
+              count++;
+              const js = m[1].replace(/let gIsEsp8266\s*=[\s\S]*?R"rawliteral\(/, "let gIsEsp8266 = false;");
+              new vm.Script(js, { filename: `WebPages_script_${count}.js` });
+              console.log(`Validated script block #${count} (${js.length} chars)`);
+            }
+            if (count < 3) throw new Error(`Expected >= 3 script blocks, found ${count}`);
+          '

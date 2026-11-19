@@ -203,7 +203,14 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
           break;
         }
       }
+      if ((pairedPass == null || pairedPass.isEmpty) && adminPass.isNotEmpty) {
+        pairedUser = adminUser;
+        pairedPass = adminPass;
+      }
     }
+    final bool? webAuthFlag = _enableWebAuth
+        ? true
+        : ((apDev != null && apDev.authRequired) ? null : false);
     final sent = await _api.saveWifiConfig(
       _apHost,
       ssid,
@@ -211,7 +218,7 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
       authUsername: pairedUser,
       authPassword: pairedPass,
       deviceName: devName,
-      webAuth: _enableWebAuth,
+      webAuth: webAuthFlag,
       webUser: _enableWebAuth ? adminUser : null,
       webPass: _enableWebAuth ? adminPass : null,
     );
@@ -221,8 +228,14 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
       setState(() {
         _isProvisioning = false;
         _statusStepText = null;
-        _errorText =
-            'Failed to send credentials to 192.168.4.1. Make sure your phone is still connected to SmartHome-XXXX Wi-Fi.';
+        if (apDev != null && apDev.authRequired && (pairedPass == null || pairedPass.isEmpty)) {
+          _enableWebAuth = true;
+          _errorText =
+              'This controller already has Admin Password Protection enabled. Enter its Admin Username & Password below, then tap Provision again.';
+        } else {
+          _errorText =
+              'Failed to send credentials to 192.168.4.1. Make sure your phone is still connected to SmartHome-XXXX Wi-Fi.';
+        }
       });
       return;
     }
@@ -232,13 +245,16 @@ class _WifiProvisioningSheetState extends ConsumerState<WifiProvisioningSheet> {
     // Pre-register the controller identity, room, and credentials so as soon as
     // the phone switches back to the home router, LAN radar links it seamlessly!
     if (apDev != null) {
+      final effectiveAuthReq = _enableWebAuth || apDev.authRequired;
+      final effectiveUser = _enableWebAuth ? adminUser : (pairedUser ?? adminUser);
+      final effectivePass = _enableWebAuth ? adminPass : pairedPass;
       await manager.registerProvisionedDevice(
         apDev.copyWith(
           name: devName,
           room: _selectedRoom,
-          authRequired: _enableWebAuth,
-          authUsername: adminUser,
-          authPassword: _enableWebAuth ? adminPass : null,
+          authRequired: effectiveAuthReq,
+          authUsername: effectiveUser,
+          authPassword: effectiveAuthReq ? effectivePass : null,
         ),
       );
     }

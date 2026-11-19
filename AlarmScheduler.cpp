@@ -70,10 +70,10 @@ void AlarmScheduler::loop() {
     int dow = hasLocalTime ? timeInfo.tm_wday : -1; // 0=Sun
 
     int32_t currentMinuteKey = -1;
-    if (epochNow > 0) {
+    if (hasLocalTime) {
+        currentMinuteKey = (int32_t)((((timeInfo.tm_year & 0x7F) * 366 + timeInfo.tm_yday) * 1440) + (hour * 60) + minute);
+    } else if (epochNow > 0) {
         currentMinuteKey = (int32_t)(epochNow / 60);
-    } else if (hasLocalTime) {
-        currentMinuteKey = (int32_t)((timeInfo.tm_yday * 1440) + (hour * 60) + minute);
     }
 
     struct FiredAction {
@@ -145,13 +145,10 @@ void AlarmScheduler::loop() {
                 _lastFiredMinuteKey[i] = currentMinuteKey;
             }
         }
-
-        if (fired) {
-            changed = true;
-        }
+        (void)fired;
 
         if (changed) {
-            save(); // Persist fired state / delay arming
+            save(); // Persist fired state / delay arming (only when persistent fields changed)
         }
     }
 

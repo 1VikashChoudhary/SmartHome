@@ -83,17 +83,24 @@ class MainActivity : FlutterActivity() {
         }
 
         val devExtra = intent.getStringExtra(EXTRA_OPEN_DEVICE_ID)?.trim()
+        val allowedAlarms = setOf("gas", "temperature", "sensor_fault")
+        var openedForAlarm = false
         if (NativeControlStore.isValidDeviceId(devExtra) &&
             NativeControlStore.getDeviceById(applicationContext, devExtra!!) != null) {
             pendingDeviceId = devExtra
             val alarmExtra = intent.getStringExtra(EXTRA_OPEN_ALARM_TYPE)?.trim()
-            if (!alarmExtra.isNullOrEmpty()) {
+            if (!alarmExtra.isNullOrEmpty() && alarmExtra in allowedAlarms) {
                 pendingAlarmType = alarmExtra
+                openedForAlarm = true
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                     setShowWhenLocked(true)
                     setTurnScreenOn(true)
                 }
             }
+        }
+        if (!openedForAlarm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(false)
+            setTurnScreenOn(false)
         }
     }
 
@@ -326,6 +333,10 @@ class MainActivity : FlutterActivity() {
 
                 "stopInAppSiren" -> {
                     AlarmSoundPlayer.stopSiren(applicationContext)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        setShowWhenLocked(false)
+                        setTurnScreenOn(false)
+                    }
                     result.success(true)
                 }
 
@@ -333,6 +344,10 @@ class MainActivity : FlutterActivity() {
                     val devId = call.argument<String>("deviceId").orEmpty()
                     val alarmType = call.argument<String>("alarmType").orEmpty()
                     AlarmSoundPlayer.stopSiren(applicationContext)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                        setShowWhenLocked(false)
+                        setTurnScreenOn(false)
+                    }
                     if (devId.isNotEmpty()) {
                         if (alarmType.isNotEmpty()) {
                             SafetyMonitorService.markEpisodeSilenced(devId, alarmType)

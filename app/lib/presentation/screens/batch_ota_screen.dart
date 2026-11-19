@@ -30,6 +30,31 @@ class BatchOtaScreen extends ConsumerStatefulWidget {
       bytes[34] == 0xCD &&
       bytes[35] == 0xAB;
 
+  /// Reads the 16-bit `chip_id` from the ESP-IDF extended image header (bytes 12..13).
+  static int esp32ChipId(Uint8List bytes) =>
+      bytes.length >= 14 ? (bytes[12] | (bytes[13] << 8)) : -1;
+
+  static String esp32ChipName(int chipId) {
+    switch (chipId) {
+      case 0x0000:
+        return 'ESP32';
+      case 0x0002:
+        return 'ESP32-S2';
+      case 0x0005:
+        return 'ESP32-C3';
+      case 0x0009:
+        return 'ESP32-S3';
+      case 0x000C:
+        return 'ESP32-C2';
+      case 0x000D:
+        return 'ESP32-C6';
+      case 0x0010:
+        return 'ESP32-H2';
+      default:
+        return 'ESP32 variant (0x${chipId.toRadixString(16).toUpperCase()})';
+    }
+  }
+
   /// Filters eligible online admin-unlocked controllers for a batch OTA flash.
   /// When [selectedDeviceId] is null ("Flash ALL" mode) and [isFilesystemOta] is false,
   /// targets are matched strictly by the binary's chip architecture header.
@@ -114,6 +139,12 @@ class BatchOtaScreen extends ConsumerStatefulWidget {
     }
 
     final hasEsp32AppDescHeader = !isFilesystemOta && hasEsp32AppDesc(bytes);
+    if (hasEsp32AppDescHeader) {
+      final chipId = esp32ChipId(bytes);
+      if (chipId != 0x0000) {
+        return 'This binary targets ${esp32ChipName(chipId)}, not classic ESP32.';
+      }
+    }
 
     if (!isFilesystemOta && targetDevice == null) {
       if (name.contains('esp32') &&
@@ -184,7 +215,8 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
 
   final ApiClient _api = ApiClient();
 
-  String? _selectedDeviceId; // null means 'ALL Devices'
+  String? _selectedDeviceId; // null means explicit 'Same-Chip Batch' mode
+  bool _userChoseBatchAll = false;
   String? _selectedFileName;
   int _selectedFileSize = 0;
   Uint8List? _firmwareBytes;
@@ -199,6 +231,20 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   void initState() {
     super.initState();
     _selectedDeviceId = widget.preselectedDeviceId;
+  }
+
+  String? _resolveDefaultSingleDeviceId(List<SmartDevice> devices) {
+    if (devices.isEmpty) return null;
+    for (final d in devices) {
+      if (d.isOnline && !d.isGuest && !d.needsAuth) return d.id;
+    }
+    return devices.first.id;
+  }
+
+  bool _hasMultipleSameChipDevices(List<SmartDevice> devices) {
+    final esp32Count = devices.where((d) => !d.isEsp8266).length;
+    final esp8266Count = devices.where((d) => d.isEsp8266).length;
+    return esp32Count >= 2 || esp8266Count >= 2;
   }
 
   @override
@@ -258,10 +304,15 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   }
 
   String? _validateFirmwareFile(String filename, Uint8List bytes, List<SmartDevice> devices) {
+    final effectiveId = _userChoseBatchAll && _hasMultipleSameChipDevices(devices)
+        ? null
+        : (devices.any((d) => d.id == _selectedDeviceId)
+              ? _selectedDeviceId
+              : _resolveDefaultSingleDeviceId(devices));
     SmartDevice? targetDevice;
-    if (_selectedDeviceId != null) {
+    if (effectiveId != null) {
       for (final d in devices) {
-        if (d.id == _selectedDeviceId) {
+        if (d.id == effectiveId) {
           targetDevice = d;
           break;
         }
@@ -287,12 +338,17 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
     }
 
     final devices = ref.read(deviceManagerProvider);
+    final effectiveSelectedId = _userChoseBatchAll && _hasMultipleSameChipDevices(devices)
+        ? null
+        : (devices.any((d) => d.id == _selectedDeviceId)
+              ? _selectedDeviceId
+              : _resolveDefaultSingleDeviceId(devices));
     final filename = _selectedFileName ?? '';
     final targetDevices = BatchOtaScreen.selectTargetDevicesForFlash(
       devices: devices,
       bytes: _firmwareBytes!,
       isFilesystemOta: _isFilesystemOta,
-      selectedDeviceId: _selectedDeviceId,
+      selectedDeviceId: effectiveSelectedId,
     );
 
     if (targetDevices.isEmpty) {
@@ -326,7 +382,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
     }
 
     final bool isFs = _isFilesystemOta;
-    if (isFs && _selectedDeviceId == null) {
+    if (isFs && effectiveSelectedId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Filesystem OTA is only allowed on a single controller.'),
@@ -335,6 +391,9 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
       );
       return;
     }
+    final targetSummary = targetDevices
+        .map((d) => '• ${d.name} [${d.isEsp8266 ? "ESP8266" : "ESP32"}] (${d.ip})')
+        .join('\n');
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -344,7 +403,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
           style: TextStyle(color: AppColors.textPrimary),
         ),
         content: Text(
-          'Target: ${targetDevices.length == 1 ? targetDevices.first.name : "${targetDevices.length} Controllers"}\n'
+          'Target${targetDevices.length == 1 ? '' : 's (${targetDevices.length})'}:\n$targetSummary\n\n'
           'Mode: ${isFs ? "Filesystem (LittleFS/SPIFFS)" : "Application Firmware"}\n'
           'Binary: $_selectedFileName (${(_selectedFileSize / 1024).toStringAsFixed(1)} KB)\n\n'
           'The controller(s) will reboot upon completion. Do not cut power during flashing.',
@@ -551,12 +610,18 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
   @override
   Widget build(BuildContext context) {
     final devices = ref.watch(deviceManagerProvider);
-    final validSelectedId = devices.any((d) => d.id == _selectedDeviceId)
-        ? _selectedDeviceId
-        : null;
+    final canBatchSameChip = _hasMultipleSameChipDevices(devices);
+    final validSelectedId = (_userChoseBatchAll && canBatchSameChip)
+        ? null
+        : (devices.any((d) => d.id == _selectedDeviceId)
+              ? _selectedDeviceId
+              : _resolveDefaultSingleDeviceId(devices));
+    if (!_userChoseBatchAll && _selectedDeviceId != validSelectedId) {
+      _selectedDeviceId = validSelectedId;
+    }
 
     return Scaffold(
-      appBar: AppBar(title: Text('Firmware OTA Manager')),
+      appBar: AppBar(title: const Text('Firmware Update (OTA)')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -665,6 +730,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                 ),
                 SizedBox(height: 12),
                 DropdownButtonFormField<String?>(
+                  key: ValueKey('ota_target_${validSelectedId ?? "batch"}_${devices.length}'),
                   initialValue: validSelectedId,
                   isExpanded: true,
                   dropdownColor: AppColors.surfaceElevated,
@@ -672,13 +738,6 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                     border: OutlineInputBorder(),
                   ),
                   items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text(
-                        '⚡ Flash ALL Online Controllers',
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
                     ...devices.map(
                       (d) => DropdownMenuItem<String?>(
                         value: d.id,
@@ -688,19 +747,72 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                         ),
                       ),
                     ),
+                    if (canBatchSameChip)
+                      const DropdownMenuItem<String?>(
+                        value: null,
+                        child: Text(
+                          '⚡ Batch: Same-Chip Online Controllers Only',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
                   onChanged: _isUploading
                       ? null
                       : (val) => setState(() {
+                            _userChoseBatchAll = (val == null);
                             _selectedDeviceId = val;
                             if (val == null && _isFilesystemOta) {
                               _isFilesystemOta = false;
-                              _firmwareBytes = null;
-                              _selectedFileName = null;
-                              _selectedFileSize = 0;
+                            }
+                            if (_firmwareBytes != null && _selectedFileName != null) {
+                              final err = _validateFirmwareFile(
+                                _selectedFileName!,
+                                _firmwareBytes!,
+                                devices,
+                              );
+                              if (err != null) {
+                                _firmwareBytes = null;
+                                _selectedFileName = null;
+                                _selectedFileSize = 0;
+                                _uploadStatusText = err;
+                              }
                             }
                           }),
                 ),
+                if (validSelectedId == null && canBatchSameChip) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: AppColors.warning.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: AppColors.warning,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Safety Tip: Update 1 controller first and confirm it boots cleanly before batch-updating others. Only controllers matching the binary’s exact chip header (ESP32 or ESP8266) will be flashed.',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              height: 1.35,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 if (validSelectedId != null) ...[
                   const SizedBox(height: 12),
                   SwitchListTile.adaptive(
@@ -783,7 +895,7 @@ class _BatchOtaScreenState extends ConsumerState<BatchOtaScreen> {
                     ...devices
                         .where(
                           (d) => validSelectedId == null
-                              ? true
+                              ? _deviceFlashStatus.containsKey(d.id)
                               : d.id == validSelectedId,
                         )
                         .map((d) {

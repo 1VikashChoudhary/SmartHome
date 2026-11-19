@@ -67,19 +67,32 @@ int performHttpPost(const String& url, const String& token,
                     const String& contentType, bool isHttps) {
 #if defined(ESP32)
     HTTPClient http;
+    auto sanitizeHeaderValue = [](const String& raw, size_t maxLen) -> String {
+        String out;
+        out.reserve(raw.length() < maxLen ? raw.length() : maxLen);
+        for (size_t i = 0; i < raw.length() && out.length() < maxLen; i++) {
+            unsigned char c = (unsigned char)raw[i];
+            if (c >= 0x20 && c != 0x7F) out += (char)c;
+        }
+        return out;
+    };
+    String safeTitle = sanitizeHeaderValue(title, 96);
+    String safeToken = sanitizeHeaderValue(token, 256);
+
     int code = -1;
     if (isHttps) {
         WiFiClientSecure client;
         client.setInsecure(); // Allow user-supplied HTTPS webhook / self-hosted ntfy certs
+        client.setHandshakeTimeout(5);
         client.setTimeout(5000);
         if (http.begin(client, url)) {
             http.setTimeout(5000);
             http.addHeader("Content-Type", contentType);
-            http.addHeader("Title", title);
+            http.addHeader("Title", safeTitle);
             http.addHeader("Priority", "urgent");
             http.addHeader("Tags", "rotating_light,warning");
-            if (token.length() > 0) {
-                http.addHeader("Authorization", "Bearer " + token);
+            if (safeToken.length() > 0) {
+                http.addHeader("Authorization", "Bearer " + safeToken);
             }
             code = http.POST((uint8_t*)body.c_str(), body.length());
             http.end();
@@ -90,11 +103,11 @@ int performHttpPost(const String& url, const String& token,
         if (http.begin(client, url)) {
             http.setTimeout(4000);
             http.addHeader("Content-Type", contentType);
-            http.addHeader("Title", title);
+            http.addHeader("Title", safeTitle);
             http.addHeader("Priority", "urgent");
             http.addHeader("Tags", "rotating_light,warning");
-            if (token.length() > 0) {
-                http.addHeader("Authorization", "Bearer " + token);
+            if (safeToken.length() > 0) {
+                http.addHeader("Authorization", "Bearer " + safeToken);
             }
             code = http.POST((uint8_t*)body.c_str(), body.length());
             http.end();
@@ -247,6 +260,36 @@ bool RemoteAlertManager::validateUrl(const String& url, bool enabled, String& ou
         outError = F("HTTPS webhooks require ESP32; use local http:// URL or MQTT on ESP8266");
         return false;
     }
+    // Extract host portion and block loopback / link-local / self-IP SSRF targets
+    int hostStart = isHttps ? 8 : 7;
+    int pathStart = lower.indexOf('/', hostStart);
+    String authority = (pathStart >= 0) ? lower.substring(hostStart, pathStart) : lower.substring(hostStart);
+    int atIdx = authority.lastIndexOf('@');
+    if (atIdx >= 0) authority = authority.substring(atIdx + 1);
+    String host = authority;
+    if (host.startsWith("[")) {
+        int rb = host.indexOf(']');
+        host = (rb > 0) ? host.substring(1, rb) : "";
+    } else {
+        int colon = host.indexOf(':');
+        if (colon >= 0) host = host.substring(0, colon);
+    }
+    if (host.length() == 0) {
+        outError = F("Webhook URL must include a valid host");
+        return false;
+    }
+    if (host == "localhost" || host == "::1" || host == "0.0.0.0" ||
+        host.startsWith("127.") || host.startsWith("169.254.") || host.endsWith(".localhost")) {
+        outError = F("Loopback and link-local webhook targets are not permitted");
+        return false;
+    }
+    IPAddress parsedIp;
+    if (parsedIp.fromString(host)) {
+        if (parsedIp == WiFi.localIP() || parsedIp == WiFi.softAPIP()) {
+            outError = F("Webhook URL cannot target this controller's own IP");
+            return false;
+        }
+    }
     return true;
 }
 
@@ -370,6 +413,10 @@ bool RemoteAlertManager::dispatch(const String& deviceName, const String& mac,
 #if defined(ESP32)
         if (_inFlight) {
             outError = F("Another alert webhook request is already in progress");
+            return false;
+        }
+        if (ESP.getMaxAllocHeap() < 24576) {
+            outError = F("Low memory; cannot schedule alert task");
             return false;
         }
         _inFlight = true;

@@ -39,7 +39,11 @@ StorageManager::StorageManager() : _initialized(false), _writeEnabled(true)
 #if defined(ESP32)
     , _fsMutex(nullptr)
 #endif
-{}
+{
+#if defined(ESP32)
+    memset(_pendingCycleIncrements, 0, sizeof(_pendingCycleIncrements));
+#endif
+}
 
 // ============================================================================
 // Initialize LittleFS
@@ -187,11 +191,13 @@ bool StorageManager::deleteFile(const char* path) {
 }
 
 void StorageManager::setWriteEnabled(bool enabled) {
+    STORAGE_LOCK();
     _writeEnabled = enabled;
     SERIAL_PRINTF("[Storage] Writes %s\n", enabled ? "enabled" : "disabled");
 }
 
 bool StorageManager::isWriteEnabled() const {
+    STORAGE_LOCK();
     return _writeEnabled;
 }
 
@@ -209,7 +215,7 @@ String StorageManager::exportAllConfig(bool redactSecrets) {
     };
 
     for (const char* path : configFiles) {
-        if (LittleFS.exists(path)) {
+        if (fileExists(path)) {
             JsonDocument subDoc;
             if (loadJson(path, subDoc)) {
                 // Use the filename (without leading /) as the key
@@ -585,21 +591,24 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
             }
 
             // Preserve local secrets if the restored backup was sanitized with __REDACTED__
-            if (strcmp(m.path, PATH_WIFI) == 0 && LittleFS.exists(PATH_WIFI)) {
+            if (strcmp(m.path, PATH_WIFI) == 0) {
                 JsonDocument existing;
-                if (loadJson(PATH_WIFI, existing) && existing.containsKey("networks") && subDoc.containsKey("networks")) {
+                bool hasExisting = fileExists(PATH_WIFI) && loadJson(PATH_WIFI, existing) && existing.containsKey("networks");
+                if (subDoc.containsKey("networks")) {
                     JsonArray newArr = subDoc["networks"].as<JsonArray>();
-                    JsonArray oldArr = existing["networks"].as<JsonArray>();
-                    // Robust matching by SSID rather than fragile array index
                     for (JsonObject newNet : newArr) {
                         if (newNet["pass"] == "__REDACTED__") {
                             const char* ssid = newNet["ssid"] | "";
                             bool matched = false;
-                            for (JsonObject oldNet : oldArr) {
-                                if (strcmp(oldNet["ssid"] | "", ssid) == 0 && oldNet.containsKey("pass")) {
-                                    newNet["pass"] = oldNet["pass"];
-                                    matched = true;
-                                    break;
+                            if (hasExisting) {
+                                JsonArray oldArr = existing["networks"].as<JsonArray>();
+                                for (JsonObject oldNet : oldArr) {
+                                    if (strcmp(oldNet["ssid"] | "", ssid) == 0 && oldNet.containsKey("pass") &&
+                                        oldNet["pass"] != "__REDACTED__") {
+                                        newNet["pass"] = oldNet["pass"];
+                                        matched = true;
+                                        break;
+                                    }
                                 }
                             }
                             if (!matched) {
@@ -608,22 +617,23 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                         }
                     }
                 }
-            } else if (strcmp(m.path, PATH_MQTT) == 0 && LittleFS.exists(PATH_MQTT)) {
+            } else if (strcmp(m.path, PATH_MQTT) == 0) {
                 if (subDoc["pass"] == "__REDACTED__") {
                     JsonDocument existing;
-                    if (loadJson(PATH_MQTT, existing) && existing.containsKey("pass") && existing["pass"] != "__REDACTED__") {
+                    if (fileExists(PATH_MQTT) && loadJson(PATH_MQTT, existing) &&
+                        existing.containsKey("pass") && existing["pass"] != "__REDACTED__") {
                         subDoc["pass"] = existing["pass"];
                     } else {
                         subDoc.remove("pass");
                     }
                 }
-            } else if (strcmp(m.path, PATH_CONFIG) == 0 && LittleFS.exists(PATH_CONFIG)) {
+            } else if (strcmp(m.path, PATH_CONFIG) == 0) {
                 if (subDoc["web_pass"] == "__REDACTED__" || subDoc["web_pass_hash"] == "__REDACTED__" ||
                     subDoc["guest_pass"] == "__REDACTED__" || subDoc["guest_pass_hash"] == "__REDACTED__" ||
                     subDoc["ota_pass_md5"] == "__REDACTED__" || subDoc["ap_pass"] == "__REDACTED__" ||
                     subDoc["alert_webhook_url"] == "__REDACTED__" || subDoc["alert_webhook_token"] == "__REDACTED__") {
                     JsonDocument existing;
-                    if (loadJson(PATH_CONFIG, existing)) {
+                    if (fileExists(PATH_CONFIG) && loadJson(PATH_CONFIG, existing)) {
                         if (subDoc["web_pass_hash"] == "__REDACTED__") {
                             if (existing.containsKey("web_pass_hash") && existing["web_pass_hash"] != "__REDACTED__") {
                                 subDoc["web_pass_hash"] = existing["web_pass_hash"];
@@ -723,63 +733,17 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                     }
                 }
             } else if (strcmp(m.path, PATH_RELAY_STATES) == 0 && subDoc.containsKey("states")) {
-                // Synchronize saved wall-switch baselines ("sw") with the current physical
-                // GPIO pin states so RelayManager::initWallSwitchStates() on reboot does not
-                // misinterpret a difference between backup-time switch position and current
-                // switch position as a power-outage toggle and invert restored relay states!
+                // Restore logical relay states and saved wall-switch baselines without re-configuring
+                // live GPIO pinModes prior to reboot (RelayManager::begin() safely initializes pins after reboot).
                 JsonArray statesArr = subDoc["states"].as<JsonArray>();
-                uint8_t swPins[MAX_RELAYS];
-                for (uint8_t i = 0; i < MAX_RELAYS; i++) {
-                    swPins[i] = (i < NUM_RELAYS) ? SWITCH_PINS[i] : PIN_UNUSED;
-                }
-                if (LittleFS.exists(PATH_HARDWARE)) {
-                    JsonDocument hwDoc;
-                    if (loadJson(PATH_HARDWARE, hwDoc) && hwDoc.containsKey("channels")) {
-                        JsonArray chs = hwDoc["channels"].as<JsonArray>();
-                        for (uint8_t i = 0; i < MAX_RELAYS && i < chs.size(); i++) {
-                            bool swEn = chs[i]["switch_enabled"] | true;
-                            bool chEn = chs[i]["enabled"] | true;
-                            if (chEn && swEn) {
-                                swPins[i] = chs[i]["switch_pin"] | PIN_UNUSED;
-                            } else {
-                                swPins[i] = PIN_UNUSED;
-                            }
-                        }
-                    }
-                }
-
                 bool logical[MAX_RELAYS] = {0};
                 bool wallSw[MAX_RELAYS] = {0};
+                loadRelayStatesNVS(logical, wallSw, MAX_RELAYS);
                 uint8_t idx = 0;
                 for (JsonObject s : statesArr) {
                     if (idx >= MAX_RELAYS) break;
                     logical[idx] = s["on"] | false;
-                    uint8_t pin = swPins[idx];
-                    if (pin != PIN_UNUSED) {
-#if defined(ESP8266)
-                        if (pin <= 16 && pin != 1 && pin != 3 && !(pin >= 6 && pin <= 11)) {
-                            if (pin == 16) {
-                                pinMode(pin, INPUT); // GPIO 16 has no internal pullup
-                            } else {
-                                pinMode(pin, INPUT_PULLUP);
-                            }
-                            wallSw[idx] = !digitalRead(pin);
-                        } else {
-                            wallSw[idx] = s["sw"] | false;
-                        }
-#else
-                        if (pin < 40 && pin != 1 && pin != 3 && !(pin >= 6 && pin <= 11)) {
-                            if (pin >= 34 && pin <= 39) {
-                                pinMode(pin, INPUT);
-                            } else {
-                                pinMode(pin, INPUT_PULLUP);
-                            }
-                            wallSw[idx] = !digitalRead(pin);
-                        } else {
-                            wallSw[idx] = s["sw"] | false;
-                        }
-#endif
-                    } else {
+                    if (s.containsKey("sw")) {
                         wallSw[idx] = s["sw"] | false;
                     }
                     idx++;
@@ -787,7 +751,7 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
 
                 // Restore directly into wear-leveled NVS (bypassing LittleFS entirely)
                 saveRelayStatesNVS(logical, wallSw, idx > 0 ? idx : MAX_RELAYS);
-                if (LittleFS.exists(PATH_RELAY_STATES)) {
+                if (fileExists(PATH_RELAY_STATES)) {
                     deleteFile(PATH_RELAY_STATES);
                 }
                 restored++;
@@ -808,7 +772,7 @@ bool StorageManager::importAllConfig(JsonObjectConst doc) {
                 restored++;
                 Serial.println(F("[Storage-NVS] Cleared relay states in NVS (missing in full backup)."));
             }
-            if (LittleFS.exists(m.path) && deleteFile(m.path)) {
+            if (fileExists(m.path) && deleteFile(m.path)) {
                 restored++;
                 SERIAL_PRINTF("[Storage] Removed post-backup config to restore default state: %s\n", m.path);
             }
@@ -856,6 +820,7 @@ void StorageManager::factoryReset() {
 // ============================================================================
 size_t StorageManager::usedBytes() {
     if (!_initialized) return 0;
+    STORAGE_LOCK();
 #if defined(ESP8266)
     FSInfo fs_info;
     if (LittleFS.info(fs_info)) return fs_info.usedBytes;
@@ -867,6 +832,7 @@ size_t StorageManager::usedBytes() {
 
 size_t StorageManager::totalBytes() {
     if (!_initialized) return 1; // Avoid divide by zero
+    STORAGE_LOCK();
 #if defined(ESP8266)
     FSInfo fs_info;
     if (LittleFS.info(fs_info)) return fs_info.totalBytes;
@@ -901,7 +867,7 @@ void StorageManager::migrateIfNeeded() {
     // 2. Decoupled NVS State Migration:
     // If legacy /relay_states.json exists in LittleFS, migrate its contents
     // into the wear-leveled NVS partition and permanently remove the file from LittleFS.
-    if (LittleFS.exists(PATH_RELAY_STATES)) {
+    if (fileExists(PATH_RELAY_STATES)) {
         JsonDocument rsDoc;
         if (loadJson(PATH_RELAY_STATES, rsDoc) && rsDoc.containsKey("states")) {
             JsonArray arr = rsDoc["states"].as<JsonArray>();
@@ -1084,9 +1050,21 @@ bool StorageManager::saveRelayStatesNVS(const bool* logicalStates, const bool* s
         nvs_set_u16(handle, "r_sw", switchMask);
     }
     nvs_set_u8(handle, "r_cnt", count);
-    nvs_commit(handle);
+    for (uint8_t i = 0; i < MAX_RELAYS; i++) {
+        if (_pendingCycleIncrements[i] > 0) {
+            char key[16];
+            snprintf(key, sizeof(key), "cyc_%u", i);
+            uint32_t cur = 0;
+            nvs_get_u32(handle, key, &cur);
+            cur += _pendingCycleIncrements[i];
+            if (nvs_set_u32(handle, key, cur) == ESP_OK) {
+                _pendingCycleIncrements[i] = 0;
+            }
+        }
+    }
+    esp_err_t commitErr = nvs_commit(handle);
     nvs_close(handle);
-    return true;
+    return commitErr == ESP_OK;
 }
 
 bool StorageManager::loadRelayStatesNVS(bool* logicalStates, bool* switchStates, uint8_t count) {
@@ -1122,17 +1100,8 @@ void StorageManager::incrementRelayCycleNVS(uint8_t index) {
     if (index >= MAX_RELAYS || !_writeEnabled) return;
     STORAGE_LOCK();
     if (!_writeEnabled) return;
-    char key[16];
-    snprintf(key, sizeof(key), "cyc_%u", index);
-    nvs_handle_t handle;
-    if (nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle) == ESP_OK) {
-        uint32_t count = 0;
-        nvs_get_u32(handle, key, &count);
-        count++;
-        nvs_set_u32(handle, key, count);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
+    _pendingCycleIncrements[index]++;
+    // Defer flash commit to RelayManager's coalesced saveRelayStatesNVS() window to prevent Core 0 flash stalls
 }
 
 uint32_t StorageManager::getRelayCycleNVS(uint8_t index) {
@@ -1146,11 +1115,12 @@ uint32_t StorageManager::getRelayCycleNVS(uint8_t index) {
         nvs_get_u32(handle, key, &val);
         nvs_close(handle);
     }
-    return val;
+    return val + _pendingCycleIncrements[index];
 }
 
 void StorageManager::clearNVSState() {
     STORAGE_LOCK();
+    memset(_pendingCycleIncrements, 0, sizeof(_pendingCycleIncrements));
     nvs_handle_t handle;
     if (nvs_open(NVS_NAMESPACE_STATE, NVS_READWRITE, &handle) == ESP_OK) {
         nvs_erase_all(handle);

@@ -136,7 +136,9 @@ void EventLogger::toJsonArray(JsonArray& arr, int limit) {
 
 String EventLogger::toCSV() {
     LOG_LOCK();
-    String csv = F("Timestamp,Level,Source,Message\n");
+    String csv;
+    csv.reserve((size_t)_count * 56 + 40);
+    csv = F("Timestamp,Level,Source,Message\n");
 
     if (_count == 0) return csv;
 
@@ -165,7 +167,13 @@ String EventLogger::toCSV() {
 
 void EventLogger::persistNow() {
     LOG_LOCK();
-    if (!_storage || _count == 0) return;
+    if (!_storage) return;
+    if (_count == 0) {
+        _storage->deleteFile(PATH_LOGS);
+        _dirty = false;
+        _lastPersist = millis();
+        return;
+    }
 
     JsonDocument doc;
     JsonArray arr = doc["logs"].to<JsonArray>();
@@ -186,8 +194,8 @@ void EventLogger::persistNow() {
 
     if (_storage->saveJson(PATH_LOGS, doc)) {
         _dirty = false;
-        _lastPersist = millis();
     }
+    _lastPersist = millis();
 }
 
 // ============================================================================
@@ -230,7 +238,12 @@ void EventLogger::autoClean() {
     if (cleaned > 0) {
         _count = writeOffset;
         _head = (start + writeOffset) % MAX_LOG_ENTRIES;
-        _dirty = true;
+        if (_count == 0) {
+            if (_storage) _storage->deleteFile(PATH_LOGS);
+            _dirty = false;
+        } else {
+            _dirty = true;
+        }
         SERIAL_PRINTF("[Logger] Auto-cleaned %d old entries\n", cleaned);
     }
 }

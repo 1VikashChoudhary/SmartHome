@@ -32,7 +32,7 @@ void main() {
     expect(find.byType(Image), findsOneWidget);
     expect(find.text('About & Sponsorship'), findsOneWidget);
     expect(find.text('SmartHome Pro'), findsOneWidget);
-    expect(find.text('v1.0.0 Stable'), findsOneWidget);
+    expect(find.text('v1.1.0 Stable'), findsOneWidget);
     expect(find.text('100% Local-First'), findsOneWidget);
 
     // Verify Developer

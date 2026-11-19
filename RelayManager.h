@@ -112,6 +112,8 @@ public:
 
     // --- Failsafe ---
     void activateFailsafe();
+    void clearFailsafe();
+    bool isFailsafeActive() const;
 
     // --- JSON Serialization ---
     void toJson(JsonArray& arr);
@@ -124,6 +126,9 @@ private:
     RelayConfig _config[MAX_RELAYS];
     RelayState _state[MAX_RELAYS];
     OneShotTimer _timers[MAX_RELAYS];
+    bool _failsafeActive;
+    bool _hasPriorSwitchBaseline;
+    bool _cyclesDirty;
 
     // EMI lockout — blanking period after any relay switches
     bool _hasSwitched;

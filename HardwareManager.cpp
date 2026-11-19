@@ -8,8 +8,37 @@
 
 #define PATH_HARDWARE_FILE "/hardware.json"
 
+#if defined(ESP32)
+namespace {
+class HwMutexGuard {
+public:
+    explicit HwMutexGuard(SemaphoreHandle_t mtx) : _mtx(mtx) {
+        if (_mtx) xSemaphoreTakeRecursive(_mtx, portMAX_DELAY);
+    }
+    ~HwMutexGuard() {
+        if (_mtx) xSemaphoreGiveRecursive(_mtx);
+    }
+private:
+    SemaphoreHandle_t _mtx;
+};
+} // namespace
+
+void HardwareManager::ensureMutex() const {
+    if (!_hwMutex) {
+        _hwMutex = xSemaphoreCreateRecursiveMutex();
+    }
+}
+#define HW_LOCK() ensureMutex(); HwMutexGuard _hwLockGuard(_hwMutex)
+#else
+#define HW_LOCK() ((void)0)
+#endif
+
 HardwareManager::HardwareManager()
-    : _storage(nullptr) {
+    : _storage(nullptr)
+#if defined(ESP32)
+    , _hwMutex(nullptr)
+#endif
+{
 #if defined(ESP8266)
     setPresetESP8266_2CH(_config);
 #else
@@ -18,6 +47,9 @@ HardwareManager::HardwareManager()
 }
 
 void HardwareManager::begin(StorageManager& storage) {
+#if defined(ESP32)
+    ensureMutex();
+#endif
     _storage = &storage;
     if (!load()) {
 #if defined(ESP8266)
@@ -68,6 +100,7 @@ TriggerMode HardwareManager::getTriggerMode(uint8_t ch) const {
 }
 
 void HardwareManager::setTriggerMode(uint8_t ch, TriggerMode mode) {
+    HW_LOCK();
     if (ch >= _config.numRelays) return;
     _config.channels[ch].triggerMode = mode;
     save();
@@ -202,6 +235,7 @@ uint8_t HardwareManager::getMq2DigitalPin() const {
 }
 
 void HardwareManager::resetToDefault() {
+    HW_LOCK();
 #if defined(ESP8266)
     setPresetESP8266_2CH(_config);
 #else
@@ -211,6 +245,7 @@ void HardwareManager::resetToDefault() {
 }
 
 bool HardwareManager::applyPreset(const String& presetName) {
+    HW_LOCK();
     HardwareConfig newCfg;
 #if defined(ESP8266)
     if (presetName.equalsIgnoreCase("SmartHome ESP8266 2-CH Dual") || presetName.equalsIgnoreCase("2ch") || presetName.equalsIgnoreCase("default") || presetName.equalsIgnoreCase("SmartHome 2-CH Dual")) {
@@ -246,8 +281,13 @@ bool HardwareManager::applyPreset(const String& presetName) {
     }
 #endif
 
+    HardwareConfig prevCfg = _config;
     _config = newCfg;
-    return save();
+    if (!save()) {
+        _config = prevCfg;
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -626,6 +666,7 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
 // Serialization
 // ============================================================================
 void HardwareManager::toJson(JsonObject& obj) const {
+    HW_LOCK();
     obj["board_name"] = _config.boardName;
     obj["num_relays"] = _config.numRelays;
 
@@ -1168,6 +1209,7 @@ bool HardwareManager::validateHardwareJson(JsonObjectConst obj, String& outError
 }
 
 bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
+    HW_LOCK();
     HardwareConfig newCfg;
     if (!parseHardwareJson(obj, newCfg, outError)) {
         return false;
@@ -1181,6 +1223,7 @@ bool HardwareManager::fromJson(JsonObjectConst obj, String& outError) {
 // Persistence
 // ============================================================================
 bool HardwareManager::save() {
+    HW_LOCK();
     if (!_storage) return false;
     JsonDocument doc;
     JsonObject obj = doc.to<JsonObject>();
@@ -1189,6 +1232,7 @@ bool HardwareManager::save() {
 }
 
 bool HardwareManager::load() {
+    HW_LOCK();
     if (!_storage) return false;
     if (!_storage->fileExists(PATH_HARDWARE_FILE)) return false;
 

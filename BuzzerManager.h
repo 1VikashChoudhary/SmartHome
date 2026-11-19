@@ -9,6 +9,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -103,6 +107,9 @@ private:
     void toneOn();
     void toneOff();
     void loadConfig();
+#if defined(ESP32)
+    SemaphoreHandle_t _buzMutex;
+#endif
 };
 
 #endif // BUZZER_MANAGER_H

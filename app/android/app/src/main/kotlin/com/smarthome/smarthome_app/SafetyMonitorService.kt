@@ -330,7 +330,7 @@ class SafetyMonitorService : Service() {
             if (devices.isEmpty()) return
 
             for (dev in devices) {
-                if (dev.authLocked && dev.authPassword.isNullOrEmpty()) continue
+                if (dev.authLocked) continue
                 val res = NativeEspClient.fetchStatus(applicationContext, dev)
                 if (!res.ok || res.statusJson == null) continue
 

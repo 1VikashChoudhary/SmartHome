@@ -10,6 +10,10 @@
 #include <Arduino.h>
 #include <time.h>
 #include <ArduinoJson.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#endif
 #include "Config.h"
 #include "StorageManager.h"
 
@@ -50,9 +54,13 @@ private:
     unsigned long _lastSyncTime;
     unsigned long _lastSyncCheck;
     struct tm _timeInfo;
+#if defined(ESP32)
+    SemaphoreHandle_t _timeMutex;
+#endif
 
     void configureNTP();
     bool updateTimeInfo();
+    bool getLocalTimeCopy(struct tm& out);
 
 #ifdef ENABLE_DS3231
     RTC_DS3231 _rtc;

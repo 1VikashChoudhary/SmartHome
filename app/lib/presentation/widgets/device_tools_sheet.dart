@@ -1034,7 +1034,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
       children: [
         _buildConfigErrorBanner(),
         if (isGuest)
-          _buildGuestRestrictedBanner('Hardware Tuning & GPIO profile editing is restricted to Administrators. Guest accounts have read-only monitoring access (buzzer mute remains available).'),
+          _buildGuestRestrictedBanner('Hardware Tuning & GPIO profile editing is restricted to Administrators. Guest accounts can toggle relays, set quick timers, and mute the alarm buzzer.'),
         // Hardware & GPIO Template Engine Card
         GlassCard(
           padding: const EdgeInsets.all(16),
@@ -1789,12 +1789,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
               onPressed: (_isSavingMqtt || isGuest)
                   ? null
                   : () async {
-                      final port = int.tryParse(_mqttPort.text.trim());
-                      if (_mqttEnabled &&
-                          (_mqttBroker.text.trim().isEmpty ||
-                              port == null ||
-                              port < 1 ||
-                              port > 65535)) {
+                      final portText = _mqttPort.text.trim();
+                      final port = portText.isEmpty ? 1883 : int.tryParse(portText);
+                      if (port == null || port < 1 || port > 65535 || (_mqttEnabled && _mqttBroker.text.trim().isEmpty)) {
                         _showSaveResult(
                           false,
                           '',
@@ -1806,7 +1803,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                       final ok = await widget.manager.saveDeviceMqtt(widget.device.id, {
                         'enabled': _mqttEnabled,
                         'broker': _mqttBroker.text.trim(),
-                        'port': port ?? 1883,
+                        'port': port,
                         'prefix': _mqttPrefix.text.trim(),
                         'client_id': _mqttClientId.text.trim(),
                         'user': _mqttUser.text.trim(),
@@ -1882,9 +1879,9 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
             const SizedBox(height: 8),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Guest read-only access'),
+              title: const Text('Family / Guest access'),
               subtitle: const Text(
-                'Allow a restricted monitoring account',
+                'Allow relay control, quick timers & buzzer mute without admin settings',
                 style: TextStyle(fontSize: 11.5),
               ),
               value: _guestAuth,
@@ -2151,7 +2148,7 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                             'use_24h': _use24h,
                             'web_auth': _webAuth,
                             if (_webAuth) 'web_user': _webUser.text.trim(),
-                            if (_webPassword.text.isNotEmpty)
+                            if (_webAuth && _webPassword.text.isNotEmpty)
                               'web_pass': _webPassword.text,
                             if (_webAuth) 'guest_auth': _guestAuth,
                             if (_webAuth && _guestAuth)
@@ -2526,6 +2523,17 @@ class _DeviceToolsSheetState extends State<DeviceToolsSheet>
                           false,
                           '',
                           'Select at least one page for Auto Rotate.',
+                        );
+                        return;
+                      }
+                      final hhmmRe = RegExp(r'^([01]\d|2[0-3]):[0-5]\d$');
+                      if (_autoDim &&
+                          (!hhmmRe.hasMatch(_dimStart.text.trim()) ||
+                              !hhmmRe.hasMatch(_dimEnd.text.trim()))) {
+                        _showSaveResult(
+                          false,
+                          '',
+                          'Enter auto-dim times in 24-hour HH:MM format (e.g. 22:00 and 06:00).',
                         );
                         return;
                       }

@@ -49,6 +49,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     for (final dev in devices) {
       if (dev.room.isNotEmpty) rooms.add(dev.room);
     }
+    if (!rooms.contains(_selectedRoom)) {
+      _selectedRoom = 'All';
+    }
 
     // Filter devices based on room selection
     final filteredDevices = _selectedRoom == 'All'
