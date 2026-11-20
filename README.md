@@ -1,94 +1,141 @@
-# Smart Home -Smart Environmental Monitoring & Automation System work without Home Assistance
+# SmartHome Pro — Standalone ESP32 & ESP8266 Smart Home & Environmental Monitoring System
 
 <p align="center">
+  <img src="https://img.shields.io/badge/Standalone-No%20Home%20Assistant%20Required-00C853?style=for-the-badge&logo=homeassistant&logoColor=white" alt="Works Without Home Assistant" />
   <img src="https://img.shields.io/badge/Firmware-v1.1.0-blue?style=for-the-badge&logo=espressif&logoColor=white" alt="Firmware Version" />
   <img src="https://img.shields.io/badge/Architecture-ESP32%20%2B%20ESP8266%20Unified-orange?style=for-the-badge&logo=espressif&logoColor=white" alt="Dual Architecture" />
   <img src="https://img.shields.io/badge/Flutter-v3.29+-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter App" />
   <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
   <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
   <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
-  <img src="https://img.shields.io/badge/Tests-122%2B%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
+  <img src="https://img.shields.io/badge/Tests-124%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
-IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, macOS). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard served directly by each controller.
+> **100% Local & Standalone — Works Without Home Assistant, Cloud Servers, Raspberry Pi, or Subscriptions.**
+> *(Optional Home Assistant MQTT Auto-Discovery is built in if you ever want to integrate later.)*
 
-## 📸 Mobile Application Preview
+A standalone IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a cross-platform Flutter companion application (**Android, iOS, Windows, macOS**) and an embedded Obsidian Glassmorphism web dashboard served directly by each controller.
 
-<img width="365" height="812" alt="Screenshot_20261120-100546_SmartHome Pro" src="https://github.com/user-attachments/assets/4896cb89-680c-4455-80c4-27867d154c3d" />
-<img width="365" height="812" alt="Screenshot_20261120-100610_SmartHome Pro" src="https://github.com/user-attachments/assets/33891ebe-d684-4fe6-b303-6ebc8204471f" />
-<img width="365" height="812" alt="Screenshot_20261120-100613_SmartHome Pro" src="https://github.com/user-attachments/assets/ba1a7c33-74d9-45fb-80b9-5ed14e454b63" />
-<img width="365" height="812" alt="Screenshot_20261120-100617_SmartHome Pro" src="https://github.com/user-attachments/assets/04f339c2-68f1-487f-addf-e6205da2029a" />
-<img width="365" height="812" alt="Screenshot_20261120-100622_SmartHome Pro" src="https://github.com/user-attachments/assets/6f5b9b81-36fd-48ec-ba30-b2229d049ee3" />
-<img width="365" height="812" alt="Screenshot_20261120-100644_SmartHome Pro" src="https://github.com/user-attachments/assets/e26089af-42b2-4780-9d59-94e23f4713e7" />
-<img width="365" height="812" alt="Screenshot_20261120-100656_SmartHome Pro" src="https://github.com/user-attachments/assets/ff969e8f-42da-4d89-bcc6-d85d2e5ab343" />
-<img width="365" height="812" alt="Screenshot_20261120-100702_SmartHome Pro" src="https://github.com/user-attachments/assets/6db42a00-6a7c-4067-a9bc-e3311b0969ae" />
-<img width="365" height="812" alt="Screenshot_20261120-100713_SmartHome Pro" src="https://github.com/user-attachments/assets/6c7331db-26fa-4ffc-bbbb-e31001489794" />
-<img width="365" height="812" alt="Screenshot_20261120-100717_SmartHome Pro" src="https://github.com/user-attachments/assets/64575509-eed0-4453-8b68-d76d5028b8fd" />
-<img width="365" height="812" alt="Screenshot_20261120-100731_SmartHome Pro" src="https://github.com/user-attachments/assets/1f0ed785-a311-4e51-93ed-333691628d84" />
-<img width="365" height="812" alt="Screenshot_20261120-100740_SmartHome Pro" src="https://github.com/user-attachments/assets/5a6beae4-3962-46bd-9b28-8011a5913f56" />
-<img width="365" height="812" alt="Screenshot_20261120-100754_SmartHome Pro" src="https://github.com/user-attachments/assets/f27dd4bf-01f9-4b66-959e-34efdae7304b" />
-<img width="365" height="812" alt="Screenshot_20261120-100804_SmartHome Pro" src="https://github.com/user-attachments/assets/f7e2fcaf-b97c-4cf1-ab39-ebfd45b4e0c1" />
-<img width="365" height="812" alt="Screenshot_20261120-100815_SmartHome Pro" src="https://github.com/user-attachments/assets/204601e6-f098-4036-afb6-64e909f3341a" />
-<img width="365" height="812" alt="Screenshot_20261120-100828_SmartHome Pro" src="https://github.com/user-attachments/assets/b29c52e9-17b7-4a50-b308-e59c66ee3530" />
-<img width="365" height="812" alt="Screenshot_20261120-100839_SmartHome Pro" src="https://github.com/user-attachments/assets/21f63762-738b-42b4-92a1-bf930dcee536" />
-<img width="365" height="812" alt="Screenshot_20261120-100843_SmartHome Pro" src="https://github.com/user-attachments/assets/380e8d61-d665-47c0-b716-dc6b4f4402bb" />
+<p align="center">
+  <a href="#pre-compiled-binaries--release-apks"><b>📥 Download Binaries &amp; APKs</b></a> &nbsp;•&nbsp;
+  <a href="#-application-previews"><b>📸 Screenshots</b></a> &nbsp;•&nbsp;
+  <a href="#key-features--pillars"><b>⚡ Key Features</b></a> &nbsp;•&nbsp;
+  <a href="#first-time-setup-guide"><b>🚀 First-Time Setup</b></a> &nbsp;•&nbsp;
+  <a href="#sponsor--support-the-project"><b>❤️ Sponsor</b></a>
+</p>
 
-## 📸 Desktop Application Preview
-<img width="1415" height="817" alt="1" src="https://github.com/user-attachments/assets/303214a4-d129-46ae-8d6d-b22f09791dcd" />
-<img width="1467" height="643" alt="image" src="https://github.com/user-attachments/assets/9092e2a7-bd40-4685-a572-64bb7794dec9" />
-<img width="1427" height="814" alt="3" src="https://github.com/user-attachments/assets/88787c85-3972-4400-8619-d331e969a251" />
-<img width="1437" height="677" alt="image" src="https://github.com/user-attachments/assets/2711502c-7c74-4fb1-8d95-2e6f6efcdd3c" />
-<img width="1463" height="679" alt="image" src="https://github.com/user-attachments/assets/73be02b2-68f7-4ef9-8e52-66b9b435acba" />
-<img width="1160" height="1241" alt="image" src="https://github.com/user-attachments/assets/6b965d92-c7b3-4da5-8869-ba056a3a35d0" />
-<img width="1438" height="1270" alt="image" src="https://github.com/user-attachments/assets/0178bfe3-2fa9-4570-a493-5fbd3c089c44" />
-<img width="1397" height="1251" alt="image" src="https://github.com/user-attachments/assets/92e5e079-56b9-4e5d-8c1b-12426fd6206f" />
-<img width="1406" height="702" alt="image" src="https://github.com/user-attachments/assets/1ace099b-0f11-4d72-8e73-275876d043c2" />
-<img width="1461" height="837" alt="image" src="https://github.com/user-attachments/assets/9fcb466d-6268-47cd-83aa-7d166353bbe6" />
+### ✨ Why SmartHome Pro? (Highlights at a Glance)
 
+| Pillar | What You Get Out of the Box |
+| :--- | :--- |
+| **🏠 Zero Hub / Zero Cloud** | Runs 100% locally on your Wi-Fi LAN — **no Home Assistant, no Raspberry Pi, no internet dependency, and no subscriptions**. |
+| **🧩 Single Unified Firmware** | One codebase automatically adapts to both **ESP32** and **ESP8266** boards with ready-to-flash `.bin` releases. |
+| **🛠️ Zero-Code Hardware Setup** | Remap **0–8 relays**, physical wall switches, I2C LCDs, buzzers, and multi-slot sensors (Climate, Light, Motion, Water Temp, Tank Level, Gas) live from the App or Web UI — **no reflashing required**. |
+| **🚨 Autonomous Safety & Failsafe** | Hardware-level **Gas (MQ-2) & Over-Temperature** alarms (`GAS > TEMP > FAULT` priority) automatically lock failsafe relays OFF, sound the buzzer, display LCD warnings, send remote `ntfy`/webhook alerts, and trigger Android background emergency alarms. |
+| **🤖 On-Device Automation** | Sensor-driven rules (e.g., auto-pump on tank level, auto-fan on temperature), daily/weekly calendar schedules, countdown timers, and physical wall-switch control that keep working **even if Wi-Fi goes down**. |
+| **📱 Native Mobile & Desktop UX** | Cross-platform Flutter app (**Android, iOS, Windows, macOS**) with **Android Quick Settings Tiles**, **Native Android Device Controls**, Radar LAN Discovery, live WebSocket telemetry, and an embedded Web Dashboard. |
+| **🛡️ Hardened Security & Zero-Brick OTA** | Admin vs. Family/Guest RBAC, salted SHA-256 hashing, CSRF & brute-force rate limiting, encrypted mobile credential storage, and ESP32 dual-partition automatic rollback OTA. |
 
+---
 
+## 📸 Application Previews
+
+### 📱 Mobile Companion App (Android & iOS)
+
+<p align="center">
+  <img width="205" alt="Dashboard Overview" src="https://github.com/user-attachments/assets/4896cb89-680c-4455-80c4-27867d154c3d" />
+  <img width="205" alt="Controllers Hub" src="https://github.com/user-attachments/assets/33891ebe-d684-4fe6-b303-6ebc8204471f" />
+  <img width="205" alt="Device Control Panel" src="https://github.com/user-attachments/assets/ba1a7c33-74d9-45fb-80b9-5ed14e454b63" />
+  <img width="205" alt="Sensor Telemetry" src="https://github.com/user-attachments/assets/04f339c2-68f1-487f-addf-e6205da2029a" />
+</p>
+
+<details>
+<summary><b>Click to expand all 18 Mobile App screenshots</b></summary>
+<br />
+<p align="center">
+  <img width="205" alt="Mobile Preview 5" src="https://github.com/user-attachments/assets/6f5b9b81-36fd-48ec-ba30-b2229d049ee3" />
+  <img width="205" alt="Mobile Preview 6" src="https://github.com/user-attachments/assets/e26089af-42b2-4780-9d59-94e23f4713e7" />
+  <img width="205" alt="Mobile Preview 7" src="https://github.com/user-attachments/assets/ff969e8f-42da-4d89-bcc6-d85d2e5ab343" />
+  <img width="205" alt="Mobile Preview 8" src="https://github.com/user-attachments/assets/6db42a00-6a7c-4067-a9bc-e3311b0969ae" />
+  <img width="205" alt="Mobile Preview 9" src="https://github.com/user-attachments/assets/6c7331db-26fa-4ffc-bbbb-e31001489794" />
+  <img width="205" alt="Mobile Preview 10" src="https://github.com/user-attachments/assets/64575509-eed0-4453-8b68-d76d5028b8fd" />
+  <img width="205" alt="Mobile Preview 11" src="https://github.com/user-attachments/assets/1f0ed785-a311-4e51-93ed-333691628d84" />
+  <img width="205" alt="Mobile Preview 12" src="https://github.com/user-attachments/assets/5a6beae4-3962-46bd-9b28-8011a5913f56" />
+  <img width="205" alt="Mobile Preview 13" src="https://github.com/user-attachments/assets/f27dd4bf-01f9-4b66-959e-34efdae7304b" />
+  <img width="205" alt="Mobile Preview 14" src="https://github.com/user-attachments/assets/f7e2fcaf-b97c-4cf1-ab39-ebfd45b4e0c1" />
+  <img width="205" alt="Mobile Preview 15" src="https://github.com/user-attachments/assets/204601e6-f098-4036-afb6-64e909f3341a" />
+  <img width="205" alt="Mobile Preview 16" src="https://github.com/user-attachments/assets/b29c52e9-17b7-4a50-b308-e59c66ee3530" />
+  <img width="205" alt="Mobile Preview 17" src="https://github.com/user-attachments/assets/21f63762-738b-42b4-92a1-bf930dcee536" />
+  <img width="205" alt="Mobile Preview 18" src="https://github.com/user-attachments/assets/380e8d61-d665-47c0-b716-dc6b4f4402bb" />
+</p>
+</details>
+
+### 🖥️ Desktop App & Embedded Web Dashboard (Windows, macOS & Browser)
+
+<p align="center">
+  <img width="49%" alt="Desktop Overview" src="https://github.com/user-attachments/assets/303214a4-d129-46ae-8d6d-b22f09791dcd" />
+  <img width="49%" alt="Embedded Web Dashboard" src="https://github.com/user-attachments/assets/88787c85-3972-4400-8619-d331e969a251" />
+</p>
+
+<details>
+<summary><b>Click to expand all 10 Desktop &amp; Web Dashboard screenshots</b></summary>
+<br />
+<p align="center">
+  <img width="100%" alt="Desktop Preview 2" src="https://github.com/user-attachments/assets/9092e2a7-bd40-4685-a572-64bb7794dec9" />
+  <img width="100%" alt="Desktop Preview 4" src="https://github.com/user-attachments/assets/2711502c-7c74-4fb1-8d95-2e6f6efcdd3c" />
+  <img width="100%" alt="Desktop Preview 5" src="https://github.com/user-attachments/assets/73be02b2-68f7-4ef9-8e52-66b9b435acba" />
+  <img width="100%" alt="Desktop Preview 6" src="https://github.com/user-attachments/assets/6b965d92-c7b3-4da5-8869-ba056a3a35d0" />
+  <img width="100%" alt="Desktop Preview 7" src="https://github.com/user-attachments/assets/0178bfe3-2fa9-4570-a493-5fbd3c089c44" />
+  <img width="100%" alt="Desktop Preview 8" src="https://github.com/user-attachments/assets/92e5e079-56b9-4e5d-8c1b-12426fd6206f" />
+  <img width="100%" alt="Desktop Preview 9" src="https://github.com/user-attachments/assets/1ace099b-0f11-4d72-8e73-275876d043c2" />
+  <img width="100%" alt="Desktop Preview 10" src="https://github.com/user-attachments/assets/9fcb466d-6268-47cd-83aa-7d166353bbe6" />
+</p>
+</details>
 
 ---
 
 ## Table of Contents
 
-1. [Key Features & Pillars](#key-features--pillars)
-2. [Dual-Hardware Architecture Matrix (ESP8266 vs. ESP32)](#dual-hardware-architecture-matrix-esp8266-vs-esp32)
-3. [System Architecture Diagram](#system-architecture-diagram)
-4. [Multi-User Privilege Tiers (Admin vs. Guest)](#multi-user-privilege-tiers-admin-vs-guest)
-5. [OTA Firmware Update & Zero-Brick Engine](#ota-firmware-update--zero-brick-engine)
-6. [Decoupled NVS State Storage](#decoupled-nvs-state-storage-100000-cycle-endurance)
-7. [Hardware & Dynamic GPIO Template Engine](#hardware--dynamic-gpio-template-engine)
-8. [Cross-Architecture Backup & Restore Engine](#cross-architecture-backup--restore-engine)
-9. [Pre-Compiled Binaries & Release APKs](#pre-compiled-binaries--release-apks)
-10. [REST API & WebSocket Specification](#rest-api--websocket-specification)
-11. [Flutter Companion App](#flutter-companion-app)
-12. [Compilation & Flashing Guide](#compilation--flashing-guide)
-13. [First-Time Setup Guide](#first-time-setup-guide)
-14. [Troubleshooting](#troubleshooting)
-15. [Project Directory Layout](#project-directory-layout)
-16. [Sponsor & Support the Project](#sponsor--support-the-project)
-17. [License](#license)
+1. [Application Previews](#-application-previews)
+2. [Key Features & Pillars](#key-features--pillars)
+3. [Dual-Hardware Architecture Matrix (ESP8266 vs. ESP32)](#dual-hardware-architecture-matrix-esp8266-vs-esp32)
+4. [System Architecture Diagram](#system-architecture-diagram)
+5. [Multi-User Privilege Tiers (Admin vs. Guest)](#multi-user-privilege-tiers-admin-vs-guest)
+6. [OTA Firmware Update & Zero-Brick Engine](#ota-firmware-update--zero-brick-engine)
+7. [Decoupled NVS State Storage](#decoupled-nvs-state-storage-100000-cycle-endurance)
+8. [Hardware & Dynamic GPIO Template Engine](#hardware--dynamic-gpio-template-engine)
+9. [Cross-Architecture Backup & Restore Engine](#cross-architecture-backup--restore-engine)
+10. [Pre-Compiled Binaries & Release APKs](#pre-compiled-binaries--release-apks)
+11. [REST API & WebSocket Specification](#rest-api--websocket-specification)
+12. [Flutter Companion App](#flutter-companion-app)
+13. [Compilation & Flashing Guide](#compilation--flashing-guide)
+14. [First-Time Setup Guide](#first-time-setup-guide)
+15. [Troubleshooting](#troubleshooting)
+16. [Project Directory Layout](#project-directory-layout)
+17. [Sponsor & Support the Project](#sponsor--support-the-project)
+18. [License](#license)
 
 ---
 
 ## Key Features & Pillars
 
-* **Single Unified Codebase**: Runs on both ESP8266 and ESP32 without code branching, conditional hacks, or separate applications.
+* **100% Standalone (No Home Assistant or Cloud Needed)**: Every ESP controller hosts its own automation engine, schedules, web dashboard, and WebSocket server directly on your local Wi-Fi LAN. Works completely offline without external servers, Raspberry Pi hubs, or paid subscriptions.
+* **Single Unified Codebase**: Runs on both ESP8266 and ESP32 without separate repositories or apps, with ESP32 dual-core thread safety across WebServer, Sensors, LCD, Buzzer, and Storage subsystems.
 * **Non-Blocking Asynchronous Core**: Built on asynchronous networking (`ESPAsyncWebServer`, `ESPAsyncTCP` / `AsyncTCP`) and `millis()`-driven state managers without blocking main event loops.
 * **TCP Packet Fragmentation Reassembly**: Employs dynamic stream buffering (`collectJsonBody`) across REST JSON endpoints, eliminating `IncompleteInput` or `Invalid JSON` parse errors caused by ESP8266 LWIP TCP MSS packet fragmentation.
+* **Autonomous Safety & Failsafe Engine**: Hardware-level Gas (MQ-2) and Over-Temperature alarms with strict `GAS > TEMP > FAULT` priority, hysteresis & probe fault debouncing, active failsafe relay lockout (prevents timers/rules/schedules from re-energizing hazardous loads during an emergency), local buzzer & I2C LCD alerts, remote `ntfy` / webhook push alerts, and Android background safety monitoring.
+* **On-Device Automation & Scheduling**: Built-in condition-action sensor rules (temperature, humidity, light, motion, water temp, tank level, gas), DST-safe calendar/repeating schedules with DS3231 RTC fallback, quick countdown timers, and physical wall-switch support.
 * **Zero-Brick Dual-Partition OTA (ESP32)**: Two 1.9MB application partitions (`ota_0`, `ota_1`). If newly flashed firmware boot-loops or panics, the hardware bootloader automatically reverts to the previous working slot within 30 seconds.
-* **Seamless Web OTA (ESP8266 & ESP32)**: Intuitive drag-and-drop web updater at `http://<device_ip>/update` allowing 1-click updates over Wi-Fi without needing `esptool.py` or serial cables.
+* **Seamless Web OTA (ESP8266 & ESP32)**: Intuitive drag-and-drop web updater at `http://<device_ip>/update` with cross-chip binary verification, allowing 1-click updates over Wi-Fi without needing `esptool.py` or serial cables.
 * **Decoupled Wear-Leveled NVS Runtime State**: Rapid relay cycles and switch events are packed into bitmasks and stored in wear-leveled NVS (ESP32) or EEPROM (ESP8266), reserving LittleFS strictly for static JSON configurations and guaranteeing 100,000+ power-cycle endurance.
 * **Multi-User Privilege Tiers (Admin vs. Family/Guest)**:
   * **Admin**: Complete system control, GPIO template editing, Wi-Fi credentials, backups, factory reset, and firmware updates.
-  * **Family / Guest**: Clean restricted mode allowing switch toggling, sensor monitoring, and quick timers, while locking out hardware changes, network settings, and flashing.
+  * **Family / Guest**: Clean restricted mode allowing switch toggling, sensor monitoring, alarm muting, and quick timers, while locking out hardware changes, network settings, and flashing.
 * **Dynamic GPIO Template Engine**: Runtime configuration of relay channels (0 to 8 relays, including relayless Sensor Nodes), pin remapping, boot modes, active-HIGH/LOW polarities, and switch interlocking without reflashing.
-* **Obsidian Glassmorphism Web Dashboard**: Single-page application embedded directly in PROGMEM with dark/light themes, SVG iconography, real-time WebSocket telemetry, gauge animations, and a symmetrical 6-card Settings grid.
-* **Cross-Platform Flutter Companion App**: Single app controls both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, batch multi-device OTA updates, backup management, and encrypted credential storage.
-* **About & Sponsorship Screens**: Beautiful modern About page integrated into both the ESP Web Dashboard and the Flutter Companion App with project branding, feature highlights, and direct UPI (India) / PayPal (International) sponsorship support.
-* **Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics.
-* **Defense-in-Depth Security**: Open SoftAP only for first-time / reset onboarding (no automatic AP fallback when a configured router is offline — controllers retry every 2 minutes instead), optional custom `ap_pass`, IP rate limiting, CSRF header validation, XSS escaping, salted SHA-256 password hashing, sanitized backup exports by default, and encrypted mobile storage.
+* **Obsidian Glassmorphism Web Dashboard**: Single-page application embedded directly in PROGMEM with dark/light themes, SVG iconography, real-time WebSocket telemetry, gauge animations, and a symmetrical Settings grid.
+* **Cross-Platform Flutter Companion App**: Single app for **Android, iOS, Windows, and macOS** controlling both ESP8266 and ESP32 units with radar discovery, live WebSocket telemetry, **Android Quick Settings Tiles & Native Device Controls**, safe chip-verified single-controller OTA, hub backup/migration, and encrypted credential storage.
+* **Optional Home Assistant MQTT Auto-Discovery**: Automatic entity creation for all relays, temperature, humidity, gas sensors, alarms, and diagnostics whenever you choose to connect an MQTT broker.
+* **Defense-in-Depth Security**: Open SoftAP only for first-time / reset onboarding (no automatic AP fallback when a configured router is offline — controllers retry every 2 minutes instead), optional custom `ap_pass`, IP brute-force rate limiting, global CSRF header enforcement, XSS escaping, salted SHA-256 password hashing, sanitized backup exports by default, and encrypted mobile storage.
 
 ---
 
@@ -165,7 +212,7 @@ graph TB
 
 ## Multi-User Privilege Tiers (Admin vs. Guest)
 
-To meet the security demands of commercial installations and multi-tenant homes, authentication is partitioned into distinct privilege tiers:
+To meet the security needs of multi-user households and family homes, authentication is partitioned into distinct privilege tiers:
 
 | Capability / Resource | Administrator Tier | Family / Guest Tier | Unauthenticated |
 |:---|:---:|:---:|:---:|
@@ -321,7 +368,9 @@ The Flutter companion app (`app/`) provides unified control over all ESP8266 and
 
 * **Radar Discovery**: Automatically detects online controllers via mDNS (`_smarthome._tcp`) and intelligent subnet probing (`/api/discovery`) without manual IP configuration. Displays Amber badges for ESP8266 and Cyan badges for ESP32.
 * **Architecture-Aware Hardware Editor**: Adapts pin dropdowns and preset templates dynamically based on whether the selected controller is ESP8266 or ESP32.
-* **Safe-by-Default Firmware OTA**: Defaults to single-controller OTA with binary header + chip-ID validation to prevent cross-flashing ESP32 and ESP8266 images, plus an opt-in same-chip batch mode when 2+ identical controllers are online.
+* **Android Quick Settings Tiles & Native Device Controls**: Toggle relays directly from Android's Quick Settings shade and system Device Controls, with configurable lockscreen protection.
+* **Background Safety Monitor (Android)**: Monitors paired controllers in the background and triggers high-priority emergency alarms if Gas or Over-Temperature alerts fire.
+* **Safe Single-Controller OTA**: Validates firmware binary headers and chip architecture before uploading, preventing accidental cross-flashing between ESP32 and ESP8266 boards.
 * **Hub Migration**: One-click export of all paired controllers, room assignments, credentials, and custom icon sets in a single `.json` file.
 
 ### Running the App Locally:
@@ -458,14 +507,14 @@ SmartHome/
     ├── lib/                       # Dart application source code
     │   └── presentation/screens/
     │       └── about_screen.dart  # About & Sponsorship screen (UPI + PayPal)
-    └── test/                      # Automated unit and widget test suite (120 tests)
+    └── test/                      # Automated unit and widget test suite (124 tests)
 ```
 
 ---
 
 ## Sponsor & Support the Project
 
-If it brings value to your home or maker setups, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!
+If this project brings value to your home or DIY maker setup, consider sponsoring to fuel ongoing firmware development, hardware lab testing, and new features!
 
 ### 🇮🇳 India — UPI Payment (Zero Fee · Instant)
 
