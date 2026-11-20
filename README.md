@@ -5,9 +5,9 @@
   <img src="https://img.shields.io/badge/Firmware-v1.1.0-blue?style=for-the-badge&logo=espressif&logoColor=white" alt="Firmware Version" />
   <img src="https://img.shields.io/badge/Architecture-ESP32%20%2B%20ESP8266%20Unified-orange?style=for-the-badge&logo=espressif&logoColor=white" alt="Dual Architecture" />
   <img src="https://img.shields.io/badge/Flutter-v3.29+-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter App" />
-  <img src="https://img.shields.io/badge/Security-OWASP%20IoT%20Hardened-red?style=for-the-badge&logo=shield" alt="OWASP Hardened" />
-  <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20100k+-green?style=for-the-badge&logo=databricks" alt="NVS Endurance" />
-  <img src="https://img.shields.io/badge/OTA-Web%20OTA%20%2B%20Zero--Brick-purple?style=for-the-badge&logo=git" alt="OTA Support" />
+  <img src="https://img.shields.io/badge/Security-RBAC%20%2B%20SHA--256-red?style=for-the-badge&logo=shield" alt="RBAC and SHA-256 Security" />
+  <img src="https://img.shields.io/badge/Storage-Wear--Leveled%20NVS%20%2F%20EEPROM-green?style=for-the-badge&logo=databricks" alt="Wear-Leveled Storage" />
+  <img src="https://img.shields.io/badge/OTA-Web%20OTA-purple?style=for-the-badge&logo=git" alt="Web OTA Support" />
   <img src="https://img.shields.io/badge/Tests-124%20Passed-success?style=for-the-badge&logo=checkmarx" alt="Automated Tests" />
 </p>
 
@@ -34,7 +34,10 @@ A standalone IoT smart home automation hub powered by a **single unified codebas
 | **🚨 Autonomous Safety & Failsafe** | Hardware-level **Gas (MQ-2) & Over-Temperature** alarms (`GAS > TEMP > FAULT` priority) automatically lock failsafe relays OFF, sound the buzzer, display LCD warnings, send remote `ntfy`/webhook alerts, and trigger Android background emergency alarms. |
 | **🤖 On-Device Automation** | Sensor-driven rules (e.g., auto-pump on tank level, auto-fan on temperature), daily/weekly calendar schedules, countdown timers, and physical wall-switch control that keep working **even if Wi-Fi goes down**. |
 | **📱 Native Mobile & Desktop UX** | Cross-platform Flutter app (**Android, iOS, Windows, macOS**) with **Android Quick Settings Tiles**, **Native Android Device Controls**, Radar LAN Discovery, live WebSocket telemetry, and an embedded Web Dashboard. |
-| **🛡️ Hardened Security & Zero-Brick OTA** | Admin vs. Family/Guest RBAC, salted SHA-256 hashing, CSRF & brute-force rate limiting, encrypted mobile credential storage, and ESP32 dual-partition automatic rollback OTA. |
+| **🛡️ Hardened Security & Web OTA** | Admin vs. Family/Guest RBAC, salted SHA-256 hashing, CSRF & brute-force rate limiting, encrypted mobile credential storage, and chip-verified Web OTA updates. |
+
+> [!WARNING]
+> **Important Safety & Legal Notice (Use at Your Own Risk):** This project is provided **"AS IS"** with **no warranties or guarantees** of any kind. Working with mains voltage (110V–240V AC), relays, and gas/temperature sensors carries serious risks of electric shock, fire, property damage, injury, or death. Sensor alerts and failsafe features are **not certified life-safety systems** and must never replace certified gas, smoke, or fire detectors. You assume **100% of the risk and responsibility** for wiring, flashing, hardware, and operation. See the full [Safety & Legal Disclaimer](#important-safety--legal-disclaimer) and [LICENSE](LICENSE).
 
 ---
 
@@ -101,8 +104,8 @@ A standalone IoT smart home automation hub powered by a **single unified codebas
 3. [Dual-Hardware Architecture Matrix (ESP8266 vs. ESP32)](#dual-hardware-architecture-matrix-esp8266-vs-esp32)
 4. [System Architecture Diagram](#system-architecture-diagram)
 5. [Multi-User Privilege Tiers (Admin vs. Guest)](#multi-user-privilege-tiers-admin-vs-guest)
-6. [OTA Firmware Update & Zero-Brick Engine](#ota-firmware-update--zero-brick-engine)
-7. [Decoupled NVS State Storage](#decoupled-nvs-state-storage-100000-cycle-endurance)
+6. [OTA Firmware Update Engine](#ota-firmware-update-engine)
+7. [Decoupled Wear-Leveled State Storage](#decoupled-wear-leveled-state-storage)
 8. [Hardware & Dynamic GPIO Template Engine](#hardware--dynamic-gpio-template-engine)
 9. [Cross-Architecture Backup & Restore Engine](#cross-architecture-backup--restore-engine)
 10. [Pre-Compiled Binaries & Release APKs](#pre-compiled-binaries--release-apks)
@@ -113,7 +116,8 @@ A standalone IoT smart home automation hub powered by a **single unified codebas
 15. [Troubleshooting](#troubleshooting)
 16. [Project Directory Layout](#project-directory-layout)
 17. [Sponsor & Support the Project](#sponsor--support-the-project)
-18. [License](#license)
+18. [Important Safety & Legal Disclaimer](#important-safety--legal-disclaimer)
+19. [License](#license)
 
 ---
 
@@ -126,7 +130,7 @@ A standalone IoT smart home automation hub powered by a **single unified codebas
 * **Autonomous Safety & Failsafe Engine**: Hardware-level Gas (MQ-2) and Over-Temperature alarms with strict `GAS > TEMP > FAULT` priority, hysteresis & probe fault debouncing, active failsafe relay lockout (prevents timers/rules/schedules from re-energizing hazardous loads during an emergency), local buzzer & I2C LCD alerts, remote `ntfy` / webhook push alerts, and Android background safety monitoring.
 * **On-Device Automation & Scheduling**: Built-in condition-action sensor rules (temperature, humidity, light, motion, water temp, tank level, gas), DST-safe calendar/repeating schedules with DS3231 RTC fallback, quick countdown timers, and physical wall-switch support.
 * **Seamless Web OTA (ESP8266 & ESP32)**: Intuitive drag-and-drop web updater at `http://<device_ip>/update` with cross-chip binary verification, allowing 1-click updates over Wi-Fi without needing `esptool.py` or serial cables.
-* **Decoupled Wear-Leveled NVS Runtime State**: Rapid relay cycles and switch events are packed into bitmasks and stored in wear-leveled NVS (ESP32) or EEPROM (ESP8266), reserving LittleFS strictly for static JSON configurations and guaranteeing 100,000+ power-cycle endurance.
+* **Decoupled Wear-Leveled Runtime State**: Rapid relay cycles and switch events are packed into bitmasks and stored in wear-leveled NVS (ESP32) or EEPROM (ESP8266), reserving LittleFS strictly for static JSON configurations to help reduce flash wear over time.
 * **Multi-User Privilege Tiers (Admin vs. Family/Guest)**:
   * **Admin**: Complete system control, GPIO template editing, Wi-Fi credentials, backups, factory reset, and firmware updates.
   * **Family / Guest**: Clean restricted mode allowing switch toggling, sensor monitoring, alarm muting, and quick timers, while locking out hardware changes, network settings, and flashing.
@@ -233,7 +237,7 @@ To meet the security needs of multi-user households and family homes, authentica
 
 ## OTA Firmware Update Engine
 
-### 1. Web OTA via Browser (Easiest & Recommended)
+### Web OTA via Browser (Easiest & Recommended)
 Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
 1. Navigate to: `http://<device_ip>/update`
 2. Drop the corresponding `.bin` file from [`binaries/`](binaries/):
@@ -243,9 +247,9 @@ Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
 
 ---
 
-## Decoupled NVS State Storage (100,000+ Cycle Endurance)
+## Decoupled Wear-Leveled State Storage
 
-* **Wear-Leveling Mechanism**: Rapid switch toggles and relay activations write only to native wear-leveled NVS (ESP32) or EEPROM (ESP8266).
+* **Wear-Leveling Mechanism**: Rapid switch toggles and relay activations write only to native wear-leveled NVS (ESP32) or EEPROM (ESP8266), helping reduce flash wear over time (actual flash lifespan depends on your specific hardware module and usage patterns).
 * **LittleFS Flash Protection**: Static JSON configuration files (`config.json`, `hardware.json`, `rules.json`, `alarms.json`) are only touched when explicitly saving settings from the Web UI or Flutter App.
 * **Power-Loss Recovery**: Boot states (`Restore Last`, `Always ON`, `Always OFF`) resolve physical switch baselines before initializing GPIOs, preventing boot chatter or relay flickering on power cycles.
 
@@ -304,10 +308,10 @@ Both Web Dashboard and Companion App include real-time pin capability matrices:
 
 ## Cross-Architecture Backup & Restore Engine
 
-The backup & restore subsystem guarantees complete data preservation and cross-architecture safety:
+The backup & restore subsystem is designed for reliable configuration portability across architectures:
 
 * **Architecture Conflict Protection**: Backups include metadata tags (`"_chip": "ESP8266"` or `"ESP32"`). If an ESP32 backup is restored onto an ESP8266, the engine safely detects the incompatible pin layout, preserves the valid ESP8266 hardware profile, and applies all device configurations (Wi-Fi networks, MQTT credentials, relay names, timers, alarms, rules, and LCD modes).
-* **Compact Serialization**: Employs minified JSON serialization during export, reducing payload size by over **50%** (from ~7 KB to ~3 KB) to guarantee zero heap fragmentation on ESP8266.
+* **Compact Serialization**: Employs minified JSON serialization during export, reducing payload size by over **50%** (from ~7 KB to ~3 KB) to help reduce heap fragmentation on ESP8266.
 * **TCP Multi-Chunk Assembly**: Restores sent via Web UI or Mobile App are buffered across fragmented packets and capped at 32 KB to prevent memory overflow.
 
 ---
@@ -477,7 +481,7 @@ SmartHome/
 ├── SensorManager.h / .cpp         # DHT11/22, BME280/AHT20/SHT3x, BH1750, PIR/LD2410, DS18B20, HC-SR04/JSN-SR04T, MQ-2
 ├── HardwareManager.h / .cpp       # Dynamic GPIO template manager and pin safety catalogs
 ├── StorageManager.h / .cpp        # Decoupled wear-leveled NVS & LittleFS storage
-├── OTAManager.h / .cpp            # Zero-brick dual-partition rollback and Web OTA manager
+├── OTAManager.h / .cpp            # Dual-partition rollback and Web OTA manager
 ├── WifiManager.h / .cpp           # Multi-AP Wi-Fi manager and captive portal
 ├── MqttManager.h / .cpp           # Home Assistant MQTT auto-discovery client
 ├── LCDManager.h / .cpp            # 16x2 / 20x4 I2C LCD screen auto-rotation and alert display
@@ -523,6 +527,20 @@ If this project brings value to your home or DIY maker setup, consider sponsorin
 | **Vikash Choudhary** | [https://paypal.me/1vikash](https://paypal.me/1vikash) |
 
 
+
+---
+
+## Important Safety & Legal Disclaimer
+
+> [!CAUTION]
+> **READ CAREFULLY BEFORE BUILDING, FLASHING, OR USING THIS SOFTWARE.** By downloading, compiling, flashing, installing, or using any part of this project, you agree to the terms below and in [`LICENSE`](LICENSE).
+
+1. **No Warranties or Guarantees ("AS IS"):** This firmware, companion application, pre-compiled binary set, and documentation are provided strictly **"AS IS"** without warranty, representation, or guarantee of any kind—express or implied. No guarantee is made regarding uptime, flash memory lifespan, OTA recovery, prevention of bricked devices, data retention, security against unauthorized access, or bug-free operation.
+2. **High-Voltage & Electrical Hazard:** Connecting relays or DIY electronics to AC mains electricity (**110V–240V AC**) or high-current loads can cause **electric shock, fire, property damage, severe injury, or death**. You are solely responsible for proper electrical isolation, enclosures, fusing, wiring ratings, and compliance with all local electrical codes. If you are not qualified to work with mains electricity, consult a licensed electrician.
+3. **Not Certified for Life-Safety or Hazard Prevention:** This project is **not certified** (no UL, CE, FCC, BIS, or safety certification). Gas sensors (e.g., MQ-2), temperature sensors, failsafe relay cutoffs, buzzers, webhooks, and mobile alerts are **best-effort informational features only** and **MUST NOT** be relied upon as a primary smoke, gas, fire, medical, security, or life-safety alarm system. Always install and maintain certified standalone safety detectors.
+4. **Total Assumption of Risk & Zero Liability:** You assume **100% of the risk and responsibility** for any hardware selection, wiring, firmware flashing, network configuration, and operation. Under no circumstances shall the author or copyright holder be liable for any direct, indirect, incidental, special, consequential, or physical damages—including bricked microcontrollers, damaged appliances, flash wear, data loss, false or missed alarms, electrical fire, property damage, personal injury, or death—arising out of or related to the use or inability to use this project.
+
+---
 
 ## License
 
