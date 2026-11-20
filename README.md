@@ -12,6 +12,20 @@
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, macOS). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard served directly by each controller.
 
+<img width="1415" height="817" alt="1" src="https://github.com/user-attachments/assets/303214a4-d129-46ae-8d6d-b22f09791dcd" />
+<img width="1467" height="643" alt="image" src="https://github.com/user-attachments/assets/9092e2a7-bd40-4685-a572-64bb7794dec9" />
+<img width="1427" height="814" alt="3" src="https://github.com/user-attachments/assets/88787c85-3972-4400-8619-d331e969a251" />
+<img width="1437" height="677" alt="image" src="https://github.com/user-attachments/assets/2711502c-7c74-4fb1-8d95-2e6f6efcdd3c" />
+<img width="1463" height="679" alt="image" src="https://github.com/user-attachments/assets/73be02b2-68f7-4ef9-8e52-66b9b435acba" />
+<img width="1160" height="1241" alt="image" src="https://github.com/user-attachments/assets/6b965d92-c7b3-4da5-8869-ba056a3a35d0" />
+<img width="1438" height="1270" alt="image" src="https://github.com/user-attachments/assets/0178bfe3-2fa9-4570-a493-5fbd3c089c44" />
+<img width="1397" height="1251" alt="image" src="https://github.com/user-attachments/assets/92e5e079-56b9-4e5d-8c1b-12426fd6206f" />
+<img width="1406" height="702" alt="image" src="https://github.com/user-attachments/assets/1ace099b-0f11-4d72-8e73-275876d043c2" />
+<img width="1461" height="837" alt="image" src="https://github.com/user-attachments/assets/9fcb466d-6268-47cd-83aa-7d166353bbe6" />
+
+
+
+
 ---
 
 ## Table of Contents
