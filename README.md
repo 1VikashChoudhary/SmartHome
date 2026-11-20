@@ -242,16 +242,16 @@ All pre-compiled firmware binaries and mobile application packages are included 
 ### 1. Embedded Firmware Binaries
 | Board | File Path | Usage |
 |:---|:---|:---|
-| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (940 KB) |
-| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.79 MB) |
+| **ESP8266** | [`binaries/esp8266/SmartHome_ESP8266.bin`](binaries/esp8266/SmartHome_ESP8266.bin) | Web OTA update via `http://<ip>/update` (956 KB) |
+| **ESP32** | [`binaries/esp32/SmartHome_ESP32.bin`](binaries/esp32/SmartHome_ESP32.bin) | Web OTA update via `http://<ip>/update` (1.82 MB) |
 | **ESP32 (Full Flash)** | [`binaries/esp32/SmartHome_ESP32_merged_0x0.bin`](binaries/esp32/SmartHome_ESP32_merged_0x0.bin) | Serial flasher at offset `0x0` (4.00 MB) |
 
 ### 2. Flutter Companion App Release APKs
 | Target Architecture | File Path | Size | Device Compatibility |
 |:---|:---|:---:|:---|
-| **ARM 64-bit** | [`binaries/app/app-arm64-v8a-release.apk`](binaries/app/app-arm64-v8a-release.apk) | **21.1 MB** | **All modern Android phones** (Samsung, Pixel, OnePlus, Xiaomi) |
-| **ARM 32-bit** | [`binaries/app/app-armeabi-v7a-release.apk`](binaries/app/app-armeabi-v7a-release.apk) | **18.8 MB** | Older 32-bit Android phones |
-| **x86_64** | [`binaries/app/app-x86_64-release.apk`](binaries/app/app-x86_64-release.apk) | **22.5 MB** | Android Emulators & ChromeOS |
+| **ARM 64-bit** | [`binaries/app/app-arm64-v8a-release.apk`](binaries/app/app-arm64-v8a-release.apk) | **20.7 MB** | **All modern Android phones** (Samsung, Pixel, OnePlus, Xiaomi) |
+| **ARM 32-bit** | [`binaries/app/app-armeabi-v7a-release.apk`](binaries/app/app-armeabi-v7a-release.apk) | **18.3 MB** | Older 32-bit Android phones |
+| **x86_64** | [`binaries/app/app-x86_64-release.apk`](binaries/app/app-x86_64-release.apk) | **22.2 MB** | Android Emulators & ChromeOS |
 
 ---
 
