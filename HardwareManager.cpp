@@ -489,13 +489,13 @@ bool HardwareManager::validateConfig(const HardwareConfig& cfg, String& outError
                 return false;
             }
             if (c.type == CLIMATE_AHT20 && addr != 0x38) {
-                outError = tag + F(": AHT20 uses fixed I2C address 0x38");
+                outError = tag + F(": AHT20/AHT21/AHT25 uses fixed I2C address 0x38");
                 return false;
             }
             if ((c.type == CLIMATE_SHT3X || c.type == CLIMATE_SHT4X) && addr != 0x44 && addr != 0x45) {
                 outError = tag + (c.type == CLIMATE_SHT4X
-                    ? F(": SHT40/SHT45 supports I2C address 0x44 or 0x45")
-                    : F(": SHT3x supports I2C address 0x44 or 0x45"));
+                    ? F(": SHT40/SHT41/SHT45 supports I2C address 0x44 or 0x45")
+                    : F(": SHT30/SHT31/SHT35 supports I2C address 0x44 or 0x45"));
                 return false;
             }
             if (!claimI2cAddr(addr, tag)) return false;

@@ -931,10 +931,10 @@ bool SensorManager::initBME280(ClimateSlotState& s, uint8_t addr) {
         s.bmpDetected = false;
         s.i2cAddr = addr;
         SERIAL_PRINTF("[Sensor] BME280 detected at 0x%02X (ID 0x60)\n", addr);
-    } else if (chipId == 0x58) {
+    } else if (chipId == 0x58 || chipId == 0x56 || chipId == 0x57) {
         s.bmpDetected = true;
         s.i2cAddr = addr;
-        SERIAL_PRINTF("[Sensor] BMP280 detected at 0x%02X (ID 0x58 - No Humidity)\n", addr);
+        SERIAL_PRINTF("[Sensor] BMP280 detected at 0x%02X (ID 0x%02X - No Humidity)\n", addr, chipId);
     } else {
         return false;
     }
@@ -992,20 +992,20 @@ bool SensorManager::initBME280(ClimateSlotState& s, uint8_t addr) {
         Wire.beginTransmission(addr);
         Wire.write(0xF2);
         Wire.write(0x01);
-        Wire.endTransmission();
+        if (Wire.endTransmission() != 0) return false;
     }
 
     // Configure ctrl_meas (0xF4) = 0x27 (Temp 1x, Press 1x, Normal Mode)
     Wire.beginTransmission(addr);
     Wire.write(0xF4);
     Wire.write(0x27);
-    Wire.endTransmission();
+    if (Wire.endTransmission() != 0) return false;
 
     // Configure config (0xF5) = 0xA0 (1000ms standby, filter off)
     Wire.beginTransmission(addr);
     Wire.write(0xF5);
     Wire.write(0xA0);
-    Wire.endTransmission();
+    if (Wire.endTransmission() != 0) return false;
 
     s.i2cDetected = true;
     return true;
@@ -1087,26 +1087,65 @@ void SensorManager::readBME280(ClimateSlotState& s) {
     markClimateSuccess(s, "BME280");
 }
 
-bool SensorManager::initAHT20(ClimateSlotState& s, uint8_t addr) {
+static bool ahtReadStatus(uint8_t addr, uint8_t& outStatus) {
     Wire.beginTransmission(addr);
     Wire.write(0x71);
     if (Wire.endTransmission() != 0) return false;
-
     Wire.requestFrom((int)addr, 1);
     if (!Wire.available()) return false;
-    uint8_t status = Wire.read();
+    outStatus = Wire.read();
+    return true;
+}
+
+// Aosong AHT21 / AHT21B / AHT25 register reset sequence (registers 0x1B, 0x1C, 0x1E)
+static void ahtResetReg(uint8_t addr, uint8_t reg) {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    Wire.write((uint8_t)0x00);
+    Wire.write((uint8_t)0x00);
+    if (Wire.endTransmission() != 0) return;
+    delay(5);
+    Wire.requestFrom((int)addr, 3);
+    if (Wire.available() < 3) return;
+    (void)Wire.read();
+    uint8_t d1 = Wire.read();
+    uint8_t d2 = Wire.read();
+    delay(10);
+    Wire.beginTransmission(addr);
+    Wire.write((uint8_t)(0xB0 | reg));
+    Wire.write(d1);
+    Wire.write(d2);
+    Wire.endTransmission();
+}
+
+bool SensorManager::initAHT20(ClimateSlotState& s, uint8_t addr) {
+    uint8_t status = 0;
+    if (!ahtReadStatus(addr, status)) return false;
 
     if ((status & 0x18) != 0x18) {
-        Wire.beginTransmission(addr);
-        Wire.write(0xBE);
-        Wire.write(0x08);
-        Wire.write(0x00);
-        Wire.endTransmission();
+        // 1. Official AHT21 / AHT21B / AHT25 register reset
+        ahtResetReg(addr, 0x1B);
+        ahtResetReg(addr, 0x1C);
+        ahtResetReg(addr, 0x1E);
         delay(10);
+        if (!ahtReadStatus(addr, status)) return false;
+
+        // 2. Fallback to AHT20 calibration command if calibration bit (bit 3) is still clear
+        if ((status & 0x08) == 0) {
+            Wire.beginTransmission(addr);
+            Wire.write(0xBE);
+            Wire.write(0x08);
+            Wire.write(0x00);
+            if (Wire.endTransmission() != 0) return false;
+            delay(10);
+            if (!ahtReadStatus(addr, status)) return false;
+        }
+        if ((status & 0x08) == 0) return false;
     }
+
     s.i2cDetected = true;
     s.i2cAddr = addr;
-    SERIAL_PRINTF("[Sensor] AHT20 detected at 0x%02X\n", addr);
+    SERIAL_PRINTF("[Sensor] AHT20/21/25 detected at 0x%02X (status 0x%02X)\n", addr, status);
     return true;
 }
 
@@ -1117,7 +1156,7 @@ void SensorManager::readAHT20(ClimateSlotState& s) {
         Wire.write(0x33);
         Wire.write(0x00);
         if (Wire.endTransmission() != 0) {
-            markClimateFailure(s, "AHT20");
+            markClimateFailure(s, "AHT20/25");
             return;
         }
         s.measPending = true;
@@ -1128,18 +1167,29 @@ void SensorManager::readAHT20(ClimateSlotState& s) {
     if (millis() - s.measStartMs < 80UL) return;
     s.measPending = false;
 
-    Wire.requestFrom((int)s.i2cAddr, 6);
-    if (Wire.available() < 6) {
-        markClimateFailure(s, "AHT20");
+    // Request 7 bytes: [status, H1, H2, H3|T1, T2, T3, CRC-8] (AHT20/AHT21/AHT25)
+    Wire.requestFrom((int)s.i2cAddr, 7);
+    if (Wire.available() < 7) {
+        markClimateFailure(s, "AHT20/25");
         return;
     }
 
-    uint8_t b[6];
-    for (int i = 0; i < 6; i++) b[i] = Wire.read();
+    uint8_t b[7];
+    for (int i = 0; i < 7; i++) b[i] = Wire.read();
 
-    if ((b[0] & 0x80) != 0) {
-        markClimateFailure(s, "AHT20");
-        return; // Busy or bus glitch
+    if (b[0] == 0xFF || (b[0] & 0x80) != 0) {
+        markClimateFailure(s, "AHT20/25");
+        return; // Busy or floating bus glitch
+    }
+    if ((b[0] & 0x08) == 0) {
+        // Sensor lost calibration (e.g., brownout) — force re-init on next recovery
+        s.i2cDetected = false;
+        markClimateFailure(s, "AHT20/25");
+        return;
+    }
+    if (sensirionCrc8(b, 6) != b[6]) {
+        markClimateFailure(s, "AHT20/25");
+        return; // CRC-8 mismatch
     }
 
     uint32_t humRaw = (((uint32_t)b[1] << 12) | ((uint32_t)b[2] << 4) | ((uint32_t)b[3] >> 4));
@@ -1148,7 +1198,7 @@ void SensorManager::readAHT20(ClimateSlotState& s) {
     float h = ((float)humRaw * 100.0f) / 1048576.0f;
     float t = (((float)tempRaw * 200.0f) / 1048576.0f) - 50.0f;
     if (t < -50.0f || t > 125.0f || h < 0.0f || h > 100.0f) {
-        markClimateFailure(s, "AHT20");
+        markClimateFailure(s, "AHT20/25");
         return;
     }
 
@@ -1157,7 +1207,7 @@ void SensorManager::readAHT20(ClimateSlotState& s) {
     s.temperature = t + s.tempOffset;
     s.humidity = constrain(h + s.humOffset, 0.0f, 100.0f);
     s.hasReading = true;
-    markClimateSuccess(s, "AHT20");
+    markClimateSuccess(s, "AHT20/25");
 }
 
 bool SensorManager::initSHT3x(ClimateSlotState& s, uint8_t addr) {
@@ -1384,14 +1434,12 @@ void SensorManager::readSGP40(Mq2SlotState& g) {
 bool SensorManager::initBH1750(LightSlotState& s, uint8_t addr) {
     Wire.beginTransmission(addr);
     Wire.write(0x01); // Power On
-    if (Wire.endTransmission() == 0) {
-        Wire.beginTransmission(addr);
-        Wire.write(0x10); // Continuous High Resolution Mode
-        Wire.endTransmission();
-        s.i2cAddr = addr;
-        return true;
-    }
-    return false;
+    if (Wire.endTransmission() != 0) return false;
+    Wire.beginTransmission(addr);
+    Wire.write(0x10); // Continuous High Resolution Mode
+    if (Wire.endTransmission() != 0) return false;
+    s.i2cAddr = addr;
+    return true;
 }
 
 void SensorManager::readBH1750(LightSlotState& s) {
@@ -1519,7 +1567,8 @@ void SensorManager::readUltrasonic(UltrasonicSlotState& s) {
     digitalWrite(s.trigPin, LOW);
     delayMicroseconds(2);
     digitalWrite(s.trigPin, HIGH);
-    delayMicroseconds(10);
+    // JSN-SR04T v2.0/v3.0 & AJ-SR04M waterproof modules recommend >= 20us trigger pulse
+    delayMicroseconds(s.type == ULTRASONIC_JSN_SR04T ? 20 : 10);
     digitalWrite(s.trigPin, LOW);
 
     // 25ms timeout cap = ~4.3m max distance (prevents task watchdog reset)
@@ -1554,9 +1603,9 @@ static const char* climateTypeLabel(uint8_t t, bool isBmp) {
         case CLIMATE_DHT11:   return "DHT11";
         case CLIMATE_DHT22:   return "DHT22";
         case CLIMATE_BME280:  return isBmp ? "BMP280" : "BME280";
-        case CLIMATE_AHT20:   return "AHT20";
-        case CLIMATE_SHT3X:   return "SHT3x";
-        case CLIMATE_SHT4X:   return "SHT40/SHT45";
+        case CLIMATE_AHT20:   return "AHT20/25";
+        case CLIMATE_SHT3X:   return "SHT30/31/35";
+        case CLIMATE_SHT4X:   return "SHT40/41/45";
         case CLIMATE_DS18B20: return "DS18B20";
         default:              return "None";
     }

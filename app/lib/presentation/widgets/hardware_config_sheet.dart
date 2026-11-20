@@ -1924,7 +1924,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   _buildMultiSensorCard(
                     groupKey: 'climates',
                     title: 'Climate & Environmental Sensors',
-                    subtitle: 'DHT11 / DHT22 / BME280 / AHT20 / SHT3x / SHT40 / SHT45 / DS18B20',
+                    subtitle: 'DHT11/22 / BME280/BMP280 / AHT20/21/25 / SHT30-35 / SHT40-45 / DS18B20',
                     emptyLabel: 'climate sensors',
                     count: _climates.length,
                     limit: _sensorLimits.climates,
@@ -1938,6 +1938,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   _buildMultiSensorCard(
                     groupKey: 'lights',
                     title: 'Ambient Light Sensors (Optics)',
+                    subtitle: 'BH1750 / BH1750FVI (GY-30 / GY-302 • I2C 0x23 / 0x5C)',
                     emptyLabel: 'light sensors',
                     count: _lights.length,
                     limit: _sensorLimits.lights,
@@ -1951,6 +1952,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   _buildMultiSensorCard(
                     groupKey: 'motions',
                     title: 'Motion & Occupancy Sensors',
+                    subtitle: 'PIR (HC-SR501 / AM312) / mmWave Radar (LD2410 / LD2420 / RCWL-0516)',
                     emptyLabel: 'motion sensors',
                     count: _motions.length,
                     limit: _sensorLimits.motions,
@@ -1977,6 +1979,7 @@ class _HardwareConfigSheetState extends State<HardwareConfigSheet> {
                   _buildMultiSensorCard(
                     groupKey: 'ultrasonics',
                     title: 'Ultrasonic Distance & Water Tank Monitors',
+                    subtitle: 'HC-SR04P / US-100 (3.3V) / HC-SR04 (5V) / JSN-SR04T / AJ-SR04M (Waterproof)',
                     emptyLabel: 'ultrasonic tank sensors',
                     count: _ultrasonics.length,
                     limit: _sensorLimits.ultrasonics,

@@ -20,11 +20,11 @@ enum SwitchMode {
 enum ClimateSensorType {
   none(0, 'Disabled (None)'),
   dht11(1, 'DHT11'),
-  dht22(2, 'DHT22 / AM2302'),
-  bme280(3, 'BME280 (I2C Temp/Hum/Baro)'),
-  aht20(4, 'AHT20 (I2C Temp/Hum)'),
-  sht31(5, 'SHT31 / SHT3x (I2C High Accuracy)'),
-  sht4x(6, 'SHT40 / SHT45 (I2C High Accuracy)'),
+  dht22(2, 'DHT22 / AM2302 / DHT21'),
+  bme280(3, 'BME280 / BMP280 (I2C Baro)'),
+  aht20(4, 'AHT20 / AHT21 / AHT25 (I2C Temp/Hum)'),
+  sht31(5, 'SHT30 / SHT31 / SHT35 (I2C High Accuracy)'),
+  sht4x(6, 'SHT40 / SHT41 / SHT45 (I2C High Accuracy)'),
   ds18b20(7, 'DS18B20 (1-Wire Temp)');
 
   final int value;
@@ -72,7 +72,7 @@ enum ClimateSensorType {
 
 enum LightSensorType {
   none(0, 'Disabled'),
-  bh1750(1, 'BH1750 (I2C 0x23 / Lux)');
+  bh1750(1, 'BH1750 / BH1750FVI (I2C Lux)');
 
   final int value;
   final String label;
@@ -88,8 +88,8 @@ enum LightSensorType {
 
 enum MotionSensorType {
   none(0, 'Disabled'),
-  pir(1, 'PIR Motion Sensor'),
-  radar(2, 'mmWave Radar (LD2410)');
+  pir(1, 'PIR Motion (HC-SR501 / AM312)'),
+  radar(2, 'mmWave Radar (LD2410 / LD2420 / RCWL-0516)');
 
   final int value;
   final String label;
@@ -121,9 +121,9 @@ enum ProbeSensorType {
 
 enum UltrasonicSensorType {
   none(0, 'Disabled'),
-  hcsr04p(1, 'HC-SR04P (3.3V Native - Recommended)'),
+  hcsr04p(1, 'HC-SR04P / US-100 (3.3V Native)'),
   hcsr04(2, 'HC-SR04 (5V Legacy - Needs Divider)'),
-  jsnsr04t(3, 'JSN-SR04T (Waterproof Transceiver)');
+  jsnsr04t(3, 'JSN-SR04T / AJ-SR04M (Waterproof)');
 
   final int value;
   final String label;

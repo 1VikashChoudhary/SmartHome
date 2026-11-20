@@ -183,7 +183,7 @@ graph TB
 
         subgraph Hardware_Controllers["Hardware Subsystem Managers"]
             RELAY_MG["RelayManager<br/>(0-8 Channels + Interlock)"]
-            SENSOR_MG["SensorManager<br/>(DHT11/22, BME280/AHT20/SHT3x, BH1750, PIR/LD2410, DS18B20, HC-SR04/JSN-SR04T, MQ-2)"]
+            SENSOR_MG["SensorManager<br/>(DHT11/22, BME280/BMP280, AHT20/21/25, SHT30-35, SHT40-45, BH1750, PIR/LD2410/LD2420, DS18B20, HC-SR04P/JSN-SR04T, MQ-2..135/SGP40)"]
             BUZZER_MG["BuzzerManager<br/>(LEDC PWM or ESP8266 PWM)"]
             LCD_MG["LCDManager<br/>(16x2 / 20x4 I2C Auto-Rotation)"]
             TIME_MG["TimeManager<br/>(SNTP + RTC Fallback)"]
@@ -266,8 +266,8 @@ The firmware provides a two-mode GPIO Template and Hardware Profile engine acces
 * **🛠️ Custom DIY Mode**: Total configuration freedom with zero artificial board or relay limits:
   * **0 to 8 Relays**: Add or remove relay channels dynamically (`+ Add Channel` / `− Remove`) to match your exact hardware.
   * **Custom Wall Switches**: Pair any digital input pin with any relay channel in Toggle, Follow, Inverted Follow, Pushbutton, or Detached mode.
-  * **Dynamic Multi-Instance Sensors**: Add or remove multiple sensors per group (`+ Add` / `− Remove` up to hardware GPIO, ADC1/A0, and I2C address availability) across Climate (DHT11/22, BME280, AHT20, SHT3x — up to 4), Light (BH1750 — up to 2), Motion (PIR, LD2410 — up to 6), Water Temp Probe (DS18B20 — up to 4), Ultrasonic Tank Level (HC-SR04P, HC-SR04, JSN-SR04T — up to 4), and Gas (MQ-2 analog/digital — up to 4, keeping ESP8266 `A0` single-analog safe), plus Buzzer, LCD Display, and Status Button.
-  * **Shared I2C Bus & 7-Bit Address Arbitration**: Connect multiple I2C devices (LCD1602/2004 `0x27`/`0x3F`, BME280 `0x76`/`0x77`, AHT20 `0x38`, SHT3x `0x44`/`0x45`, BH1750 `0x23`/`0x5C`) simultaneously on the same SDA/SCL bus with automatic next-free address selection and collision blocking.
+  * **Dynamic Multi-Instance Sensors**: Add or remove multiple sensors per group (`+ Add` / `− Remove` up to hardware GPIO, ADC1/A0, and I2C address availability) across **Climate** (DHT11, DHT22/AM2302/DHT21, BME280/BMP280, AHT20/AHT21/AHT25, SHT30/SHT31/SHT35, SHT40/SHT41/SHT45, DS18B20 — up to 4), **Light** (BH1750/BH1750FVI — up to 2), **Motion** (PIR HC-SR501/AM312, mmWave Radar LD2410/LD2420/RCWL-0516 — up to 6), **Water Temp Probe** (DS18B20 — up to 4), **Ultrasonic Tank Level** (HC-SR04P/US-100, HC-SR04, JSN-SR04T/AJ-SR04M — up to 4), and **Gas & Air Quality** (MQ-2/3/4/5/6/7/8/9/135 analog/digital & SGP40 I2C VOC — up to 4, keeping ESP8266 `A0` single-analog safe), plus Buzzer, LCD Display, and Status Button.
+  * **Shared I2C Bus & 7-Bit Address Arbitration**: Connect multiple I2C devices (LCD1602/2004 `0x27`/`0x3F`, BME280/BMP280 `0x76`/`0x77`, AHT20/21/25 `0x38`, SHT30-35 & SHT40-45 `0x44`/`0x45`, BH1750 `0x23`/`0x5C`, SGP40 `0x59`) simultaneously on the same SDA/SCL bus with automatic next-free address selection and collision blocking.
 
 ### 2. Live GPIO Pin Allocation & Capability Matrix
 Both Web Dashboard and Companion App include real-time pin capability matrices:
@@ -286,7 +286,7 @@ Both Web Dashboard and Companion App include real-time pin capability matrices:
 | **Relay 2 Output** | `D5` | GPIO 14 | Active LOW trigger |
 | **Wall Switch 1** | `D7` | GPIO 13 | Toggle Rocker (Internal Pull-Up) |
 | **Wall Switch 2** | `D0` | GPIO 16 | Toggle Rocker (External Pull-Up) |
-| **Climate Sensor** | `—` | Disabled (`255`) | Add I2C (`BME280`/`AHT20`/`SHT3x`) on shared `D2`/`D1` or 1-Wire DHT in Custom DIY |
+| **Climate Sensor** | `—` | Disabled (`255`) | Add I2C (`BME280`/`BMP280`/`AHT20/21/25`/`SHT30-35`/`SHT40-45`) on shared `D2`/`D1` or 1-Wire DHT/DS18B20 in Custom DIY |
 | **I2C SDA (LCD / Sensors)** | `D2` | GPIO 4 | Shared I2C Bus |
 | **I2C SCL (LCD / Sensors)** | `D1` | GPIO 5 | Shared I2C Bus |
 | **Acoustic Buzzer** | `D4` | GPIO 2 | Software PWM / Active LOW |
@@ -478,7 +478,7 @@ SmartHome-Pro/
 ├── WebServerManager.h / .cpp      # REST API endpoints, RBAC tiers, TCP reassembly, rate limiter
 ├── WebSocketManager.h / .cpp      # Real-time WebSocket event broadcaster
 ├── RelayManager.h / .cpp          # Multi-channel relay control, polarity, quick timers
-├── SensorManager.h / .cpp         # DHT11/22, BME280/AHT20/SHT3x, BH1750, PIR/LD2410, DS18B20, HC-SR04/JSN-SR04T, MQ-2
+├── SensorManager.h / .cpp         # DHT11/22, BME280/BMP280, AHT20/21/25, SHT30-35, SHT40-45, BH1750, PIR/LD2410/LD2420, DS18B20, HC-SR04P/JSN-SR04T, MQ-2..135/SGP40
 ├── HardwareManager.h / .cpp       # Dynamic GPIO template manager and pin safety catalogs
 ├── StorageManager.h / .cpp        # Decoupled wear-leveled NVS & LittleFS storage
 ├── OTAManager.h / .cpp            # Dual-partition rollback and Web OTA manager

@@ -725,7 +725,7 @@ R"rawliteral(
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Climate Sensors (DHT11 / DHT22 / BME280 / AHT20 / SHT3x / SHT40 / SHT45 / DS18B20) <span id="hwClimatesCount" class="badge badge-info">0 / 4</span></div>
+<div style="font-weight:600;color:var(--accent2)">Climate Sensors (DHT11/22 / BME280/BMP280 / AHT20/21/25 / SHT30-35 / SHT40-45 / DS18B20) <span id="hwClimatesCount" class="badge badge-info">0 / 4</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('climates')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('climates')">&minus; Remove</button>
@@ -736,7 +736,7 @@ R"rawliteral(
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Ambient Light Sensors (BH1750 I2C: 0x23 / 0x5C) <span id="hwLightsCount" class="badge badge-info">0 / 2</span></div>
+<div style="font-weight:600;color:var(--accent2)">Ambient Light Sensors (BH1750 / BH1750FVI I2C: 0x23 / 0x5C) <span id="hwLightsCount" class="badge badge-info">0 / 2</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('lights')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('lights')">&minus; Remove</button>
@@ -747,7 +747,7 @@ R"rawliteral(
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Motion &amp; Occupancy Sensors (PIR / mmWave Radar) <span id="hwMotionsCount" class="badge badge-info">0 / 6</span></div>
+<div style="font-weight:600;color:var(--accent2)">Motion &amp; Occupancy Sensors (PIR HC-SR501/AM312 / mmWave LD2410/LD2420) <span id="hwMotionsCount" class="badge badge-info">0 / 6</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('motions')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('motions')">&minus; Remove</button>
@@ -769,7 +769,7 @@ R"rawliteral(
 
 <div style="background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--card-border)">
 <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
-<div style="font-weight:600;color:var(--accent2)">Ultrasonic Distance &amp; Water Tank Monitors <span id="hwUltrasonicsCount" class="badge badge-info">0 / 4</span></div>
+<div style="font-weight:600;color:var(--accent2)">Ultrasonic Distance &amp; Water Tank Monitors (HC-SR04P/US-100 / HC-SR04 / JSN-SR04T/AJ-SR04M) <span id="hwUltrasonicsCount" class="badge badge-info">0 / 4</span></div>
 <div style="display:flex;gap:4px;">
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="addHwSensor('ultrasonics')">+ Add</button>
 <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.75rem;" onclick="removeHwSensor('ultrasonics')">&minus; Remove</button>
@@ -2935,15 +2935,15 @@ const ESP8266_INPUT_PINS  = [0, 2, 4, 5, 12, 13, 14, 15, 16];
 const ESP8266_ADC_PINS    = [17];
 
 const ESP8266_PIN_NAMES = {
-    0: 'D3 (GPIO 0 - Flash Button)',
-    2: 'D4 (GPIO 2 - TxD1 / Buzzer)',
-    4: 'D2 (GPIO 4 - I2C SDA)',
-    5: 'D1 (GPIO 5 - I2C SCL)',
-    12: 'D6 (GPIO 12 - Relay 1)',
-    13: 'D7 (GPIO 13 - Switch 1)',
-    14: 'D5 (GPIO 14 - Relay 2)',
+    0: 'D3 (GPIO 0 - Strapping)',
+    2: 'D4 (GPIO 2 - Strapping / LED)',
+    4: 'D2 (GPIO 4)',
+    5: 'D1 (GPIO 5)',
+    12: 'D6 (GPIO 12)',
+    13: 'D7 (GPIO 13)',
+    14: 'D5 (GPIO 14)',
     15: 'D8 (GPIO 15 - Boot Low)',
-    16: 'D0 (GPIO 16 - Switch 2 / Wake)',
+    16: 'D0 (GPIO 16 - No Pull-Up / Wake)',
     17: 'A0 (ADC0 - Analog Input Only)'
 };
 
@@ -3234,11 +3234,11 @@ function renderHwSensorGroup(key) {
                     <select id="hw_cli_type_${i}" onchange="onClimateSlotTypeChange(${i})">
                         <option value="0" ${item.type===0?'selected':''}>Disabled</option>
                         <option value="1" ${item.type===1?'selected':''}>DHT11</option>
-                        <option value="2" ${item.type===2?'selected':''}>DHT22 / AM2302</option>
-                        <option value="3" ${item.type===3?'selected':''}>BME280 (I2C Baro)</option>
-                        <option value="4" ${item.type===4?'selected':''}>AHT20 (I2C)</option>
-                        <option value="5" ${item.type===5?'selected':''}>SHT3x (I2C)</option>
-                        <option value="6" ${item.type===6?'selected':''}>SHT40 / SHT45 (I2C)</option>
+                        <option value="2" ${item.type===2?'selected':''}>DHT22 / AM2302 / DHT21</option>
+                        <option value="3" ${item.type===3?'selected':''}>BME280 / BMP280 (I2C Baro)</option>
+                        <option value="4" ${item.type===4?'selected':''}>AHT20 / AHT21 / AHT25 (I2C)</option>
+                        <option value="5" ${item.type===5?'selected':''}>SHT30 / SHT31 / SHT35 (I2C)</option>
+                        <option value="6" ${item.type===6?'selected':''}>SHT40 / SHT41 / SHT45 (I2C)</option>
                         <option value="7" ${item.type===7?'selected':''}>DS18B20 (1-Wire Temp)</option>
                     </select>
                 </div>
@@ -3257,7 +3257,7 @@ function renderHwSensorGroup(key) {
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Model</label>
                     <select id="hw_lgt_type_${i}" onchange="onLightSlotTypeChange(${i})">
                         <option value="0" ${item.type===0?'selected':''}>Disabled</option>
-                        <option value="1" ${item.type===1?'selected':''}>BH1750 (I2C Lux)</option>
+                        <option value="1" ${item.type===1?'selected':''}>BH1750 / BH1750FVI (I2C Lux)</option>
                     </select>
                 </div>
                 <div class="form-group" style="margin:0;${item.type===0?'display:none':''}"><label style="font-size:0.72rem">I2C Address</label>
@@ -3278,8 +3278,8 @@ function renderHwSensorGroup(key) {
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Sensor Type</label>
                     <select id="hw_mot_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()">
                         <option value="0" ${item.type===0?'selected':''}>Disabled</option>
-                        <option value="1" ${item.type===1?'selected':''}>PIR Motion Sensor</option>
-                        <option value="2" ${item.type===2?'selected':''}>mmWave Radar (LD2410)</option>
+                        <option value="1" ${item.type===1?'selected':''}>PIR Motion (HC-SR501 / AM312)</option>
+                        <option value="2" ${item.type===2?'selected':''}>mmWave Radar (LD2410 / LD2420 / RCWL-0516)</option>
                     </select>
                 </div>
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Digital Input GPIO Pin</label><select id="hw_mot_pin_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
@@ -3307,9 +3307,9 @@ function renderHwSensorGroup(key) {
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Module Model</label>
                     <select id="hw_us_type_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');renderHwSensorGroup('ultrasonics');checkHwConflicts()">
                         <option value="0" ${item.type===0?'selected':''}>Disabled</option>
-                        <option value="1" ${item.type===1?'selected':''}>HC-SR04P (3.3V Safe)</option>
+                        <option value="1" ${item.type===1?'selected':''}>HC-SR04P / US-100 (3.3V Safe)</option>
                         <option value="2" ${item.type===2?'selected':''}>HC-SR04 (5V Divider Req)</option>
-                        <option value="3" ${item.type===3?'selected':''}>JSN-SR04T (Waterproof)</option>
+                        <option value="3" ${item.type===3?'selected':''}>JSN-SR04T / AJ-SR04M (Waterproof)</option>
                     </select>
                 </div>
                 <div class="form-group" style="margin:0"><label style="font-size:0.72rem">Trigger Pin</label><select id="hw_us_trig_${i}" onchange="syncHwSensorsFromDOM();setHwMode('custom');checkHwConflicts()"></select></div>
