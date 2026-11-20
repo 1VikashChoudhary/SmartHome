@@ -12,6 +12,26 @@
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, macOS). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard served directly by each controller.
 
+<img width="365" height="812" alt="Screenshot_20261120-100546_SmartHome Pro" src="https://github.com/user-attachments/assets/4896cb89-680c-4455-80c4-27867d154c3d" />
+<img width="365" height="812" alt="Screenshot_20261120-100610_SmartHome Pro" src="https://github.com/user-attachments/assets/33891ebe-d684-4fe6-b303-6ebc8204471f" />
+<img width="365" height="812" alt="Screenshot_20261120-100613_SmartHome Pro" src="https://github.com/user-attachments/assets/ba1a7c33-74d9-45fb-80b9-5ed14e454b63" />
+<img width="365" height="812" alt="Screenshot_20261120-100617_SmartHome Pro" src="https://github.com/user-attachments/assets/04f339c2-68f1-487f-addf-e6205da2029a" />
+<img width="365" height="812" alt="Screenshot_20261120-100622_SmartHome Pro" src="https://github.com/user-attachments/assets/6f5b9b81-36fd-48ec-ba30-b2229d049ee3" />
+<img width="365" height="812" alt="Screenshot_20261120-100644_SmartHome Pro" src="https://github.com/user-attachments/assets/e26089af-42b2-4780-9d59-94e23f4713e7" />
+<img width="365" height="812" alt="Screenshot_20261120-100656_SmartHome Pro" src="https://github.com/user-attachments/assets/ff969e8f-42da-4d89-bcc6-d85d2e5ab343" />
+<img width="365" height="812" alt="Screenshot_20261120-100702_SmartHome Pro" src="https://github.com/user-attachments/assets/6db42a00-6a7c-4067-a9bc-e3311b0969ae" />
+<img width="365" height="812" alt="Screenshot_20261120-100713_SmartHome Pro" src="https://github.com/user-attachments/assets/6c7331db-26fa-4ffc-bbbb-e31001489794" />
+<img width="365" height="812" alt="Screenshot_20261120-100717_SmartHome Pro" src="https://github.com/user-attachments/assets/64575509-eed0-4453-8b68-d76d5028b8fd" />
+<img width="365" height="812" alt="Screenshot_20261120-100731_SmartHome Pro" src="https://github.com/user-attachments/assets/1f0ed785-a311-4e51-93ed-333691628d84" />
+<img width="365" height="812" alt="Screenshot_20261120-100740_SmartHome Pro" src="https://github.com/user-attachments/assets/5a6beae4-3962-46bd-9b28-8011a5913f56" />
+<img width="365" height="812" alt="Screenshot_20261120-100754_SmartHome Pro" src="https://github.com/user-attachments/assets/f27dd4bf-01f9-4b66-959e-34efdae7304b" />
+<img width="365" height="812" alt="Screenshot_20261120-100804_SmartHome Pro" src="https://github.com/user-attachments/assets/f7e2fcaf-b97c-4cf1-ab39-ebfd45b4e0c1" />
+<img width="365" height="812" alt="Screenshot_20261120-100815_SmartHome Pro" src="https://github.com/user-attachments/assets/204601e6-f098-4036-afb6-64e909f3341a" />
+<img width="365" height="812" alt="Screenshot_20261120-100828_SmartHome Pro" src="https://github.com/user-attachments/assets/b29c52e9-17b7-4a50-b308-e59c66ee3530" />
+<img width="365" height="812" alt="Screenshot_20261120-100839_SmartHome Pro" src="https://github.com/user-attachments/assets/21f63762-738b-42b4-92a1-bf930dcee536" />
+<img width="365" height="812" alt="Screenshot_20261120-100843_SmartHome Pro" src="https://github.com/user-attachments/assets/380e8d61-d665-47c0-b716-dc6b4f4402bb" />
+
+
 <img width="1415" height="817" alt="1" src="https://github.com/user-attachments/assets/303214a4-d129-46ae-8d6d-b22f09791dcd" />
 <img width="1467" height="643" alt="image" src="https://github.com/user-attachments/assets/9092e2a7-bd40-4685-a572-64bb7794dec9" />
 <img width="1427" height="814" alt="3" src="https://github.com/user-attachments/assets/88787c85-3972-4400-8619-d331e969a251" />
