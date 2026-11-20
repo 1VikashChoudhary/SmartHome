@@ -125,7 +125,6 @@ A standalone IoT smart home automation hub powered by a **single unified codebas
 * **TCP Packet Fragmentation Reassembly**: Employs dynamic stream buffering (`collectJsonBody`) across REST JSON endpoints, eliminating `IncompleteInput` or `Invalid JSON` parse errors caused by ESP8266 LWIP TCP MSS packet fragmentation.
 * **Autonomous Safety & Failsafe Engine**: Hardware-level Gas (MQ-2) and Over-Temperature alarms with strict `GAS > TEMP > FAULT` priority, hysteresis & probe fault debouncing, active failsafe relay lockout (prevents timers/rules/schedules from re-energizing hazardous loads during an emergency), local buzzer & I2C LCD alerts, remote `ntfy` / webhook push alerts, and Android background safety monitoring.
 * **On-Device Automation & Scheduling**: Built-in condition-action sensor rules (temperature, humidity, light, motion, water temp, tank level, gas), DST-safe calendar/repeating schedules with DS3231 RTC fallback, quick countdown timers, and physical wall-switch support.
-* **Zero-Brick Dual-Partition OTA (ESP32)**: Two 1.9MB application partitions (`ota_0`, `ota_1`). If newly flashed firmware boot-loops or panics, the hardware bootloader automatically reverts to the previous working slot within 30 seconds.
 * **Seamless Web OTA (ESP8266 & ESP32)**: Intuitive drag-and-drop web updater at `http://<device_ip>/update` with cross-chip binary verification, allowing 1-click updates over Wi-Fi without needing `esptool.py` or serial cables.
 * **Decoupled Wear-Leveled NVS Runtime State**: Rapid relay cycles and switch events are packed into bitmasks and stored in wear-leveled NVS (ESP32) or EEPROM (ESP8266), reserving LittleFS strictly for static JSON configurations and guaranteeing 100,000+ power-cycle endurance.
 * **Multi-User Privilege Tiers (Admin vs. Family/Guest)**:
@@ -232,7 +231,7 @@ To meet the security needs of multi-user households and family homes, authentica
 
 ---
 
-## OTA Firmware Update & Zero-Brick Engine
+## OTA Firmware Update Engine
 
 ### 1. Web OTA via Browser (Easiest & Recommended)
 Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
@@ -241,11 +240,6 @@ Both ESP8266 and ESP32 feature an embedded drag-and-drop Web OTA page:
    - For ESP8266: `binaries/esp8266/SmartHome_ESP8266.bin`
    - For ESP32: `binaries/esp32/SmartHome_ESP32.bin`
 3. Click **"Upload & Flash"**. The controller verifies the binary, flashes, and reboots in ~10 seconds.
-
-### 2. Dual-Partition Zero-Brick Rollback (ESP32)
-* Firmware updates write to the inactive application partition (`ota_0` or `ota_1`).
-* On first boot, the new image enters `PENDING_VERIFY` state with an armed **30-second stability check**.
-* If a crash, panic, or watchdog reset occurs during those 30 seconds, the ESP32 hardware bootloader automatically reverts to the previous working firmware slot without bricking.
 
 ---
 
