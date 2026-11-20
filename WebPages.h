@@ -1061,7 +1061,7 @@ Donate via PayPal.Me
 <div style="font-size:.72rem;color:var(--text2);">Project Creator &amp; Embedded Systems Engineer</div>
 </div>
 </div>
-<a href="https://github.com/1VikashChoudhary/SmartHome" target="_blank" rel="noopener" class="btn btn-outline" style="width:100%;text-decoration:none;">
+<a href="https://github.com/1VikashChoudhary/SmartHome-Pro" target="_blank" rel="noopener noreferrer" class="btn btn-outline" style="width:100%;text-decoration:none;">
 <svg viewBox="0 0 24 24" width="16" height="16" style="fill:currentColor;"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
 View Project on GitHub
 </a>

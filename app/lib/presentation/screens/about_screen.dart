@@ -10,7 +10,7 @@ class AboutScreen extends StatefulWidget {
 
   static const String upiId = '1vikash@ybl';
   static const String paypalUrl = 'https://paypal.me/1vikash';
-  static const String githubUrl = 'https://github.com/1VikashChoudhary/SmartHome';
+  static const String githubUrl = 'https://github.com/1VikashChoudhary/SmartHome-Pro';
   static const String developerName = 'Vikash Choudhary';
 
   @override

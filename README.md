@@ -471,7 +471,7 @@ On ESP8266, GPIO 0, 2, and 15 are hardware strapping pins. If attached periphera
 ## Project Directory Layout
 
 ```text
-SmartHome/
+SmartHome-Pro/
 ├── SmartHome.ino                  # Main Arduino firmware setup and main loop
 ├── Config.h                       # Global configuration constants and dual-chip pin definitions
 ├── WebPages.h                     # Embedded obsidian glassmorphism SPA dashboard in PROGMEM
