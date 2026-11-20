@@ -12,6 +12,8 @@
 
 IoT smart home automation hub powered by a **single unified codebase** that runs seamlessly on both **ESP8266** (NodeMCU, Wemos D1 Mini) and **ESP32** (Dual-Core, DevKit, WROOM), accompanied by a unified cross-platform Flutter companion application (Android, iOS, Windows, macOS). Engineered for 24/7 industrial-level reliability with non-blocking concurrency, zero-brick dual-partition OTA firmware rollback, wear-leveled NVS runtime state storage, multi-user privilege tiers (Admin vs. Family/Guest), dynamic GPIO pin templating, TCP body fragmentation reassembly, and an ultra-modern obsidian glassmorphism web dashboard served directly by each controller.
 
+## 📸 Mobile Application Preview
+
 <img width="365" height="812" alt="Screenshot_20261120-100546_SmartHome Pro" src="https://github.com/user-attachments/assets/4896cb89-680c-4455-80c4-27867d154c3d" />
 <img width="365" height="812" alt="Screenshot_20261120-100610_SmartHome Pro" src="https://github.com/user-attachments/assets/33891ebe-d684-4fe6-b303-6ebc8204471f" />
 <img width="365" height="812" alt="Screenshot_20261120-100613_SmartHome Pro" src="https://github.com/user-attachments/assets/ba1a7c33-74d9-45fb-80b9-5ed14e454b63" />
@@ -31,7 +33,7 @@ IoT smart home automation hub powered by a **single unified codebase** that runs
 <img width="365" height="812" alt="Screenshot_20261120-100839_SmartHome Pro" src="https://github.com/user-attachments/assets/21f63762-738b-42b4-92a1-bf930dcee536" />
 <img width="365" height="812" alt="Screenshot_20261120-100843_SmartHome Pro" src="https://github.com/user-attachments/assets/380e8d61-d665-47c0-b716-dc6b4f4402bb" />
 
-
+## 📸 Desktop Application Preview
 <img width="1415" height="817" alt="1" src="https://github.com/user-attachments/assets/303214a4-d129-46ae-8d6d-b22f09791dcd" />
 <img width="1467" height="643" alt="image" src="https://github.com/user-attachments/assets/9092e2a7-bd40-4685-a572-64bb7794dec9" />
 <img width="1427" height="814" alt="3" src="https://github.com/user-attachments/assets/88787c85-3972-4400-8619-d331e969a251" />
