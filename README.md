@@ -1,4 +1,4 @@
-# Smart Home & Environmental Monitoring System
+# Smart Home -Smart Environmental Monitoring & Automation System work without Home Assistance
 
 <p align="center">
   <img src="https://img.shields.io/badge/Firmware-v1.1.0-blue?style=for-the-badge&logo=espressif&logoColor=white" alt="Firmware Version" />
